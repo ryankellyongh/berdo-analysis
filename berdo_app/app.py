@@ -1225,19 +1225,24 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
 # ---------------------------------------------------------------------------
 # RETROFIT COST BENCHMARKS
 # Source: ASHRAE, RSMeans, NBI New Construction Cost Study, DOE BTO
-# Units: USD per square foot (low, high)
+# Units: national baseline USD per sq ft (low, high) — Boston multiplier applied separately
 # Last verified: June 2026
 # ---------------------------------------------------------------------------
 RETROFIT_COST_PER_SQFT = {
-    # scope → (low $/sqft, high $/sqft, notes)
-    "Lighting (LED retrofit + controls)":          (1.5,   4.0,  "LED fixtures, occupancy sensors, daylight controls"),
-    "HVAC (tune-up, controls, VFDs)":              (3.0,   8.0,  "Controls upgrades, VFDs on pumps/fans, recommissioning"),
-    "HVAC (full system replacement)":              (15.0,  35.0, "Chiller, AHU, or boiler replacement"),
-    "Building envelope (windows + insulation)":    (8.0,   20.0, "Window replacement, roof/wall insulation"),
-    "Electrification — HVAC (heat pump)":          (12.0,  30.0, "Air-source or ground-source heat pump system"),
-    "Electrification — water heating":             (2.0,   6.0,  "Heat pump water heaters replacing gas"),
-    "Building-wide deep retrofit (all systems)":   (40.0,  100.0,"Comprehensive envelope + MEP overhaul"),
+    # scope → (low $/sqft national, high $/sqft national, notes)
+    "Lighting (LED retrofit + controls)":               (1.5,   4.0,   "LED fixtures, occupancy sensors, daylight controls"),
+    "HVAC (tune-up, controls, VFDs)":                   (3.0,   8.0,   "Controls upgrades, VFDs on pumps/fans, recommissioning"),
+    "HVAC (full system replacement)":                   (15.0,  35.0,  "Chiller, AHU, or boiler replacement"),
+    "Building envelope (windows + insulation)":         (8.0,   20.0,  "Window replacement, roof/wall insulation"),
+    "Electrification — HVAC (air-source heat pump)":    (10.0,  22.0,  "Air-source heat pump — lower cost, suitable for most commercial buildings"),
+    "Electrification — HVAC (ground-source heat pump)": (20.0,  45.0,  "Ground-source (geothermal) — higher efficiency, significantly higher upfront cost"),
+    "Electrification — water heating":                  (2.0,   6.0,   "Heat pump water heaters replacing gas"),
+    "Building-wide deep retrofit (all systems)":        (40.0,  100.0, "Comprehensive envelope + MEP overhaul"),
 }
+
+# Boston labor cost multiplier vs. national RSMeans baseline
+# Source: RSMeans City Cost Index, Boston MA (2024-2025 avg)
+BOSTON_LABOR_MULTIPLIER = 1.25
 
 # ---------------------------------------------------------------------------
 # INCENTIVE PROGRAMS
@@ -1250,7 +1255,7 @@ INCENTIVES = [
         "name": "Mass Save — Commercial HVAC Rebates",
         "type": "Utility rebate",
         "scopes": ["HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
-                   "Electrification — HVAC (heat pump)"],
+                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)"],
         "amount_str": "$50–$300/ton of cooling capacity; heat pump adders available",
         "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
         "expiration": "Program year 2026 (amounts reset annually in Jan)",
@@ -1282,18 +1287,18 @@ INCENTIVES = [
         "type": "Federal tax deduction",
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
-                   "Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
-        "amount_str": "$2.50–$5.00/sqft (prevailing wage met); $0.50–$1.00/sqft (partial)",
+                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
+        "amount_str": "Up to $5.81/sqft (2025, prevailing wage + apprenticeship); $0.58-$1.16/sqft (partial). Construction must BEGIN by June 30, 2026.",
         "eligibility": "For-profit building owners; nonprofits/govts can transfer deduction to designer",
-        "expiration": "Permanent (no sunset); indexed to inflation",
+        "expiration": "⚠️ Terminates for construction beginning after June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21, July 4, 2025). Act now.",
         "stacks_with_ira": True,
-        "source": "https://www.irs.gov/credits-deductions/179d-commercial-buildings-energy-efficiency-tax-deduction",
+        "source": "https://www.energy.gov/eere/buildings/179d-commercial-buildings-energy-efficiency-tax-deduction",
         "ownership_restriction": ["For-profit"],
     },
     {
         "name": "IRA Section 48C — Advanced Energy Project Tax Credit",
         "type": "Federal tax credit",
-        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
         "amount_str": "6% base credit (30% with prevailing wage + apprenticeship); capped per project",
         "eligibility": "Manufacturing/industrial sites prioritized; limited allocations via competitive application",
@@ -1305,7 +1310,7 @@ INCENTIVES = [
     {
         "name": "IRA Section 45L — New Energy Efficient Home Credit (multifamily)",
         "type": "Federal tax credit",
-        "scopes": ["Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "amount_str": "$500–$2,500/unit (Energy Star); $1,000–$5,000/unit (Zero Energy Ready)",
         "eligibility": "Multifamily residential buildings; new construction and substantial rehab",
         "expiration": "Through 2032",
@@ -1317,7 +1322,7 @@ INCENTIVES = [
     {
         "name": "MassDOER — Clean Energy Grants (nonprofits)",
         "type": "State grant",
-        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
         "amount_str": "Up to $250,000; varies by program round",
         "eligibility": "Nonprofits and municipal buildings in MA",
@@ -1331,7 +1336,7 @@ INCENTIVES = [
         "type": "State grant",
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
-                   "Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "amount_str": "Up to $1.6M per municipality; formula-based on population",
         "eligibility": "MA municipalities that have achieved Green Community designation",
         "expiration": "Annual grant rounds; check DOER for current cycle",
@@ -1445,37 +1450,154 @@ def render_retrofit_tab(prefill: dict = None):
         st.warning("Select at least one retrofit scope above to see estimates.")
         return
 
+    # ── Building condition qualifier ─────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Building condition")
+    st.caption(
+        "These questions narrow the cost range. Answer as many as you can — "
+        "each shifts the estimate toward the low or high end."
+    )
+
+    cond_cols = st.columns(2)
+    with cond_cols[0]:
+        occupied = st.radio(
+            "Will the building be occupied during construction?",
+            options=["Yes — fully occupied", "Partially occupied / phased", "No — vacant during work"],
+            index=1,
+            key="cond_occupied",
+            help="Occupied buildings require phasing, protection, and off-hours work — adding 15–30% to labor cost.",
+        )
+        system_age = st.radio(
+            "Age of existing mechanical systems (HVAC, plumbing)?",
+            options=["Under 15 years — modern, reusable infrastructure",
+                     "15–30 years — partial reuse likely",
+                     "Over 30 years — full replacement expected"],
+            index=1,
+            key="cond_age",
+            help="Older systems often require full replacement of distribution, controls, and electrical — pushing toward the high end.",
+        )
+    with cond_cols[1]:
+        historic = st.radio(
+            "Is the building historic or architecturally constrained?",
+            options=["Yes — landmark / historic restrictions apply",
+                     "No — standard commercial construction"],
+            index=1,
+            key="cond_historic",
+            help="Historic buildings face restrictions on envelope changes and equipment placement, adding 10–25% to certain scopes.",
+        )
+        prior_audit = st.radio(
+            "Has an energy audit or feasibility study been completed?",
+            options=["Yes — ASHRAE Level 2 or equivalent",
+                     "No — rough estimate only"],
+            index=1,
+            key="cond_audit",
+            help="A completed audit means fewer unknowns, which typically produces more accurate (often lower) bids.",
+        )
+
+    # ── Compute condition adjustment factor ──────────────────────────────────
+    # Each answer shifts the midpoint estimate up or down within the range.
+    # Factor applied to the low end (pushes it up) and high end (pulled down).
+    condition_score = 0  # -2 (favorable) to +4 (unfavorable)
+
+    if "fully occupied" in occupied:
+        condition_score += 2
+    elif "Partially" in occupied:
+        condition_score += 1
+
+    if "Over 30" in system_age:
+        condition_score += 2
+    elif "15–30" in system_age:
+        condition_score += 1
+
+    if "landmark" in historic:
+        condition_score += 1
+
+    if "No —" in prior_audit:
+        condition_score += 1
+
+    # Map score (0–6) to a position fraction within the range (0.0 = low end, 1.0 = high end)
+    position = min(condition_score / 6.0, 1.0)
+
+    condition_label = (
+        "Favorable — estimate closer to low end"    if condition_score <= 1 else
+        "Moderate — mid-range estimate"             if condition_score <= 3 else
+        "Challenging — estimate closer to high end"
+    )
+
     st.markdown("---")
     st.subheader("Estimated retrofit cost")
 
+    # Apply Boston labor multiplier to national benchmarks
+    apply_boston = st.toggle(
+        "Apply Boston labor cost multiplier (1.25x)",
+        value=True,
+        key="boston_multiplier_toggle",
+        help=(
+            "Boston construction labor runs ~25% above the national RSMeans baseline "
+            "(RSMeans City Cost Index, 2024-2025). Toggle off to see national benchmark figures."
+        ),
+    )
+    multiplier = BOSTON_LABOR_MULTIPLIER if apply_boston else 1.0
+
     total_low = 0.0
     total_high = 0.0
+    total_adjusted = 0.0
     cost_rows = []
 
     for scope in scopes_selected:
-        low_psf, high_psf, _ = RETROFIT_COST_PER_SQFT[scope]
+        low_psf_nat, high_psf_nat, _ = RETROFIT_COST_PER_SQFT[scope]
+        low_psf  = low_psf_nat  * multiplier
+        high_psf = high_psf_nat * multiplier
         low_total  = low_psf  * sqft
         high_total = high_psf * sqft
-        total_low  += low_total
-        total_high += high_total
+        # Condition-adjusted point estimate: interpolate within range
+        adj_psf   = low_psf + position * (high_psf - low_psf)
+        adj_total = adj_psf * sqft
+        total_low      += low_total
+        total_high     += high_total
+        total_adjusted += adj_total
         cost_rows.append({
-            "Scope":        scope,
-            "Low ($/sqft)": f"${low_psf:.2f}",
-            "High ($/sqft)":f"${high_psf:.2f}",
-            "Low total":    _fmt_dollars(low_total),
-            "High total":   _fmt_dollars(high_total),
+            "Scope":             scope,
+            "Low ($/sqft)":      f"${low_psf:.2f}",
+            "High ($/sqft)":     f"${high_psf:.2f}",
+            "Adjusted ($/sqft)": f"${adj_psf:.2f}",
+            "Low total":         _fmt_dollars(low_total),
+            "Adjusted total":    _fmt_dollars(adj_total),
+            "High total":        _fmt_dollars(high_total),
         })
 
     cost_df = pd.DataFrame(cost_rows)
     st.dataframe(cost_df, use_container_width=True, hide_index=True)
 
-    c1, c2 = st.columns(2)
-    c1.metric("Total low estimate",  _fmt_dollars(total_low))
-    c2.metric("Total high estimate", _fmt_dollars(total_high))
-
+    # Condition badge
+    badge_color = (
+        "🟢" if condition_score <= 1 else
+        "🟡" if condition_score <= 3 else
+        "🔴"
+    )
     st.caption(
-        "Costs are rough order-of-magnitude benchmarks (RSMeans / ASHRAE / DOE BTO, 2024–2026). "
-        "Actual costs depend heavily on building condition, contractor market, and project complexity. "
+        f"{badge_color} **Building condition: {condition_label}** "
+        f"(score {condition_score}/6) — "
+        f"Adjusted estimate: **{_fmt_dollars(total_adjusted)}** "
+        f"(between low {_fmt_dollars(total_low)} and high {_fmt_dollars(total_high)})"
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Low estimate",      _fmt_dollars(total_low),
+              delta="National low × Boston multiplier" if apply_boston else "National baseline low")
+    c2.metric("Condition-adjusted", _fmt_dollars(total_adjusted),
+              delta=condition_label)
+    c3.metric("High estimate",     _fmt_dollars(total_high),
+              delta="National high × Boston multiplier" if apply_boston else "National baseline high")
+
+    multiplier_note = (
+        f"Boston 1.25x multiplier applied to national RSMeans baselines. "
+        if apply_boston else
+        "National RSMeans baseline (no Boston multiplier). "
+    )
+    st.caption(
+        multiplier_note +
+        "Condition-adjusted estimate interpolates within the range based on your answers above. "
         "Get competitive bids before budgeting."
     )
 
@@ -1494,9 +1616,6 @@ def render_retrofit_tab(prefill: dict = None):
             "or check Mass Save and MassCEC directly for current programs."
         )
     else:
-        ira_179d_low  = 0.50 * sqft
-        ira_179d_high = 5.00 * sqft
-
         for inc in applicable:
             with st.expander(f"**{inc['name']}** — {inc['type']}", expanded=True):
                 col_a, col_b = st.columns([2, 1])
@@ -1516,11 +1635,18 @@ def render_retrofit_tab(prefill: dict = None):
                     st.markdown(f"[Source / apply →]({inc['source']})")
 
         if any(i["name"].startswith("IRA Section 179D") for i in applicable):
+            ira_179d_low  = 0.58 * sqft
+            ira_179d_high = 5.81 * sqft
+            st.warning(
+                f"⚠️ **179D termination alert:** The One Big Beautiful Bill Act (P.L. 119-21, July 4, 2025) "
+                f"terminates 179D for construction beginning after **June 30, 2026**. Act immediately if this applies."
+            )
             st.info(
                 f"**179D rough estimate for this building ({sqft:,} sqft):** "
                 f"{_fmt_dollars(ira_179d_low)} – {_fmt_dollars(ira_179d_high)} "
-                f"(at $0.50–$5.00/sqft depending on systems covered and prevailing wage compliance). "
-                "Requires a qualified third-party certifier."
+                f"(at $0.58–$5.81/sqft, 2025 inflation-adjusted; prevailing wage + apprenticeship required for maximum). "
+                "Requires a qualified third-party certifier. "
+                "Source: DOE energy.gov/eere/buildings/179d"
             )
 
     st.markdown("---")
@@ -1528,27 +1654,29 @@ def render_retrofit_tab(prefill: dict = None):
 
     conservative_reduction = total_low * 0.10
     optimistic_reduction   = total_high * 0.40
+    adj_reduction          = total_adjusted * 0.20  # midpoint proxy
 
-    net_low  = max(total_low  - optimistic_reduction, 0)
-    net_high = max(total_high - conservative_reduction, 0)
+    net_low      = max(total_low      - optimistic_reduction,   0)
+    net_adjusted = max(total_adjusted - adj_reduction,          0)
+    net_high     = max(total_high     - conservative_reduction, 0)
 
     fig = go.Figure()
 
     fig.add_trace(go.Bar(
         name="Gross cost range",
-        x=["Low estimate", "High estimate"],
-        y=[total_low, total_high],
+        x=["Low", "Condition-adjusted", "High"],
+        y=[total_low, total_adjusted, total_high],
         marker_color="#3266ad",
-        text=[_fmt_dollars(total_low), _fmt_dollars(total_high)],
+        text=[_fmt_dollars(total_low), _fmt_dollars(total_adjusted), _fmt_dollars(total_high)],
         textposition="outside",
     ))
 
     fig.add_trace(go.Bar(
         name="Est. incentive reduction",
-        x=["Low estimate", "High estimate"],
-        y=[optimistic_reduction, conservative_reduction],
+        x=["Low", "Condition-adjusted", "High"],
+        y=[optimistic_reduction, adj_reduction, conservative_reduction],
         marker_color="#2ECC71",
-        text=[_fmt_dollars(optimistic_reduction), _fmt_dollars(conservative_reduction)],
+        text=[_fmt_dollars(optimistic_reduction), _fmt_dollars(adj_reduction), _fmt_dollars(conservative_reduction)],
         textposition="outside",
     ))
 
@@ -1564,13 +1692,18 @@ def render_retrofit_tab(prefill: dict = None):
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="retrofit_net_cost_chart")
 
-    c1, c2 = st.columns(2)
-    c1.metric("Estimated net cost (low)",  _fmt_dollars(net_low),
-              delta=f"−{_fmt_dollars(optimistic_reduction)} in incentives (optimistic)")
-    c2.metric("Estimated net cost (high)", _fmt_dollars(net_high),
-              delta=f"−{_fmt_dollars(conservative_reduction)} in incentives (conservative)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Net cost (low)",
+              _fmt_dollars(net_low),
+              delta=f"-{_fmt_dollars(optimistic_reduction)} incentives (optimistic)")
+    c2.metric("Net cost (condition-adjusted)",
+              _fmt_dollars(net_adjusted),
+              delta=f"-{_fmt_dollars(adj_reduction)} incentives (est.)")
+    c3.metric("Net cost (high)",
+              _fmt_dollars(net_high),
+              delta=f"-{_fmt_dollars(conservative_reduction)} incentives (conservative)")
 
     st.caption(
         "Incentive reduction estimated at 10–40% of gross cost — a rough proxy for typical "
@@ -1650,7 +1783,7 @@ INCENTIVE_STACK = [
         "priority": 1,
         "apply_first_reason": "Utility rebates are taxable income and reduce your 179D basis — claim after filing taxes, but negotiate before project start.",
         "scopes": ["HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
-                   "Electrification — HVAC (heat pump)"],
+                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 2.00,
@@ -1730,24 +1863,25 @@ INCENTIVE_STACK = [
         "apply_first_reason": "Claim after utility rebates are received — rebates reduce your depreciable basis, which affects 179D calculation.",
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
-                   "Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
-        "amount_psf_low": 0.50,
-        "amount_psf_high": 5.00,
-        "amount_str": "$2.50–$5.00/sqft (prevailing wage); $0.50–$1.00/sqft (partial)",
+        "amount_psf_low": 0.58,
+        "amount_psf_high": 5.81,
+        "amount_str": "Up to $5.81/sqft (2025, prevailing wage + apprenticeship); $0.58-$1.16/sqft (partial)",
         "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
-        "expiration": "Permanent; indexed to inflation annually",
+        "expiration": "⚠️ Terminates for construction beginning after June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Act now.",
         "conflicts": [],
         "stacks_with": ["Mass Save rebates", "IRA 45L"],
-        "berdo_periods": ["2025–29", "2030–34", "2035–39", "2040–44", "2045–49"],
+        "berdo_periods": ["2025–29"],
         "ownership": ["For-profit"],
         "ownership_transfer": "Nonprofit / Government",
         "ownership_transfer_note": "Nonprofits and government owners can allocate the deduction to the project designer/engineer.",
-        "source": "https://www.irs.gov/credits-deductions/179d-commercial-buildings-energy-efficiency-tax-deduction",
+        "source": "https://www.energy.gov/eere/buildings/179d-commercial-buildings-energy-efficiency-tax-deduction",
         "checklist": [
+            "⚠️ Construction must BEGIN by June 30, 2026 — confirm timeline immediately",
             "Engage a qualified third-party certifier (licensed engineer or contractor)",
             "Commission a 179D energy model demonstrating qualifying energy savings",
-            "Ensure prevailing wage compliance if claiming the enhanced $5.00/sqft rate",
+            "Ensure prevailing wage + apprenticeship compliance for the enhanced rate",
             "Obtain signed certification from the certifier",
             "Claim deduction on federal tax return (Form 3115 if prior year)",
         ],
@@ -1758,7 +1892,7 @@ INCENTIVE_STACK = [
         "type": "Federal tax credit",
         "priority": 2,
         "apply_first_reason": "Claim alongside 179D — these stack. Document unit-level improvements during construction.",
-        "scopes": ["Electrification — HVAC (heat pump)",
+        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
@@ -1786,7 +1920,7 @@ INCENTIVE_STACK = [
         "type": "Federal tax credit",
         "priority": 3,
         "apply_first_reason": "Competitive allocation — apply early via IRS portal. May conflict with other IRA investment credits.",
-        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown"],
         "amount_psf_low": 0.60,
@@ -1814,7 +1948,7 @@ INCENTIVE_STACK = [
         "type": "State grant",
         "priority": 1,
         "apply_first_reason": "Grant funds must be committed before construction — apply during open rounds.",
-        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.20,
@@ -1843,7 +1977,7 @@ INCENTIVE_STACK = [
         "apply_first_reason": "Annual grant cycle — apply in the current round.",
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
-                   "Electrification — HVAC (heat pump)",
+                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.20,
