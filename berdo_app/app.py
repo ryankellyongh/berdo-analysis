@@ -1425,17 +1425,32 @@ def render_retrofit_tab(prefill: dict = None):
 
     st.subheader("Building inputs")
 
+    # Inject prefill into session state when a new address lookup arrives
+    prefill_addr_key = prefill.get("address", "")
+    last_injected    = st.session_state.get("ret_last_injected_addr", "")
+    if prefill_addr_key and prefill_addr_key != last_injected:
+        if prefill.get("sqft"):
+            st.session_state["ret_sqft"] = int(prefill["sqft"])
+        if prefill.get("berdo_category"):
+            type_opts_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+            if prefill["berdo_category"] in type_opts_init:
+                st.session_state["ret_btype"] = prefill["berdo_category"]
+        st.session_state["ret_last_injected_addr"] = prefill_addr_key
+
+    if prefill_addr_key:
+        st.caption(f"Pre-filled from: {prefill_addr_key}")
+
     col1, col2 = st.columns(2)
 
     with col1:
-        default_sqft = int(prefill.get("sqft", 0)) if prefill.get("sqft") else None
         sqft = st.number_input(
             "Gross floor area (sq ft)",
             min_value=1_000,
             max_value=5_000_000,
-            value=default_sqft or 50_000,
+            value=st.session_state.get("ret_sqft", 50_000),
             step=1_000,
-            help="Total building area. Pre-filled from address lookup if available.",
+            help="Total building area. Pre-filled from Address Lookup if available.",
+            key="ret_sqft",
         )
         ownership_type = st.selectbox(
             "Ownership type",
@@ -1444,24 +1459,17 @@ def render_retrofit_tab(prefill: dict = None):
         )
 
     with col2:
-        prefill_type = prefill.get("property_type")
-        berdo_category = None
-        if prefill_type:
-            berdo_category = map_property_type(prefill_type)
-
         type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
-        default_index = 0
-        if berdo_category and berdo_category in type_options:
-            default_index = type_options.index(berdo_category)
-
+        prefill_cat  = st.session_state.get("ret_btype", "— select —")
+        default_index = type_options.index(prefill_cat) if prefill_cat in type_options else 0
         selected_type = st.selectbox(
             "Building type (BERDO category)",
             options=type_options,
             index=default_index,
-            help="Pre-filled from address lookup if available. Used to filter relevant incentives.",
+            help="Pre-filled from Address Lookup if available.",
+            key="ret_btype",
         )
-        if selected_type != "— select —":
-            berdo_category = selected_type
+        berdo_category = selected_type if selected_type != "— select —" else None
 
         fuel_type = st.selectbox(
             "Primary heating fuel",
@@ -3589,6 +3597,13 @@ with tab_address:
 
             st.session_state["optimizer_prefill"] = opt_prefill
 
+            # Also pre-fill the Retrofit Estimator tab
+            st.session_state["retrofit_prefill"] = {
+                "address":        opt_prefill.get("address", address_input),
+                "sqft":           opt_prefill.get("sqft", 50_000),
+                "berdo_category": berdo_cat,
+            }
+
             # Also pre-fill the Emissions Planner tab
             ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
             planner_prefill = {
@@ -3663,8 +3678,8 @@ with tab_portfolio:
 # Tab 3 — Retrofit Cost & Incentive Estimator
 # ---------------------------------------------------------------------------
 with tab_retrofit:
-    prefill = {}
-    render_retrofit_tab(prefill=prefill)
+    retrofit_prefill = st.session_state.get("retrofit_prefill", {})
+    render_retrofit_tab(prefill=retrofit_prefill)
 
 # ---------------------------------------------------------------------------
 # Tab 4 — Incentive Optimizer
