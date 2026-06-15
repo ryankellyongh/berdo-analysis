@@ -2376,15 +2376,18 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_25yr
 
         if net_low <= fine_5yr:
+            net_low_str  = _fmt_dollars(net_low).replace("$", "USD ")
+            fine_5yr_str = _fmt_dollars(fine_5yr).replace("$", "USD ")
             st.success(
                 f"**Retrofit now.** Even at the low estimate, retrofitting "
-                f"({_fmt_dollars(net_low)} net) costs less than paying fines for just "
-                f"the current 2025–29 period ({_fmt_dollars(fine_5yr)}). "
+                f"({net_low_str} net) costs less than paying fines for just "
+                f"the current 2025–29 period ({fine_5yr_str}). "
                 "The financial case for acting immediately is strong."
             )
         elif net_low <= fine_5yr * 2:
+            net_low_str = _fmt_dollars(net_low).replace("$", "USD ")
             st.warning(
-                f"**Retrofit soon.** The low net retrofit cost ({_fmt_dollars(net_low)}) "
+                f"**Retrofit soon.** The low net retrofit cost ({net_low_str}) "
                 f"is roughly {round(net_low / annual_fine, 1)} years of fines. That's within a typical "
                 "investment horizon, especially since BERDO limits tighten each period — "
                 "delaying means higher fines and potentially higher retrofit costs later."
@@ -2396,19 +2399,25 @@ def render_incentive_optimizer_tab(prefill: dict = None):
                 running += r["5yr_fine"]
                 if running >= net_low and crossover_period is None:
                     crossover_period = r["period"]
+            fine_5yr_str = _fmt_dollars(fine_5yr).replace("$", "USD ")
+            net_low_str  = _fmt_dollars(net_low).replace("$", "USD ")
             st.info(
                 f"**Consider phasing.** Paying the fine is cheaper in the short term "
-                f"({_fmt_dollars(fine_5yr)} for 2025–29 vs. {_fmt_dollars(net_low)} net retrofit cost). "
+                f"({fine_5yr_str} for 2025–29 vs. {net_low_str} net retrofit cost). "
                 + (f"However, cumulative fines exceed the low retrofit cost by the **{crossover_period}** period. " if crossover_period else "")
                 + "A phased approach — partial improvements now, full retrofit before the next "
                 "tightening — may be the most cost-effective path."
             )
         else:
+            cum_str      = _fmt_dollars(cumulative_fine_all).replace("$", "USD ")
+            net_high_str = _fmt_dollars(net_high).replace("$", "USD ")
+            low_sav_str  = _fmt_dollars(round(sqft * 1.0)).replace("$", "USD ")
+            high_sav_str = _fmt_dollars(round(sqft * 2.0)).replace("$", "USD ")
             st.info(
                 f"**Pay the fine in the near term.** At current fine levels, cumulative ACP payments "
-                f"({_fmt_dollars(cumulative_fine_all)} through 2050) are less than the high net retrofit cost "
-                f"({_fmt_dollars(net_high)}). However, this analysis excludes energy cost savings "
-                f"(typically {_fmt_dollars(round(sqft * 1.0))}–{_fmt_dollars(round(sqft * 2.0))}/yr at $1–2/sqft) "
+                f"({cum_str} through 2050) are less than the high net retrofit cost "
+                f"({net_high_str}). However, this analysis excludes energy cost savings "
+                f"(typically {low_sav_str}–{high_sav_str}/yr at USD 1–USD 2/sqft) "
                 "which significantly improve the retrofit case. Run the numbers with your energy "
                 "consultant before deciding."
             )
@@ -2526,7 +2535,7 @@ if multi_year_mode:
         horizontal=False,
     )
     df_full = all_years[selected_year]
-    show_yoy = st.sidebar.toggle("Show year-over-year comparison", value=True)
+    show_yoy = st.sidebar.checkbox("Show year-over-year comparison", value=True)
 else:
     selected_year = years_sorted[0] if years_sorted else 0
     df_full = all_years[selected_year]
@@ -2534,7 +2543,7 @@ else:
 
 # --- Sidebar: grid decarbonization scenario ---
 st.sidebar.header("Grid decarbonization scenario")
-show_grid_decarb = st.sidebar.toggle(
+show_grid_decarb = st.sidebar.checkbox(
     "Show grid decarbonization scenario",
     value=False,
     help=(
