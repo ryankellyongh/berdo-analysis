@@ -1245,6 +1245,41 @@ RETROFIT_COST_PER_SQFT = {
 BOSTON_LABOR_MULTIPLIER = 1.25
 
 # ---------------------------------------------------------------------------
+# BERDO EMISSIONS FACTORS
+# Source: EPA Energy Star Portfolio Manager (August 2025 edition)
+# BERDO uses these factors per the City of Boston regulations.
+# Units: kg CO₂e per kBtu of site energy consumed
+# ---------------------------------------------------------------------------
+FUEL_EF_KG_PER_KBTU = {
+    "Natural gas":      0.05311,   # 5.311 kg CO₂e/therm ÷ 100 kBtu/therm
+    "Fuel oil #2":      0.07421,   # distillate / home heating oil
+    "Fuel oil #4":      0.07529,
+    "Fuel oil #5/#6":   0.07529,   # residual
+    "Propane":          0.06154,
+    "Diesel":           0.07421,
+    "Kerosene":         0.07219,
+    "District steam":   0.06571,   # default; custom factors may apply
+    "Electricity":      None,      # use PROJECTED_GRID_EF (kg CO₂e/MWh)
+}
+
+# Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
+FUEL_UNIT_TO_KBTU = {
+    "therms":   100.0,      # natural gas
+    "ccf":      102.6,      # natural gas (hundred cubic feet)
+    "mcf":      1026.0,     # natural gas (thousand cubic feet)
+    "gallons_oil2":  138.0, # fuel oil #2
+    "gallons_oil4":  146.0, # fuel oil #4
+    "gallons_oil56": 150.0, # fuel oil #5/#6
+    "gallons_propane": 92.0,
+    "gallons_diesel":  138.0,
+    "gallons_kerosene": 135.0,
+    "kbtu":     1.0,
+    "mmbtu":    1000.0,
+    "kwh":      3.412,      # electricity
+    "mwh":      3412.0,     # electricity
+}
+
+# ---------------------------------------------------------------------------
 # INCENTIVE PROGRAMS
 # Each entry: name, amount_str, eligibility_notes, expiration, source_url
 # Amounts are per-sqft where applicable; lump-sum where noted.
@@ -2045,15 +2080,30 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     )
 
     # ── Inputs ──────────────────────────────────────────────────────────────
+    # Inject prefill into session state when a new address lookup arrives.
+    # We detect a "fresh" prefill by comparing the prefill address to the
+    # last address we injected — if different, overwrite widget state.
+    prefill_addr_key = prefill.get("address", "")
+    last_injected    = st.session_state.get("opt_last_injected_addr", "")
+
+    if prefill_addr_key and prefill_addr_key != last_injected:
+        if prefill.get("sqft"):
+            st.session_state["opt_sqft"] = int(prefill["sqft"])
+        if prefill.get("berdo_category"):
+            type_options_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+            if prefill["berdo_category"] in type_options_init:
+                st.session_state["opt_btype"] = prefill["berdo_category"]
+        st.session_state["opt_last_injected_addr"] = prefill_addr_key
+
     st.subheader("Building inputs")
     col1, col2 = st.columns(2)
 
     with col1:
-        default_sqft = int(prefill.get("sqft", 50_000)) if prefill.get("sqft") else 50_000
         sqft = st.number_input(
             "Gross floor area (sq ft)",
             min_value=1_000, max_value=5_000_000,
-            value=default_sqft, step=1_000,
+            value=st.session_state.get("opt_sqft", 50_000),
+            step=1_000,
             help="Pre-filled from Address Lookup if available.",
             key="opt_sqft",
         )
@@ -2067,8 +2117,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
     with col2:
         type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
-        prefill_cat = prefill.get("berdo_category")
-        default_idx = type_options.index(prefill_cat) if prefill_cat in type_options else 0
+        prefill_cat  = st.session_state.get("opt_btype", "— select —")
+        default_idx  = type_options.index(prefill_cat) if prefill_cat in type_options else 0
         selected_type = st.selectbox(
             "Building type (BERDO category)",
             options=type_options, index=default_idx,
@@ -2112,6 +2162,145 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         st.warning("Select at least one retrofit scope above to see incentive matches.")
         return
 
+    # ── Planned project — emissions reduction calculator ─────────────────────
+    st.markdown("---")
+    st.subheader("Planned project — will it close the compliance gap?")
+    st.caption(
+        "Enter your planned energy reduction to see whether it brings your building "
+        "into compliance. Uses the same emissions factors BERDO applies."
+    )
+
+    proj_cols = st.columns(3)
+    with proj_cols[0]:
+        proj_fuel = st.selectbox(
+            "Fuel type being reduced",
+            options=["Natural gas", "Fuel oil #2", "Fuel oil #4", "Fuel oil #5/#6",
+                     "Propane", "Diesel", "Kerosene", "Electricity", "District steam"],
+            key="proj_fuel_type",
+            help="Select the fuel your retrofit will reduce or eliminate.",
+        )
+    with proj_cols[1]:
+        unit_options = {
+            "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
+            "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
+            "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
+            "Fuel oil #5/#6": ["gallons", "kBtu", "MMBtu"],
+            "Propane":        ["gallons", "kBtu", "MMBtu"],
+            "Diesel":         ["gallons", "kBtu", "MMBtu"],
+            "Kerosene":       ["gallons", "kBtu", "MMBtu"],
+            "Electricity":    ["kWh", "MWh", "kBtu", "MMBtu"],
+            "District steam": ["kBtu", "MMBtu", "therms"],
+        }
+        units = unit_options.get(proj_fuel, ["kBtu", "MMBtu"])
+        proj_unit = st.selectbox(
+            "Unit",
+            options=units,
+            key="proj_unit",
+        )
+    with proj_cols[2]:
+        proj_amount = st.number_input(
+            "Annual energy saved",
+            min_value=0.0,
+            value=0.0,
+            step=1000.0,
+            key="proj_amount",
+            help="Annual reduction in consumption from this project.",
+        )
+
+    if proj_amount > 0:
+        # Convert to kBtu
+        unit_map = {
+            "therms": 100.0, "ccf": 102.6, "mcf": 1026.0,
+            "gallons": 138.0,  # default for oil; overridden below
+            "kBtu": 1.0, "MMBtu": 1000.0,
+            "kWh": 3.412, "MWh": 3412.0,
+        }
+        # Override gallon factor by fuel type
+        if proj_unit == "gallons":
+            gal_factor = {
+                "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
+                "Fuel oil #5/#6": 150.0, "Propane": 92.0,
+                "Diesel": 138.0, "Kerosene": 135.0,
+            }.get(proj_fuel, 138.0)
+            proj_kbtu = proj_amount * gal_factor
+        else:
+            proj_kbtu = proj_amount * unit_map.get(proj_unit, 1.0)
+
+        # Calculate emissions reduction
+        if proj_fuel == "Electricity":
+            # Use 2025 grid EF (kg CO₂e/MWh → per kBtu)
+            grid_ef_kwh = PROJECTED_GRID_EF.get(2025, 249) / 1000  # kg/kWh
+            ef = grid_ef_kwh / 3.412  # kg/kBtu
+        else:
+            ef = FUEL_EF_KG_PER_KBTU.get(proj_fuel, 0.05311)
+
+        proj_emission_reduction_kg  = proj_kbtu * ef           # kg CO₂e/yr
+        proj_emission_reduction_mt  = proj_emission_reduction_kg / 1000  # metric tons
+        proj_intensity_reduction    = proj_emission_reduction_kg / sqft  # kg/sqft/yr
+
+        res_cols = st.columns(3)
+        res_cols[0].metric(
+            "Estimated emission reduction",
+            f"{proj_emission_reduction_mt:,.1f} metric tons CO₂e/yr",
+        )
+        res_cols[1].metric(
+            "GHG intensity reduction",
+            f"{proj_intensity_reduction:.3f} kg CO₂e/sqft/yr",
+        )
+
+        # Show compliance impact if we have the building's current GHG intensity
+        prefill_ghg_proj = prefill.get("ghg_intensity")
+        if prefill_ghg_proj and berdo_category and berdo_category in BERDO_STANDARDS:
+            new_intensity = max(prefill_ghg_proj - proj_intensity_reduction, 0)
+            limit_2025 = BERDO_STANDARDS[berdo_category][0]
+            gap_before = prefill_ghg_proj - limit_2025
+            gap_after  = new_intensity - limit_2025
+
+            with res_cols[2]:
+                if gap_after <= 0:
+                    st.metric(
+                        "2025–29 compliance after project",
+                        "Compliant",
+                        delta=f"{abs(gap_after):.3f} kg under limit",
+                    )
+                else:
+                    st.metric(
+                        "2025–29 compliance after project",
+                        "Still non-compliant",
+                        delta=f"{gap_after:.3f} kg over limit (was {gap_before:.3f})",
+                    )
+
+            if gap_after <= 0:
+                st.success(
+                    f"This project alone would bring the building into compliance for the "
+                    f"2025–29 period. New estimated intensity: "
+                    f"{new_intensity:.3f} kg CO₂e/sqft/yr (limit: {limit_2025} kg)."
+                )
+            elif gap_before > 0:
+                pct_closed = min(round((gap_before - gap_after) / gap_before * 100, 0), 100)
+                remaining_mt = round(gap_after * sqft / 1000, 1)
+                st.info(
+                    f"This project closes **{pct_closed:.0f}%** of the 2025–29 compliance gap. "
+                    f"Remaining gap: {gap_after:.3f} kg CO₂e/sqft/yr "
+                    f"({remaining_mt:,.0f} excess metric tons). "
+                    f"Additional measures or an Alternative Compliance Payment would be needed."
+                )
+        else:
+            st.caption(
+                "Look up your building in the Address Lookup tab to see how this project "
+                "affects your compliance gap."
+            )
+
+        # Update the energy savings input with the calculated savings
+        st.caption(
+            f"Tip: enter this project's energy cost savings in the Cash flow & payback "
+            f"section below to model the full financial return."
+        )
+    else:
+        st.caption(
+            "Enter a planned annual energy reduction above to see its compliance impact."
+        )
+
     # ── Match incentives ─────────────────────────────────────────────────────
     matched = [
         inc for inc in INCENTIVE_STACK
@@ -2140,6 +2329,32 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     # Net cost (incentives capped at gross cost)
     net_low  = max(total_cost_low  - total_incentive_high, 0)
     net_high = max(total_cost_high - total_incentive_low,  0)
+
+    # ── Headline summary card ─────────────────────────────────────────────────
+    st.markdown("---")
+
+    # Build the headline sentence
+    incentive_str   = _fmt_dollars(total_incentive_high).replace("$", "USD ")
+    net_low_display = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
+    prefill_fine_val = prefill.get("annual_fine_usd", 0) or 0
+    default_energy   = 1.0 * sqft  # $1/sqft default energy savings
+    total_return     = prefill_fine_val + default_energy
+
+    if prefill_fine_val > 0 and total_return > 0 and net_low > 0:
+        headline_payback = round(net_low / total_return, 1)
+        payback_str = f", with an estimated **{headline_payback}-year payback** including energy savings"
+    elif prefill_fine_val > 0 and net_low == 0:
+        payback_str = ", with the retrofit **fully covered by incentives**"
+    else:
+        payback_str = ""
+
+    headline = (
+        f"For this building, you qualify for up to **{incentive_str}** "
+        f"in incentives, reducing your estimated net retrofit cost to **{net_low_display}**"
+        f"{payback_str}."
+    )
+
+    st.info(headline)
 
     st.markdown("---")
 
@@ -2247,25 +2462,6 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         if annual_fine_input > 0:
             annual_fine = annual_fine_input
 
-    # ── Cash flow & payback ───────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("Cash flow & payback")
-
-    annual_fine = prefill_fine if prefill_fine else None
-
-    if annual_fine is None:
-        st.caption(
-            "Look up your building in the Address Lookup tab to pre-fill your "
-            "estimated annual BERDO fine — or enter it manually below."
-        )
-        annual_fine_input = st.number_input(
-            "Estimated annual BERDO fine ($/yr)",
-            min_value=0, value=0, step=1_000,
-            key="opt_fine_manual",
-        )
-        if annual_fine_input > 0:
-            annual_fine = annual_fine_input
-
     if annual_fine and annual_fine > 0:
 
         # ── Energy savings input ─────────────────────────────────────────────
@@ -2306,31 +2502,55 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         # ── Combined annual benefit ──────────────────────────────────────────
         total_annual_benefit = annual_fine + energy_savings_annual
 
-        # Payback metrics
+        # Payback metrics — cap at 50 years; beyond that fine avoidance is the wrong frame
+        PAYBACK_CAP = 50
+
         payback_low_fine_only  = round(net_low  / annual_fine, 1) if net_low  > 0 else 0.0
         payback_high_fine_only = round(net_high / annual_fine, 1) if net_high > 0 else 0.0
         payback_low_combined   = round(net_low  / total_annual_benefit, 1) if net_low  > 0 else 0.0
         payback_high_combined  = round(net_high / total_annual_benefit, 1) if net_high > 0 else 0.0
 
+        def _fmt_payback(yrs):
+            if yrs == 0:
+                return "< 1 yr"
+            if yrs > PAYBACK_CAP:
+                return "Fine avoidance insufficient"
+            return f"{yrs} yrs"
+
+        fine_only_impractical = payback_low_fine_only > PAYBACK_CAP
+
         pb_cols = st.columns(4)
         pb_cols[0].metric(
             "Payback — fine only (low)",
-            f"{payback_low_fine_only} yrs" if payback_low_fine_only > 0 else "< 1 yr",
+            _fmt_payback(payback_low_fine_only),
         )
         pb_cols[1].metric(
             "Payback — fine only (high)",
-            f"{payback_high_fine_only} yrs" if payback_high_fine_only > 0 else "< 1 yr",
+            _fmt_payback(payback_high_fine_only),
         )
         pb_cols[2].metric(
             "Payback — fine + energy (low)",
-            f"{payback_low_combined} yrs" if payback_low_combined > 0 else "< 1 yr",
-            delta=f"{round(payback_low_fine_only - payback_low_combined, 1)} yrs faster" if payback_low_fine_only > payback_low_combined else None,
+            _fmt_payback(payback_low_combined),
+            delta=f"{round(payback_low_fine_only - payback_low_combined, 1)} yrs faster"
+                  if 0 < payback_low_fine_only <= PAYBACK_CAP and payback_low_fine_only > payback_low_combined
+                  else None,
         )
         pb_cols[3].metric(
             "Payback — fine + energy (high)",
-            f"{payback_high_combined} yrs" if payback_high_combined > 0 else "< 1 yr",
-            delta=f"{round(payback_high_fine_only - payback_high_combined, 1)} yrs faster" if payback_high_fine_only > payback_high_combined else None,
+            _fmt_payback(payback_high_combined),
+            delta=f"{round(payback_high_fine_only - payback_high_combined, 1)} yrs faster"
+                  if 0 < payback_high_fine_only <= PAYBACK_CAP and payback_high_fine_only > payback_high_combined
+                  else None,
         )
+
+        if fine_only_impractical:
+            st.warning(
+                f"For a building this size ({sqft:,} sqft), BERDO fines alone do not justify "
+                "the retrofit cost. This is normal for large commercial buildings — "
+                "the financial case rests on **energy cost savings** and **asset value**, not fine avoidance. "
+                f"At {energy_savings_psf:.2f}/sqft/yr in energy savings, the combined payback is "
+                f"**{_fmt_payback(payback_low_combined)}** at the low estimate."
+            )
 
         # ── Cash flow chart ──────────────────────────────────────────────────
         years = list(range(0, 16))
@@ -2424,14 +2644,24 @@ def render_incentive_optimizer_tab(prefill: dict = None):
             st.info(
                 f"Reasonable case: best-case payback is **{best_payback} years**. "
                 "Within a standard hold period for most commercial properties. "
-                + ("Increasing energy savings assumptions or reducing net cost would strengthen the case." if energy_savings_psf < 1.0 else "")
+                + ("Increasing energy savings or reducing net cost would strengthen the case." if energy_savings_psf < 1.0 else "")
             )
-        else:
+        elif best_payback <= PAYBACK_CAP:
             st.info(
                 f"Longer payback: best-case is **{best_payback} years**. "
-                "Fine avoidance alone may not justify the investment — consider whether "
-                "energy savings, carbon credit value, or asset value appreciation change the picture. "
-                "A phased retrofit approach may improve the near-term economics."
+                "Consider whether a phased retrofit — higher-ROI measures first — "
+                "improves the near-term economics."
+            )
+        else:
+            # Large building: fine avoidance is the wrong frame entirely
+            energy_annual_str = _fmt_dollars(energy_savings_annual).replace("$", "USD ")
+            st.info(
+                "For a building this size, the primary financial drivers are **energy cost savings** "
+                f"({energy_annual_str}/yr at current assumptions) and **asset value protection** — "
+                "not fine avoidance alone. Consider: lender and investor ESG requirements, "
+                "tenant retention in a market increasingly sensitive to building performance, "
+                "and the cost trajectory of fines as BERDO limits tighten toward 2050. "
+                "Adjust the energy savings input above to model the full return."
             )
 
     # ── Retrofit vs. compliance decision ─────────────────────────────────────
@@ -2471,81 +2701,103 @@ def render_incentive_optimizer_tab(prefill: dict = None):
                 })
 
         # ── Decision matrix ──────────────────────────────────────────────────
-        st.markdown("#### 5-year cost comparison")
+        st.markdown("#### Cost comparison — retrofit now vs. pay escalating fines")
+        st.caption(
+            "BERDO fines grow every five years as the emissions limit tightens. "
+            "The comparison below uses cumulative fines through 2050, not just the current period."
+        )
+
+        cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_25yr
+        cum_fine_10yr = sum(r["5yr_fine"] for r in period_fines[:2]) if len(period_fines) >= 2 else fine_10yr
 
         d1, d2, d3 = st.columns(3)
         d1.metric(
-            "Pay the fine (5 yrs, current period)",
+            "Fines — current period only (5 yrs)",
             _fmt_dollars(fine_5yr),
+            delta="Grows each period as limits tighten",
         )
         d2.metric(
-            "Retrofit — net cost (low estimate)",
-            "Fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low),
+            "Fines — cumulative through 2050",
+            _fmt_dollars(cumulative_fine_all),
+            delta="If no retrofit is ever made",
         )
         d3.metric(
-            "Retrofit — net cost (high estimate)",
-            _fmt_dollars(net_high),
+            "Retrofit — net cost (low estimate)",
+            "Fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low),
+            delta="One-time outlay, fines avoided permanently",
         )
 
         # ── Plain-English recommendation ─────────────────────────────────────
         st.markdown("#### Recommendation")
 
-        # Compare net_low to cumulative fine cost across all periods
-        cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_25yr
+        # Key insight: fines escalate, so compare retrofit against cumulative fines
+        # not just one period. Also compute crossover period.
+        running = 0
+        crossover_period = None
+        crossover_yr = None
+        for r in period_fines:
+            running += r["5yr_fine"]
+            if running >= net_low and crossover_period is None:
+                crossover_period = r["period"]
 
-        if net_low <= fine_5yr:
-            net_low_str  = _fmt_dollars(net_low).replace("$", "USD ")
-            fine_5yr_str = _fmt_dollars(fine_5yr).replace("$", "USD ")
+        net_low_str      = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
+        fine_5yr_str     = _fmt_dollars(fine_5yr).replace("$", "USD ")
+        cum_str          = _fmt_dollars(cumulative_fine_all).replace("$", "USD ")
+        cum_10yr_str     = _fmt_dollars(cum_fine_10yr).replace("$", "USD ")
+
+        if net_low == 0 or net_low <= fine_5yr:
+            # Retrofit cost is zero or cheaper than even one period of fines
             st.success(
-                f"**Retrofit now.** Even at the low estimate, the net retrofit cost "
-                f"({'fully covered by incentives' if net_low == 0 else net_low_str}) "
-                f"is less than one period of BERDO fines ({fine_5yr_str}). "
-                "The financial case for acting immediately is strong."
+                f"**Retrofit now — clear financial case.** The net retrofit cost "
+                f"({net_low_str}) is less than or equal to one period of BERDO fines "
+                f"({fine_5yr_str} for 2025–29 alone). "
+                "And fines only grow from here — each period the limit tightens and the "
+                "gap widens. Retrofitting eliminates all future fine exposure permanently."
             )
-        elif net_low <= fine_5yr * 2:
-            net_low_str = _fmt_dollars(net_low).replace("$", "USD ")
-            st.warning(
-                f"**Retrofit soon.** The low net retrofit cost ({net_low_str}) "
-                f"is roughly {round(net_low / annual_fine, 1)} years of fines. That's within a typical "
-                "investment horizon, especially since BERDO limits tighten each period — "
-                "delaying means higher fines and potentially higher retrofit costs later."
+        elif net_low <= cum_fine_10yr:
+            # Retrofit pays back within 2 periods (10 years) of escalating fines
+            st.success(
+                f"**Retrofit soon — strong case once fines escalate.** "
+                f"The net retrofit cost ({net_low_str}) is less than cumulative fines "
+                f"over the first two periods ({cum_10yr_str} through 2030–34). "
+                f"Fines increase each period as the BERDO limit tightens — "
+                "waiting means paying more before you eventually retrofit anyway."
             )
         elif net_low <= cumulative_fine_all:
-            running = 0
-            crossover_period = None
-            for r in period_fines:
-                running += r["5yr_fine"]
-                if running >= net_low and crossover_period is None:
-                    crossover_period = r["period"]
-            fine_5yr_str = _fmt_dollars(fine_5yr).replace("$", "USD ")
-            net_low_str  = _fmt_dollars(net_low).replace("$", "USD ")
-            st.info(
-                f"**Consider phasing.** Paying the fine is cheaper in the short term "
-                f"({fine_5yr_str} for 2025–29 vs. {net_low_str} net retrofit cost). "
-                + (f"However, cumulative fines exceed the low retrofit cost by the **{crossover_period}** period. " if crossover_period else "")
-                + "A phased approach — partial improvements now, full retrofit before the next "
-                "tightening — may be the most cost-effective path."
+            # Retrofit is cheaper than total lifetime fines — crossover at some period
+            st.warning(
+                f"**Consider phasing — fines will exceed retrofit cost by {crossover_period or 'a future period'}.** "
+                f"Paying the fine costs less upfront ({fine_5yr_str} for 2025–29) "
+                f"vs. retrofitting now ({net_low_str}). "
+                f"However, BERDO limits tighten every 5 years — your annual fine grows "
+                f"each period as the gap between your building's emissions and the limit widens. "
+                f"Cumulative fines reach {cum_str} through 2050 if nothing is done. "
+                "A phased approach — lower-cost measures now, deeper retrofit before the next "
+                "period tightens — may be the most cost-effective path."
             )
         else:
-            cum_str      = _fmt_dollars(cumulative_fine_all).replace("$", "USD ")
+            # Even cumulative fines are less than net retrofit cost
             net_high_str = _fmt_dollars(net_high).replace("$", "USD ")
             low_sav_str  = _fmt_dollars(round(sqft * 1.0)).replace("$", "USD ")
             high_sav_str = _fmt_dollars(round(sqft * 2.0)).replace("$", "USD ")
             st.info(
-                f"**Pay the fine in the near term.** At current fine levels, cumulative ACP payments "
-                f"({cum_str} through 2050) are less than the high net retrofit cost "
-                f"({net_high_str}). However, this analysis excludes energy cost savings "
-                f"(typically {low_sav_str}–{high_sav_str}/yr at USD 1–USD 2/sqft) "
-                "which significantly improve the retrofit case. Run the numbers with your energy "
-                "consultant before deciding."
+                f"**Fine avoidance alone does not justify this retrofit.** "
+                f"Even cumulative BERDO fines through 2050 ({cum_str}) are less than "
+                f"the high net retrofit cost ({net_high_str}). "
+                f"However, this excludes energy savings "
+                f"(typically {low_sav_str}–{high_sav_str}/yr), asset value protection, "
+                "and lender/investor ESG requirements — which for large buildings often "
+                "dwarf the fine exposure. Run the numbers with your energy consultant "
+                "before ruling out the retrofit."
             )
 
         # ── Period-by-period fine escalation table ───────────────────────────
         if period_fines:
-            st.markdown("#### How fines escalate as limits tighten")
+            st.markdown("#### Fine escalation by period")
             st.caption(
-                "BERDO limits tighten every five years. If no retrofit is made, "
-                "annual fines increase each period as the gap widens."
+                "Each period the BERDO limit drops. If your building's emissions stay flat, "
+                "the gap — and the fine — grows. The right column shows when cumulative "
+                "fines exceed the low net retrofit cost."
             )
 
             fine_rows = []
@@ -2553,14 +2805,15 @@ def render_incentive_optimizer_tab(prefill: dict = None):
             for r in period_fines:
                 running_total += r["5yr_fine"]
                 fine_rows.append({
-                    "Period":           r["period"],
-                    "BERDO limit":      f"{r['limit']} kg CO₂e/sf/yr",
-                    "Annual fine":      f"${r['annual_fine']:,.0f}",
-                    "5-yr fine":        f"${r['5yr_fine']:,.0f}",
-                    "Cumulative fines": f"${running_total:,.0f}",
-                    "vs. net retrofit (low)": (
-                        "Fine cheaper" if r["5yr_fine"] < net_low
-                        else "Retrofit cheaper this period"
+                    "Period":              r["period"],
+                    "BERDO limit":         f"{r['limit']} kg CO₂e/sf/yr",
+                    "Annual fine":         f"${r['annual_fine']:,.0f}",
+                    "5-yr period fine":    f"${r['5yr_fine']:,.0f}",
+                    "Cumulative fines":    f"${running_total:,.0f}",
+                    "vs. retrofit (low)":  (
+                        "Fines now cheaper"
+                        if running_total < net_low
+                        else "Cumulative fines exceed retrofit"
                     ),
                 })
 
@@ -2571,9 +2824,9 @@ def render_incentive_optimizer_tab(prefill: dict = None):
             )
 
             st.caption(
-                "Assumes current GHG intensity is held flat with no operational changes. "
-                "Grid decarbonization (if enabled in sidebar) would reduce electricity-attributed "
-                "emissions and lower future fines independently of any retrofit."
+                "Assumes current GHG intensity held flat with no operational changes. "
+                "Grid decarbonization would reduce electricity-attributed fines over time. "
+                "Not an official BERDO compliance determination."
             )
     else:
         st.info(
