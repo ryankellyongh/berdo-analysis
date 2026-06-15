@@ -391,7 +391,7 @@ def render_compliance_section(
         total_5yr_fine = sum(g["annual_fine_usd"] * 5 for g in non_compliant_periods)
         msg = (
             f"**Conservative scenario:** if no emissions reductions are made, this building "
-            f"faces an estimated **${total_5yr_fine:,.0f}** in cumulative ACP payments across "
+            f"faces an estimated USD {total_5yr_fine:,.0f} in cumulative ACP payments across "
             f"{len(non_compliant_periods)} non-compliant period(s) "
             f"(annual fine × 5 years per period)."
         )
@@ -404,7 +404,7 @@ def render_compliance_section(
             total_proj_fine = sum(g["annual_fine_usd"] * 5 for g in proj_non_compliant)
             if proj_non_compliant:
                 msg += (
-                    f"\n\n**Grid decarbonization scenario:** estimated **${total_proj_fine:,.0f}** "
+                    f"\n\n**Grid decarbonization scenario:** estimated USD {total_proj_fine:,.0f} "
                     f"across {len(proj_non_compliant)} non-compliant period(s)."
                 )
             else:
@@ -508,14 +508,22 @@ def infer_primary_fuel(row) -> str:
     Returns dominant fuel if >60% of total, else 'Mixed / unknown'.
     Maps to the dropdown options used in the Retrofit Estimator and Incentive Optimizer.
     """
-    def _get(col): return float(row.get(col) or 0)
+    import math
 
-    gas_kbtu     = _get("fuel_natural_gas_kbtu")
-    elec_kbtu    = _get("fuel_electricity_kwh") * 3.412
-    steam_kbtu   = _get("fuel_district_steam_kbtu") + _get("fuel_district_hot_water_kbtu")
-    oil_kbtu     = (_get("fuel_oil1_kbtu") + _get("fuel_oil2_kbtu") +
-                    _get("fuel_oil4_kbtu") + _get("fuel_oil56_kbtu"))
-    other_kbtu   = _get("fuel_propane_kbtu") + _get("fuel_diesel_kbtu") + _get("fuel_kerosene_kbtu")
+    def _get(col):
+        v = row.get(col)
+        try:
+            f = float(v)
+            return 0.0 if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return 0.0
+
+    gas_kbtu   = _get("fuel_natural_gas_kbtu")
+    elec_kbtu  = _get("fuel_electricity_kwh") * 3.412
+    steam_kbtu = _get("fuel_district_steam_kbtu") + _get("fuel_district_hot_water_kbtu")
+    oil_kbtu   = (_get("fuel_oil1_kbtu") + _get("fuel_oil2_kbtu") +
+                  _get("fuel_oil4_kbtu") + _get("fuel_oil56_kbtu"))
+    other_kbtu = _get("fuel_propane_kbtu") + _get("fuel_diesel_kbtu") + _get("fuel_kerosene_kbtu")
 
     total = gas_kbtu + elec_kbtu + steam_kbtu + oil_kbtu + other_kbtu
     if total <= 0:
@@ -528,12 +536,45 @@ def infer_primary_fuel(row) -> str:
         "Fuel oil":       oil_kbtu,
         "Mixed / unknown": other_kbtu,
     }
-    dominant_fuel = max(buckets, key=buckets.get)
+    dominant_fuel  = max(buckets, key=buckets.get)
     dominant_share = buckets[dominant_fuel] / total
 
     if dominant_share >= 0.60:
         return dominant_fuel
     return "Mixed / unknown"
+
+
+def get_fuel_breakdown(row) -> list:
+    """
+    Returns a list of (label, kBtu, pct) tuples for non-zero fuels,
+    sorted descending by kBtu. Used to display the fuel breakdown in the UI.
+    """
+    import math
+
+    def _get(col):
+        v = row.get(col)
+        try:
+            f = float(v)
+            return 0.0 if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return 0.0
+
+    buckets = {
+        "Natural gas":    _get("fuel_natural_gas_kbtu"),
+        "Electricity":    _get("fuel_electricity_kwh") * 3.412,
+        "District steam": _get("fuel_district_steam_kbtu") + _get("fuel_district_hot_water_kbtu"),
+        "Fuel oil":       (_get("fuel_oil1_kbtu") + _get("fuel_oil2_kbtu") +
+                           _get("fuel_oil4_kbtu") + _get("fuel_oil56_kbtu")),
+        "Other":          _get("fuel_propane_kbtu") + _get("fuel_diesel_kbtu") + _get("fuel_kerosene_kbtu"),
+    }
+    total = sum(buckets.values())
+    if total <= 0:
+        return []
+    return sorted(
+        [(label, kbtu, kbtu / total * 100)
+         for label, kbtu in buckets.items() if kbtu > 0],
+        key=lambda x: x[1], reverse=True
+    )
 
 
 REQUIRED_COLUMNS = [
@@ -864,8 +905,8 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     else:
         st.error(
             f"This portfolio is **non-compliant** in the current 2025–2029 period. "
-            f"At current emissions, it faces an estimated **${current_fine:,.0f}/year** in ACP fines "
-            f"and **${total_5yr:,.0f}** in cumulative payments across "
+            f"At current emissions, it faces an estimated USD {current_fine:,.0f}/year in ACP fines "
+            f"and USD {total_5yr:,.0f} in cumulative payments across "
             f"{len(non_compliant_periods)} non-compliant period(s) if no reductions are made."
         )
 
@@ -1040,7 +1081,7 @@ shows individual gaps.
 
             st.markdown(f"""
 **For building owners:** This portfolio exceeds the blended 2025–2029 standard and faces an
-estimated **${current_fine:,.0f}/year** in ACP payments. To come into compliance:
+estimated USD {current_fine:,.0f}/year in ACP payments. To come into compliance:
 
 - **Prioritize retrofits at your highest-emitting buildings first.** The building with the
   largest individual gap is **{worst_addr}** ({worst_gap_tons:,.0f} excess metric tons in 2025–29).
@@ -1353,7 +1394,7 @@ INCENTIVES = [
         "type": "Utility rebate",
         "scopes": ["HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)"],
-        "amount_str": "$50–$300/ton of cooling capacity; heat pump adders available",
+        "amount_str": "USD 50–USD 300/ton of cooling capacity; heat pump adders available",
         "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
         "expiration": "Program year 2026 (amounts reset annually in Jan)",
         "stacks_with_ira": True,
@@ -1363,7 +1404,7 @@ INCENTIVES = [
         "name": "Mass Save — Lighting Rebates",
         "type": "Utility rebate",
         "scopes": ["Lighting (LED retrofit + controls)"],
-        "amount_str": "$0.05–$0.30/kWh saved (estimated); fixture rebates vary by product",
+        "amount_str": "USD 0.05–USD 0.30/kWh saved (estimated); fixture rebates vary by product",
         "eligibility": "MA commercial accounts",
         "expiration": "Program year 2026 (amounts reset annually)",
         "stacks_with_ira": True,
@@ -1373,7 +1414,7 @@ INCENTIVES = [
         "name": "Mass Save — Deep Energy Retrofit",
         "type": "Utility rebate",
         "scopes": ["Building-wide deep retrofit (all systems)", "Building envelope (windows + insulation)"],
-        "amount_str": "Up to $400,000 per project; custom incentive based on modeled savings",
+        "amount_str": "Up to USD 400,000 per project; custom incentive based on modeled savings",
         "eligibility": "MA commercial buildings; requires pre-approval and energy model",
         "expiration": "Program year 2026",
         "stacks_with_ira": True,
@@ -1385,7 +1426,7 @@ INCENTIVES = [
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
-        "amount_str": "Up to $5.81/sqft (2025, prevailing wage + apprenticeship); $0.58-$1.16/sqft (partial). Construction must BEGIN by June 30, 2026.",
+        "amount_str": "Up to USD 5.81/sqft (2025, prevailing wage and apprenticeship); USD 0.58–1.16/sqft (partial). Construction must BEGIN by June 30, 2026.",
         "eligibility": "For-profit building owners; nonprofits/govts can transfer deduction to designer",
         "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
         "stacks_with_ira": True,
@@ -1397,7 +1438,7 @@ INCENTIVES = [
         "type": "Federal tax credit",
         "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
-        "amount_str": "6% base credit (30% with prevailing wage + apprenticeship); capped per project",
+        "amount_str": "6% base credit (30% with prevailing wage and apprenticeship); capped per project",
         "eligibility": "Manufacturing/industrial sites prioritized; limited allocations via competitive application",
         "expiration": "Allocations ongoing; check IRS portal for remaining capacity",
         "stacks_with_ira": False,
@@ -1408,7 +1449,7 @@ INCENTIVES = [
         "name": "IRA Section 45L — New Energy Efficient Home Credit (multifamily)",
         "type": "Federal tax credit",
         "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
-        "amount_str": "$500–$2,500/unit (Energy Star); $1,000–$5,000/unit (Zero Energy Ready)",
+        "amount_str": "USD 500–USD 2,500/unit (Energy Star); USD 1,000–USD 5,000/unit (Zero Energy Ready)",
         "eligibility": "Multifamily residential buildings; new construction and substantial rehab",
         "expiration": "Through 2032",
         "stacks_with_ira": True,
@@ -1421,7 +1462,7 @@ INCENTIVES = [
         "type": "State grant",
         "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
-        "amount_str": "Up to $250,000; varies by program round",
+        "amount_str": "Up to USD 250,000; varies by program round",
         "eligibility": "Nonprofits and municipal buildings in MA",
         "expiration": "Check MassCEC for current open rounds",
         "stacks_with_ira": True,
@@ -1434,7 +1475,7 @@ INCENTIVES = [
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
-        "amount_str": "Up to $1.6M per municipality; formula-based on population",
+        "amount_str": "Up to USD 1.6M per municipality; formula-based on population",
         "eligibility": "MA municipalities that have achieved Green Community designation",
         "expiration": "Annual grant rounds; check DOER for current cycle",
         "stacks_with_ira": True,
@@ -1730,8 +1771,8 @@ def render_retrofit_tab(prefill: dict = None):
             with st.expander(f"**{inc['name']}** — {inc['type']}", expanded=True):
                 col_a, col_b = st.columns([2, 1])
                 with col_a:
-                    st.markdown(f"**Amount:** {inc['amount_str']}")
-                    st.markdown(f"**Eligible for:** {inc['eligibility']}")
+                    st.markdown(f"**Amount:** {inc['amount_str']}", unsafe_allow_html=True)
+                    st.markdown(f"**Eligible for:** {inc['eligibility']}", unsafe_allow_html=True)
                     if ownership_type == "Not sure" and "ownership_restriction" in inc:
                         st.warning(
                             f"This incentive is available to: "
@@ -1748,12 +1789,16 @@ def render_retrofit_tab(prefill: dict = None):
             ira_179d_low  = 0.58 * sqft
             ira_179d_high = 5.81 * sqft
             st.warning(
-                f"**179D note:** This deduction is only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). If your project started before that date, you may still qualify — confirm with a tax advisor."
+                "179D note: This deduction is only available for construction that began on or before "
+                "June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). If your project started "
+                "before that date, you may still qualify — confirm with a tax advisor."
             )
+            low_str  = _fmt_dollars(ira_179d_low).replace("$", "USD ")
+            high_str = _fmt_dollars(ira_179d_high).replace("$", "USD ")
             st.info(
-                f"**179D rough estimate for this building ({sqft:,} sqft):** "
-                f"{_fmt_dollars(ira_179d_low)} – {_fmt_dollars(ira_179d_high)} "
-                f"(at $0.58–$5.81/sqft, 2025 inflation-adjusted; prevailing wage + apprenticeship required for maximum). "
+                f"179D rough estimate for this building ({sqft:,} sqft): "
+                f"{low_str} to {high_str} "
+                f"(at USD 0.58–5.81/sqft, 2025 inflation-adjusted; prevailing wage and apprenticeship required for maximum). "
                 "Requires a qualified third-party certifier. "
                 "Source: DOE energy.gov/eere/buildings/179d"
             )
@@ -1896,7 +1941,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 2.00,
-        "amount_str": "$50–$300/ton cooling capacity; heat pump adders available",
+        "amount_str": "USD 50–USD 300/ton cooling capacity; heat pump adders available",
         "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
         "expiration": "Program year 2026 (resets each January)",
         "conflicts": [],
@@ -1922,7 +1967,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.10,
         "amount_psf_high": 0.60,
-        "amount_str": "$0.05–$0.30/kWh saved; fixture rebates vary by product",
+        "amount_str": "USD 0.05–USD 0.30/kWh saved; fixture rebates vary by product",
         "eligibility": "MA commercial accounts",
         "expiration": "Program year 2026 (resets each January)",
         "conflicts": [],
@@ -1948,7 +1993,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 3.00,
-        "amount_str": "Up to $400,000/project; custom incentive based on modeled savings",
+        "amount_str": "Up to USD 400,000/project; custom incentive based on modeled savings",
         "eligibility": "MA commercial buildings; requires pre-approval and energy model",
         "expiration": "Program year 2026",
         "conflicts": [],
@@ -1976,7 +2021,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.58,
         "amount_psf_high": 5.81,
-        "amount_str": "Up to $5.81/sqft (2025, prevailing wage + apprenticeship); $0.58-$1.16/sqft (partial)",
+        "amount_str": "Up to USD 5.81/sqft (2025, prevailing wage and apprenticeship); USD 0.58–1.16/sqft (partial)",
         "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
         "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
         "conflicts": [],
@@ -2006,7 +2051,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 5.00,
-        "amount_str": "$500–$2,500/unit (Energy Star); $1,000–$5,000/unit (Zero Energy Ready)",
+        "amount_str": "USD 500–USD 2,500/unit (Energy Star); USD 1,000–USD 5,000/unit (Zero Energy Ready)",
         "eligibility": "Multifamily residential; new construction and substantial rehab",
         "expiration": "Through 2032",
         "conflicts": [],
@@ -2034,7 +2079,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown"],
         "amount_psf_low": 0.60,
         "amount_psf_high": 3.00,
-        "amount_str": "6% base (30% with prevailing wage + apprenticeship); capped per project",
+        "amount_str": "6% base (30% with prevailing wage and apprenticeship); capped per project",
         "eligibility": "Competitive allocation; manufacturing/industrial sites prioritized",
         "expiration": "Allocations ongoing; check IRS portal",
         "conflicts": ["IRA 48E", "Other IRA investment credits on same property"],
@@ -2062,7 +2107,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.20,
         "amount_psf_high": 1.50,
-        "amount_str": "Up to $250,000/project; varies by program round",
+        "amount_str": "Up to USD 250,000/project; varies by program round",
         "eligibility": "Nonprofits and municipal buildings in MA",
         "expiration": "Check MassCEC for current open rounds",
         "conflicts": [],
@@ -2091,7 +2136,7 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.20,
         "amount_psf_high": 2.00,
-        "amount_str": "Up to $1.6M/municipality; formula-based on population",
+        "amount_str": "Up to USD 1.6M/municipality; formula-based on population",
         "eligibility": "MA municipalities with Green Community designation",
         "expiration": "Annual grant rounds; check DOER for current cycle",
         "conflicts": [],
@@ -2220,7 +2265,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     if prefill_fine and prefill_fine > 0:
         st.info(
             f"Pre-filled from **{prefill_addr}**: "
-            f"estimated annual BERDO fine **${prefill_fine:,.0f}/yr** "
+            f"estimated annual BERDO fine USD {prefill_fine:,.0f}/yr "
             f"(2025–29 period, at {prefill_ghg:.3f} kg CO₂e/sqft/yr). "
             "Use the payback section below to compare against net retrofit cost."
         )
@@ -3595,6 +3640,24 @@ with tab_address:
                 st.metric("Priority Score", int(top["Priority Score"]))
 
             st.write("**Reasons:**", top["Reasons"])
+
+            # ── Fuel breakdown ────────────────────────────────────────────────
+            fuel_breakdown = get_fuel_breakdown(top)
+            primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
+            if fuel_breakdown:
+                st.markdown("**Energy usage by fuel (2025 reported)**")
+                fuel_cols = st.columns(len(fuel_breakdown))
+                for i, (label, kbtu, pct) in enumerate(fuel_breakdown):
+                    fuel_cols[i].metric(
+                        label,
+                        f"{kbtu/1_000_000:.1f} MMBtu",
+                        delta=f"{pct:.0f}% of total",
+                    )
+                st.caption(
+                    f"Primary fuel inferred: **{primary_fuel}** "
+                    f"({'dominant fuel >60% of total' if primary_fuel != 'Mixed / unknown' else 'no single fuel >60% of total'}). "
+                    "Used to pre-fill the Retrofit Estimator and Incentive Optimizer."
+                )
 
             with st.expander("What do these fields mean?"):
                 st.markdown("""
