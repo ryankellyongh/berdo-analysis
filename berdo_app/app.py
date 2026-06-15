@@ -2045,15 +2045,30 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     )
 
     # ── Inputs ──────────────────────────────────────────────────────────────
+    # Inject prefill into session state when a new address lookup arrives.
+    # We detect a "fresh" prefill by comparing the prefill address to the
+    # last address we injected — if different, overwrite widget state.
+    prefill_addr_key = prefill.get("address", "")
+    last_injected    = st.session_state.get("opt_last_injected_addr", "")
+
+    if prefill_addr_key and prefill_addr_key != last_injected:
+        if prefill.get("sqft"):
+            st.session_state["opt_sqft"] = int(prefill["sqft"])
+        if prefill.get("berdo_category"):
+            type_options_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+            if prefill["berdo_category"] in type_options_init:
+                st.session_state["opt_btype"] = prefill["berdo_category"]
+        st.session_state["opt_last_injected_addr"] = prefill_addr_key
+
     st.subheader("Building inputs")
     col1, col2 = st.columns(2)
 
     with col1:
-        default_sqft = int(prefill.get("sqft", 50_000)) if prefill.get("sqft") else 50_000
         sqft = st.number_input(
             "Gross floor area (sq ft)",
             min_value=1_000, max_value=5_000_000,
-            value=default_sqft, step=1_000,
+            value=st.session_state.get("opt_sqft", 50_000),
+            step=1_000,
             help="Pre-filled from Address Lookup if available.",
             key="opt_sqft",
         )
@@ -2067,8 +2082,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
     with col2:
         type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
-        prefill_cat = prefill.get("berdo_category")
-        default_idx = type_options.index(prefill_cat) if prefill_cat in type_options else 0
+        prefill_cat  = st.session_state.get("opt_btype", "— select —")
+        default_idx  = type_options.index(prefill_cat) if prefill_cat in type_options else 0
         selected_type = st.selectbox(
             "Building type (BERDO category)",
             options=type_options, index=default_idx,
