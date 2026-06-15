@@ -584,7 +584,7 @@ REQUIRED_COLUMNS = [
 ]
 
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def _load_single_csv(file_path: Path) -> pd.DataFrame:
     df = pd.read_csv(file_path)
     df.columns = df.columns.astype(str).str.strip()
@@ -628,7 +628,7 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
     return df
 
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_all_years() -> dict[int, pd.DataFrame]:
     """
     Returns a dict mapping year (int) → DataFrame.
@@ -3659,17 +3659,18 @@ with tab_address:
             fuel_breakdown = get_fuel_breakdown(top)
             primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
             if fuel_breakdown:
+                n_cols = min(len(fuel_breakdown), 5)  # cap at 5 cols
                 st.markdown("**Energy usage by fuel (2025 reported)**")
-                fuel_cols = st.columns(len(fuel_breakdown))
-                for i, (label, kbtu, pct) in enumerate(fuel_breakdown):
+                fuel_cols = st.columns(n_cols)
+                for i, (label, kbtu, pct) in enumerate(fuel_breakdown[:n_cols]):
                     fuel_cols[i].metric(
                         label,
                         f"{kbtu/1_000_000:.1f} MMBtu",
                         delta=f"{pct:.0f}% of total",
                     )
+                dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
                 st.caption(
-                    f"Primary fuel inferred: **{primary_fuel}** "
-                    f"({'dominant fuel >60% of total' if primary_fuel != 'Mixed / unknown' else 'no single fuel >60% of total'}). "
+                    f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
                     "Used to pre-fill the Retrofit Estimator and Incentive Optimizer."
                 )
 
