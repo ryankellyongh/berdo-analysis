@@ -3092,23 +3092,69 @@ def render_emissions_planner_tab(prefill: dict = None):
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
-    # ── Compliance Projection Table ───────────────────────────────────────────
+    # ── Grid decarbonization settings ────────────────────────────────────────
     st.markdown("---")
     st.subheader("Emissions Compliance Projection")
-    st.caption(
-        "Projects the building's emissions against BERDO limits through 2050. "
-        "Assumes current GHG intensity is held flat unless reduction projects are entered above."
-    )
+
+    grid_cols = st.columns([1, 2, 3])
+    with grid_cols[0]:
+        apply_grid = st.checkbox(
+            "Apply grid decarbonization",
+            value=False,
+            key="ep_grid_decarb",
+            help=(
+                "Projects the electricity component of emissions declining as ISO-NE grid "
+                "cleans up, using the City of Boston's official Appendix B projected grid "
+                "emissions factors. Fossil fuel use is held constant."
+            ),
+        )
+    with grid_cols[1]:
+        elec_share_pct = st.slider(
+            "Electricity share of GHG emissions (%)",
+            min_value=0, max_value=100, value=50, step=5,
+            key="ep_elec_share",
+            disabled=not apply_grid,
+            help=(
+                "Percentage of this building's total GHG emissions from grid electricity. "
+                "Check your BERDO report or use 50% as a starting estimate."
+            ),
+        )
+    with grid_cols[2]:
+        if apply_grid:
+            base_ef = PROJECTED_GRID_EF.get(2025, 249)
+            ef_2050 = PROJECTED_GRID_EF.get(2050, 150)
+            st.caption(
+                f"Base year grid EF (2025): {base_ef} kg/MWh. "
+                f"Projected EF at 2050: {ef_2050} kg/MWh "
+                f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
+                "Source: BERDO Emissions Factors List, Appendix B (May 2026)."
+            )
+        else:
+            st.caption(
+                "Enable grid decarbonization above to model how ISO-NE grid cleaning "
+                "reduces electricity-attributed emissions over time."
+            )
 
     if berdo_category not in BERDO_STANDARDS:
         st.warning("Select a valid building type above to see the compliance projection.")
         return
 
-    limits     = BERDO_STANDARDS[berdo_category]
+    limits             = BERDO_STANDARDS[berdo_category]
     total_emissions_kg = ghg_intensity * sqft  # kg CO₂e/yr baseline
+    elec_share         = elec_share_pct / 100.0
 
-    # Map each project's reduction to the compliance period it applies to
-    # A project implemented in year Y applies from the compliance period containing Y onwards
+    # ── Grid decarbonization — project intensities per period ─────────────────
+    if apply_grid:
+        projected_intensities = project_ghg_intensities(
+            ghg_intensity=ghg_intensity,
+            elec_share=elec_share,
+            base_year=2025,
+        )
+        grid_emissions_kg = [pi * sqft for pi in projected_intensities]
+    else:
+        grid_emissions_kg = [total_emissions_kg] * len(COMPLIANCE_PERIODS)
+
+    # ── Period mapping ────────────────────────────────────────────────────────
     period_start_years = [2025, 2030, 2035, 2040, 2045, 2050]
 
     def period_for_year(y):
@@ -3117,7 +3163,7 @@ def render_emissions_planner_tab(prefill: dict = None):
                 return i
         return 0
 
-    # Cumulative reductions by period (a project adds to all periods from its year onwards)
+    # Cumulative project reductions by period
     period_reductions_kg = [0.0] * len(COMPLIANCE_PERIODS)
     for proj in st.session_state.get("ep_projects", []):
         if proj.get("reduction_kg", 0) > 0:
@@ -3125,50 +3171,67 @@ def render_emissions_planner_tab(prefill: dict = None):
             for p in range(start_period, len(COMPLIANCE_PERIODS)):
                 period_reductions_kg[p] += proj["reduction_kg"]
 
+    has_projects = any(r > 0 for r in period_reductions_kg)
+    has_grid     = apply_grid
+
+    # ── Build table ───────────────────────────────────────────────────────────
     table_rows = []
     for i, period in enumerate(COMPLIANCE_PERIODS):
-        limit_psf    = limits[i]
-        limit_kg     = limit_psf * sqft
-        period_year  = period_start_years[i]
+        limit_psf  = limits[i]
+        limit_kg   = limit_psf * sqft
 
-        # Projected emissions (baseline) — account for grid decarbonisation on electricity
-        # For simplicity use flat baseline (no grid decarb here; that's the compliance gap tab)
-        proj_emissions_kg = total_emissions_kg
+        # Scenario A: flat baseline, no projects
+        baseline_kg = total_emissions_kg
+        gap_baseline = baseline_kg - limit_kg
+        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
 
-        # Reductions from projects
-        reduction_kg = period_reductions_kg[i]
-        emissions_after_kg = max(proj_emissions_kg - reduction_kg, 0)
+        # Scenario B: grid decarb only (no projects)
+        grid_kg  = grid_emissions_kg[i]
+        gap_grid = grid_kg - limit_kg
+        fine_grid = round(max(gap_grid, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
 
-        # Over/under limit
-        gap_no_proj   = proj_emissions_kg  - limit_kg
-        gap_with_proj = emissions_after_kg - limit_kg
+        # Scenario C: projects only (no grid decarb)
+        proj_kg  = max(baseline_kg - period_reductions_kg[i], 0)
+        gap_proj = proj_kg - limit_kg
+        fine_proj = round(max(gap_proj, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
 
-        # ACP fines ($234 / metric ton over limit)
-        fine_no_proj   = round(max(gap_no_proj,   0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
-        fine_with_proj = round(max(gap_with_proj, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
+        # Scenario D: grid decarb + projects (combined)
+        combined_kg  = max(grid_kg - period_reductions_kg[i], 0)
+        gap_combined = combined_kg - limit_kg
+        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
 
-        over_under_no_proj = (
-            f"{abs(gap_no_proj) / 1000:,.1f} MT Under" if gap_no_proj < 0
-            else f"{gap_no_proj / 1000:,.1f} MT Over" if gap_no_proj > 0
-            else "At limit"
-        )
-        over_under_with_proj = (
-            f"{abs(gap_with_proj) / 1000:,.1f} MT Under" if gap_with_proj < 0
-            else f"{gap_with_proj / 1000:,.1f} MT Over" if gap_with_proj > 0
-            else "At limit"
-        )
+        def _ou(gap):
+            if gap < 0:
+                return f"{abs(gap)/1000:,.1f} MT Under"
+            elif gap > 0:
+                return f"{gap/1000:,.1f} MT Over"
+            return "At limit"
 
-        table_rows.append({
-            "Period":                       period,
-            "Projected emissions (kg CO₂e/yr)": f"{proj_emissions_kg:,.0f}",
-            "Emissions limit (kg CO₂e/yr)":     f"{limit_kg:,.1f}" if limit_kg > 0 else "0 (net zero)",
-            "Reductions from projects (kg CO₂e/yr)": f"{reduction_kg:,.1f}" if reduction_kg > 0 else "—",
-            "Emissions after reductions (kg CO₂e/yr)": f"{emissions_after_kg:,.0f}",
-            "Over / under limit":           over_under_no_proj,
-            "Over / under with projects":   over_under_with_proj,
-            "ACP fine — no projects ($/yr)":     f"${fine_no_proj:,.2f}" if fine_no_proj > 0 else "$0",
-            "ACP fine — with projects ($/yr)":   f"${fine_with_proj:,.2f}" if fine_with_proj > 0 else "$0",
-        })
+        row = {
+            "Period":                                   period,
+            "BERDO limit (kg CO₂e/yr)":                f"{limit_kg:,.0f}" if limit_kg > 0 else "0 (net zero)",
+            "Baseline emissions (kg CO₂e/yr)":         f"{baseline_kg:,.0f}",
+            "Over/under — baseline":                   _ou(gap_baseline),
+            "ACP — baseline ($/yr)":                   f"${fine_baseline:,.0f}" if fine_baseline > 0 else "$0",
+        }
+
+        if has_projects:
+            row["Reductions from projects (kg CO₂e/yr)"] = f"{period_reductions_kg[i]:,.0f}" if period_reductions_kg[i] > 0 else "—"
+            row["Emissions after projects (kg CO₂e/yr)"]  = f"{proj_kg:,.0f}"
+            row["Over/under — with projects"]             = _ou(gap_proj)
+            row["ACP — with projects ($/yr)"]             = f"${fine_proj:,.0f}" if fine_proj > 0 else "$0"
+
+        if has_grid:
+            row["Emissions — grid decarb only (kg CO₂e/yr)"] = f"{grid_kg:,.0f}"
+            row["Over/under — grid decarb only"]             = _ou(gap_grid)
+            row["ACP — grid decarb only ($/yr)"]             = f"${fine_grid:,.0f}" if fine_grid > 0 else "$0"
+
+        if has_projects and has_grid:
+            row["Emissions — grid + projects (kg CO₂e/yr)"] = f"{combined_kg:,.0f}"
+            row["Over/under — grid + projects"]              = _ou(gap_combined)
+            row["ACP — grid + projects ($/yr)"]              = f"${fine_combined:,.0f}" if fine_combined > 0 else "$0"
+
+        table_rows.append(row)
 
     st.dataframe(
         pd.DataFrame(table_rows),
@@ -3176,47 +3239,84 @@ def render_emissions_planner_tab(prefill: dict = None):
         hide_index=True,
     )
 
+    st.caption(
+        f"Showing {'baseline only' if not has_projects and not has_grid else ''}"
+        f"{'baseline + projects' if has_projects and not has_grid else ''}"
+        f"{'baseline + grid decarbonization' if has_grid and not has_projects else ''}"
+        f"{'baseline + projects + grid decarbonization + combined' if has_projects and has_grid else ''}. "
+        "ACP = $234/metric ton CO₂e over limit. "
+        "Not an official City of Boston BERDO compliance determination."
+    )
+
     # ── Summary metrics ───────────────────────────────────────────────────────
-    total_fine_no_proj   = sum(
-        max(float(ghg_intensity * sqft) - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
-        for i in range(len(COMPLIANCE_PERIODS))
-        if limits[i] > 0
-    )
-    total_fine_with_proj = sum(
-        max(float(ghg_intensity * sqft) - period_reductions_kg[i] - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
-        for i in range(len(COMPLIANCE_PERIODS))
-        if limits[i] > 0
-    )
-    fine_savings = total_fine_no_proj - total_fine_with_proj
+    def _cumulative_fine(emissions_by_period):
+        return sum(
+            max(emissions_by_period[i] - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
+            for i in range(len(COMPLIANCE_PERIODS))
+            if limits[i] > 0
+        )
+
+    baseline_fines_cumul = _cumulative_fine([total_emissions_kg] * len(COMPLIANCE_PERIODS))
+    proj_fines_cumul     = _cumulative_fine([max(total_emissions_kg - period_reductions_kg[i], 0) for i in range(len(COMPLIANCE_PERIODS))])
+    grid_fines_cumul     = _cumulative_fine(grid_emissions_kg)
+    combined_fines_cumul = _cumulative_fine([max(grid_emissions_kg[i] - period_reductions_kg[i], 0) for i in range(len(COMPLIANCE_PERIODS))])
 
     st.markdown("---")
-    s1, s2, s3 = st.columns(3)
-    s1.metric(
-        "Cumulative ACP fines — no projects",
-        f"${total_fine_no_proj:,.0f}",
-        delta="through 2050 (5 yrs/period)",
+    num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
+    s_cols = st.columns(max(num_cols, 2))
+
+    s_cols[0].metric(
+        "Cumulative ACP — baseline",
+        f"${baseline_fines_cumul:,.0f}",
+        delta="through 2050, no changes",
     )
-    s2.metric(
-        "Cumulative ACP fines — with projects",
-        f"${total_fine_with_proj:,.0f}",
-        delta=f"-${fine_savings:,.0f} saved" if fine_savings > 0 else "No change",
-    )
-    compliant_periods = sum(
-        1 for i in range(len(COMPLIANCE_PERIODS))
-        if (float(ghg_intensity * sqft) - period_reductions_kg[i]) <= limits[i] * sqft
-    )
-    s3.metric(
-        "Compliant periods with projects",
-        f"{compliant_periods} of {len(COMPLIANCE_PERIODS)}",
+    col_idx = 1
+    if has_projects:
+        savings = baseline_fines_cumul - proj_fines_cumul
+        s_cols[col_idx].metric(
+            "Cumulative ACP — with projects",
+            f"${proj_fines_cumul:,.0f}",
+            delta=f"-${savings:,.0f} vs baseline" if savings > 0 else "No change",
+        )
+        col_idx += 1
+    if has_grid:
+        savings_g = baseline_fines_cumul - grid_fines_cumul
+        s_cols[col_idx].metric(
+            "Cumulative ACP — grid decarb only",
+            f"${grid_fines_cumul:,.0f}",
+            delta=f"-${savings_g:,.0f} vs baseline" if savings_g > 0 else "No change",
+        )
+        col_idx += 1
+    if has_projects and has_grid:
+        savings_c = baseline_fines_cumul - combined_fines_cumul
+        s_cols[col_idx].metric(
+            "Cumulative ACP — grid + projects",
+            f"${combined_fines_cumul:,.0f}",
+            delta=f"-${savings_c:,.0f} vs baseline" if savings_c > 0 else "No change",
+        )
+
+    compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
+    compliant_periods_proj      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(total_emissions_kg - period_reductions_kg[i], 0) <= limits[i] * sqft) if has_projects else None
+    compliant_periods_grid      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if grid_emissions_kg[i] <= limits[i] * sqft) if has_grid else None
+    compliant_periods_combined  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(grid_emissions_kg[i] - period_reductions_kg[i], 0) <= limits[i] * sqft) if (has_projects and has_grid) else None
+
+    best_compliant = max(filter(None.__ne__, [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined]))
+    st.caption(
+        f"Compliant periods: baseline {compliant_periods_baseline}"
+        + (f" | with projects {compliant_periods_proj}" if compliant_periods_proj is not None else "")
+        + (f" | grid decarb only {compliant_periods_grid}" if compliant_periods_grid is not None else "")
+        + (f" | grid + projects {compliant_periods_combined}" if compliant_periods_combined is not None else "")
+        + f" (out of {len(COMPLIANCE_PERIODS)} periods)."
     )
 
-    # ── Bar chart: emissions vs limits ───────────────────────────────────────
+    # ── Bar chart ─────────────────────────────────────────────────────────────
     fig = go.Figure()
 
-    limit_vals = [l * sqft / 1000 for l in limits]  # metric tons
-    baseline_vals = [total_emissions_kg / 1000] * len(COMPLIANCE_PERIODS)
-    project_vals  = [max(total_emissions_kg - period_reductions_kg[i], 0) / 1000
-                     for i in range(len(COMPLIANCE_PERIODS))]
+    limit_vals    = [l * sqft / 1000 for l in limits]
+    baseline_mt   = [total_emissions_kg / 1000] * len(COMPLIANCE_PERIODS)
+    proj_mt       = [max(total_emissions_kg - period_reductions_kg[i], 0) / 1000 for i in range(len(COMPLIANCE_PERIODS))]
+    grid_mt       = [g / 1000 for g in grid_emissions_kg]
+    combined_mt   = [max(grid_emissions_kg[i] - period_reductions_kg[i], 0) / 1000 for i in range(len(COMPLIANCE_PERIODS))]
 
     fig.add_trace(go.Bar(
         x=COMPLIANCE_PERIODS, y=limit_vals,
@@ -3226,25 +3326,43 @@ def render_emissions_planner_tab(prefill: dict = None):
         textposition="outside", textfont=dict(size=10),
     ))
     fig.add_trace(go.Scatter(
-        x=COMPLIANCE_PERIODS, y=baseline_vals,
-        name="Baseline (no projects)",
+        x=COMPLIANCE_PERIODS, y=baseline_mt,
+        name="Baseline (no changes)",
         mode="lines",
         line=dict(color="#E24B4A", width=2, dash="dash"),
     ))
-    if any(p > 0 for p in period_reductions_kg):
+    if has_projects:
         fig.add_trace(go.Scatter(
-            x=COMPLIANCE_PERIODS, y=project_vals,
-            name="Emissions after projects",
+            x=COMPLIANCE_PERIODS, y=proj_mt,
+            name="With projects",
             mode="lines+markers",
             line=dict(color="#1D9E75", width=2),
-            marker=dict(size=8),
+            marker=dict(size=7),
+        ))
+    if has_grid:
+        fig.add_trace(go.Scatter(
+            x=COMPLIANCE_PERIODS, y=grid_mt,
+            name="Grid decarb only",
+            mode="lines+markers",
+            line=dict(color="#9B59B6", width=1.5, dash="dot"),
+            marker=dict(size=6, symbol="diamond"),
+        ))
+    if has_projects and has_grid:
+        fig.add_trace(go.Scatter(
+            x=COMPLIANCE_PERIODS, y=combined_mt,
+            name="Grid + projects (combined)",
+            mode="lines+markers",
+            line=dict(color="#E67E22", width=2.5),
+            marker=dict(size=8, symbol="star"),
         ))
 
-    y_max = max(max(baseline_vals), max(limit_vals)) * 1.25
+    all_vals = baseline_mt + limit_vals + (proj_mt if has_projects else []) + (grid_mt if has_grid else []) + (combined_mt if has_projects and has_grid else [])
+    y_max = max(all_vals) * 1.25
+
     fig.update_layout(
         xaxis_title="Compliance period",
         yaxis=dict(title="Metric tons CO₂e/yr", range=[0, y_max]),
-        height=380,
+        height=400,
         margin=dict(t=40, b=40, l=60, r=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         bargap=0.35,
@@ -3254,13 +3372,6 @@ def render_emissions_planner_tab(prefill: dict = None):
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
     st.plotly_chart(fig, use_container_width=True)
-
-    st.caption(
-        "Baseline assumes current GHG intensity held flat. "
-        "Projects reduce emissions from the period their implementation year falls in, onwards. "
-        "ACP = $234/metric ton CO₂e over limit. "
-        "Not an official City of Boston BERDO compliance determination."
-    )
 
     with st.expander("About this projection"):
         st.markdown("""
