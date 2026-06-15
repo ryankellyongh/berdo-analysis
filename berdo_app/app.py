@@ -3183,10 +3183,10 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         gap_proj     = proj_kg      - limit_kg
         gap_combined = combined_kg  - limit_kg
 
-        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
-        fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
-        fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
-        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
+        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0)
+        fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0)
+        fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0)
+        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0)
 
         def _ou(gap):
             if gap < 0:   return f"{abs(gap)/1000:,.0f} MT Under"
@@ -3233,7 +3233,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     st.dataframe(pd.DataFrame(emissions_rows), use_container_width=True, hide_index=True)
 
     # ── Table 2: ACP fines ───────────────────────────────────────────────────
-    st.markdown("#### Estimated ACP fine ($/yr)")
+    st.markdown("#### Estimated ACP fine — annual, per period")
     st.caption("Alternative Compliance Payment at $234/metric ton CO₂e over limit.")
     st.dataframe(pd.DataFrame(fines_rows), use_container_width=True, hide_index=True)
 
@@ -3247,7 +3247,6 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         return sum(
             max(emissions_by_period[i] - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
             for i in range(len(COMPLIANCE_PERIODS))
-            if limits[i] > 0
         )
 
     baseline_fines_cumul = _cumulative_fine([total_emissions_kg] * len(COMPLIANCE_PERIODS))
