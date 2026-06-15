@@ -254,7 +254,7 @@ def render_compliance_section(
     for i, col in enumerate(cols):
         g = gaps[i]
         with col:
-            status = "✅ Compliant" if g["compliant"] else "⚠️ Non-compliant"
+            status = "Compliant" if g["compliant"] else "Non-compliant"
             fine_str = (
                 "$0"
                 if g["compliant"]
@@ -280,10 +280,10 @@ def render_compliance_section(
                 if proj_gap_for_period is not None:
                     pg = proj_gap_for_period[i]
                     if pg["compliant"]:
-                        st.caption("🌱 Grid scenario: compliant")
+                        st.caption("Grid scenario: compliant")
                     else:
                         st.caption(
-                            f"🌱 Grid scenario: +{pg['gap']:.2f} kg over limit "
+                            f"Grid scenario: +{pg['gap']:.2f} kg over limit "
                             f"(${pg['annual_fine_usd']:,.0f}/yr)"
                         )
 
@@ -827,7 +827,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     if not zero_emission.empty:
         addresses = ", ".join(zero_emission["Building Address"].astype(str).tolist())
         st.warning(
-            f"⚠️ Possible vacant building(s) detected: **{addresses}**. "
+            f"Possible vacant building(s) detected: **{addresses}**. "
             "BERDO Building Portfolios cannot include vacant buildings — "
             "verify before submitting a portfolio application."
         )
@@ -845,7 +845,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         excess_tons = 0.0 if compliant else round(gap * total_sqft / 1000, 1)
         fine        = 0.0 if compliant else round(excess_tons * ACP_RATE, 0)
         with col:
-            status   = "✅ Compliant" if compliant else "⚠️ Non-compliant"
+            status   = "Compliant" if compliant else "Non-compliant"
             fine_str = "$0" if compliant else f"${fine:,.0f}/yr"
             gap_delta = (
                 f"−{abs(gap):.3f} kg under limit"
@@ -1019,7 +1019,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
             return round((intensity - lim) * sqft / 1000, 1)
 
         def _status(lim):
-            return "✅" if intensity <= lim else "⚠️"
+            return "Pass" if intensity <= lim else "Fail"
 
         breakdown_rows.append({
             "Address":        row["Building Address"],
@@ -1083,7 +1083,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
 
     # --- Application deadline callout ---
     st.info(
-        "📅 **Portfolio application deadline: September 1, 2026** — to apply the Building "
+        "**Portfolio application deadline: September 1, 2026** — to apply the Building "
         "Portfolio compliance pathway to your 2025 emissions reporting. "
         "All buildings must have the same owner and no vacant properties may be included. "
         "Approval from the BERDO Review Board is required."
@@ -1214,7 +1214,7 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
 
     if 2022 in [r["year"] for r in records] and trend_df.loc[trend_df["year"] == 2022, "ghg_intensity"].isna().all():
         st.caption(
-            "⚠️ 2022 GHG intensity is not shown — the City of Boston did not publish "
+            "2022 GHG intensity is not shown — the City of Boston did not publish "
             "GHG emissions totals in that year's dataset."
         )
 
@@ -1290,7 +1290,7 @@ INCENTIVES = [
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "amount_str": "Up to $5.81/sqft (2025, prevailing wage + apprenticeship); $0.58-$1.16/sqft (partial). Construction must BEGIN by June 30, 2026.",
         "eligibility": "For-profit building owners; nonprofits/govts can transfer deduction to designer",
-        "expiration": "⚠️ Terminates for construction beginning after June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21, July 4, 2025). Act now.",
+        "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
         "stacks_with_ira": True,
         "source": "https://www.energy.gov/eere/buildings/179d-commercial-buildings-energy-efficiency-tax-deduction",
         "ownership_restriction": ["For-profit"],
@@ -1571,9 +1571,9 @@ def render_retrofit_tab(prefill: dict = None):
 
     # Condition badge
     badge_color = (
-        "🟢" if condition_score <= 1 else
-        "🟡" if condition_score <= 3 else
-        "🔴"
+        "Low" if condition_score <= 1 else
+        "Mid" if condition_score <= 3 else
+        "High"
     )
     st.caption(
         f"{badge_color} **Building condition: {condition_label}** "
@@ -1624,13 +1624,13 @@ def render_retrofit_tab(prefill: dict = None):
                     st.markdown(f"**Eligible for:** {inc['eligibility']}")
                     if ownership_type == "Not sure" and "ownership_restriction" in inc:
                         st.warning(
-                            f"⚠️ This incentive is available to: "
+                            f"This incentive is available to: "
                             f"{', '.join(inc['ownership_restriction'])}. "
                             "Confirm your ownership structure before applying."
                         )
                 with col_b:
                     st.markdown(f"**Expires / resets:** {inc['expiration']}")
-                    stacks = "✅ Yes" if inc["stacks_with_ira"] else "⚠️ May conflict — verify"
+                    stacks = "Yes" if inc["stacks_with_ira"] else "May conflict — verify"
                     st.markdown(f"**Stacks with other IRA credits:** {stacks}")
                     st.markdown(f"[Source / apply →]({inc['source']})")
 
@@ -1638,8 +1638,7 @@ def render_retrofit_tab(prefill: dict = None):
             ira_179d_low  = 0.58 * sqft
             ira_179d_high = 5.81 * sqft
             st.warning(
-                f"⚠️ **179D termination alert:** The One Big Beautiful Bill Act (P.L. 119-21, July 4, 2025) "
-                f"terminates 179D for construction beginning after **June 30, 2026**. Act immediately if this applies."
+                f"**179D note:** This deduction is only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). If your project started before that date, you may still qualify — confirm with a tax advisor."
             )
             st.info(
                 f"**179D rough estimate for this building ({sqft:,} sqft):** "
@@ -1721,7 +1720,7 @@ def render_retrofit_tab(prefill: dict = None):
             "from the Address Lookup tab to get a rough payback picture."
         )
         st.info(
-            "💡 **Simple payback rule of thumb:** if your estimated annual BERDO fine "
+            "**Simple payback rule of thumb:** if your estimated annual BERDO fine "
             "is larger than 10–15% of the net retrofit cost, the investment likely pays "
             "back within 7–10 years from fine avoidance alone — before energy savings."
         )
@@ -1733,7 +1732,7 @@ def render_retrofit_tab(prefill: dict = None):
 
     st.markdown("---")
     st.warning(
-        "⚠️ **This is a screening tool, not a professional estimate.** "
+        "**This is a screening tool, not a professional estimate.** "
         "Cost benchmarks are national/regional averages and may not reflect current Boston contractor "
         "pricing. Incentive amounts are verified as of June 2026 but change frequently. "
         "Do not use these figures for contracts, loan applications, or compliance filings. "
@@ -1869,7 +1868,7 @@ INCENTIVE_STACK = [
         "amount_psf_high": 5.81,
         "amount_str": "Up to $5.81/sqft (2025, prevailing wage + apprenticeship); $0.58-$1.16/sqft (partial)",
         "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
-        "expiration": "⚠️ Terminates for construction beginning after June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Act now.",
+        "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
         "conflicts": [],
         "stacks_with": ["Mass Save rebates", "IRA 45L"],
         "berdo_periods": ["2025–29"],
@@ -1878,7 +1877,7 @@ INCENTIVE_STACK = [
         "ownership_transfer_note": "Nonprofits and government owners can allocate the deduction to the project designer/engineer.",
         "source": "https://www.energy.gov/eere/buildings/179d-commercial-buildings-energy-efficiency-tax-deduction",
         "checklist": [
-            "⚠️ Construction must BEGIN by June 30, 2026 — confirm timeline immediately",
+            "179D only applies to construction that began on or before June 30, 2026 — confirm your project start date with a tax advisor",
             "Engage a qualified third-party certifier (licensed engineer or contractor)",
             "Commission a 179D energy model demonstrating qualifying energy savings",
             "Ensure prevailing wage + apprenticeship compliance for the enhanced rate",
@@ -2092,7 +2091,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
     if prefill_fine and prefill_fine > 0:
         st.info(
-            f"📍 Pre-filled from **{prefill_addr}**: "
+            f"Pre-filled from **{prefill_addr}**: "
             f"estimated annual BERDO fine **${prefill_fine:,.0f}/yr** "
             f"(2025–29 period, at {prefill_ghg:.3f} kg CO₂e/sqft/yr). "
             "Use the payback section below to compare against net retrofit cost."
@@ -2169,9 +2168,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
     rank_rows = []
     for inc in ranked:
-        conflict_flag = "⚠️ " + "; ".join(inc["conflicts"]) if inc["conflicts"] else "✅ None"
+        conflict_flag = "; ".join(inc["conflicts"]) if inc["conflicts"] else "None"
         rank_rows.append({
-            "Priority": f"Step {inc['priority']}",
             "Program": inc["short"],
             "Type": inc["type"],
             "Est. value (low)": f"${inc['_est_low']:,.0f}",
@@ -2205,16 +2203,16 @@ def render_incentive_optimizer_tab(prefill: dict = None):
                 st.markdown(f"**Applies to BERDO periods:** {', '.join(inc['berdo_periods'])}")
                 if inc["conflicts"]:
                     st.warning(
-                        f"⚠️ **Potential conflicts:** {', '.join(inc['conflicts'])}. "
+                        f"**Potential conflicts:** {', '.join(inc['conflicts'])}. "
                         "Verify with a tax advisor before claiming both."
                     )
                 else:
                     stacks = ", ".join(inc["stacks_with"]) if inc["stacks_with"] else "No conflicts identified"
-                    st.success(f"✅ **Stacks cleanly with:** {stacks}")
+                    st.success(f"**Stacks cleanly with:** {stacks}")
                 if ownership == "Not sure" and "For-profit" in inc["ownership"] and "Nonprofit / Government" not in inc["ownership"]:
-                    st.warning("⚠️ This incentive is available to for-profit owners only. Confirm your ownership structure.")
+                    st.warning("This incentive is available to for-profit owners only. Confirm your ownership structure.")
                 if "ownership_transfer_note" in inc:
-                    st.info(f"ℹ️ {inc['ownership_transfer_note']}")
+                    st.info(f"{inc['ownership_transfer_note']}")
             with col_b:
                 st.markdown(f"**Expires:** {inc['expiration']}")
                 st.markdown(f"[Apply / learn more →]({inc['source']})")
@@ -2305,7 +2303,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
         if payback_low <= 10:
             st.success(
-                f"✅ At the low net cost estimate, this retrofit pays back in "
+                f"At the low net cost estimate, this retrofit pays back in "
                 f"**{payback_low} years** from BERDO fine avoidance alone — "
                 "generally considered favourable for commercial real estate."
             )
@@ -2342,7 +2340,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     # ── Disclaimer ────────────────────────────────────────────────────────────
     st.markdown("---")
     st.warning(
-        "⚠️ **Screening tool only — not professional financial or tax advice.** "
+        "**Screening tool only — not professional financial or tax advice.** "
         "Incentive amounts are benchmarks verified June 2026; they change annually. "
         "IRA credit stacking rules are complex — consult a tax advisor for your specific situation. "
         "Do not use these figures for contracts, loan applications, or compliance filings."
@@ -2563,7 +2561,7 @@ with tab_address:
 
             st.session_state["optimizer_prefill"] = opt_prefill
             st.info(
-                "💡 Building data saved — open the **Incentive Optimizer** tab "
+                "Building data saved — open the **Incentive Optimizer** tab "
                 "to see matched funding programs for this building."
             )
 
