@@ -2356,17 +2356,14 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         d1.metric(
             "Pay the fine (5 yrs, current period)",
             _fmt_dollars(fine_5yr),
-            delta="No upfront capital required",
         )
         d2.metric(
             "Retrofit — net cost (low estimate)",
-            _fmt_dollars(net_low),
-            delta="One-time capital outlay",
+            "Fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low),
         )
         d3.metric(
             "Retrofit — net cost (high estimate)",
             _fmt_dollars(net_high),
-            delta="One-time capital outlay",
         )
 
         # ── Plain-English recommendation ─────────────────────────────────────
