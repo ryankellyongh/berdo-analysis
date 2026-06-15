@@ -1528,13 +1528,13 @@ def render_retrofit_tab(prefill: dict = None):
     st.subheader("Estimated retrofit cost")
 
     # Apply Boston labor multiplier to national benchmarks
-    apply_boston = st.toggle(
+    apply_boston = st.checkbox(
         "Apply Boston labor cost multiplier (1.25x)",
         value=True,
         key="boston_multiplier_toggle",
         help=(
             "Boston construction labor runs ~25% above the national RSMeans baseline "
-            "(RSMeans City Cost Index, 2024-2025). Toggle off to see national benchmark figures."
+            "(RSMeans City Cost Index, 2024-2025). Uncheck to see national benchmark figures."
         ),
     )
     multiplier = BOSTON_LABOR_MULTIPLIER if apply_boston else 1.0
@@ -2355,17 +2355,17 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         d1, d2, d3 = st.columns(3)
         d1.metric(
             "Pay the fine (5 yrs, current period)",
-            f"${fine_5yr:,.0f}",
+            _fmt_dollars(fine_5yr),
             delta="No upfront capital required",
         )
         d2.metric(
             "Retrofit — net cost (low estimate)",
-            f"${net_low:,.0f}",
+            _fmt_dollars(net_low),
             delta="One-time capital outlay",
         )
         d3.metric(
             "Retrofit — net cost (high estimate)",
-            f"${net_high:,.0f}",
+            _fmt_dollars(net_high),
             delta="One-time capital outlay",
         )
 
@@ -2377,19 +2377,19 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
         if net_low <= fine_5yr:
             st.success(
-                f"**Retrofit now.** Even at the low estimate, retrofitting (${net_low:,.0f} net) "
-                f"costs less than paying fines for just the current 2025–29 period (${fine_5yr:,.0f}). "
+                f"**Retrofit now.** Even at the low estimate, retrofitting "
+                f"({_fmt_dollars(net_low)} net) costs less than paying fines for just "
+                f"the current 2025–29 period ({_fmt_dollars(fine_5yr)}). "
                 "The financial case for acting immediately is strong."
             )
         elif net_low <= fine_5yr * 2:
             st.warning(
-                f"**Retrofit soon.** The low net retrofit cost (${net_low:,.0f}) is roughly "
-                f"{round(net_low / annual_fine, 1)} years of fines. That's within a typical "
+                f"**Retrofit soon.** The low net retrofit cost ({_fmt_dollars(net_low)}) "
+                f"is roughly {round(net_low / annual_fine, 1)} years of fines. That's within a typical "
                 "investment horizon, especially since BERDO limits tighten each period — "
                 "delaying means higher fines and potentially higher retrofit costs later."
             )
         elif net_low <= cumulative_fine_all:
-            # Find the period where fines exceed retrofit cost
             running = 0
             crossover_period = None
             for r in period_fines:
@@ -2398,7 +2398,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
                     crossover_period = r["period"]
             st.info(
                 f"**Consider phasing.** Paying the fine is cheaper in the short term "
-                f"(${fine_5yr:,.0f} for 2025–29 vs. ${net_low:,.0f} net retrofit cost). "
+                f"({_fmt_dollars(fine_5yr)} for 2025–29 vs. {_fmt_dollars(net_low)} net retrofit cost). "
                 + (f"However, cumulative fines exceed the low retrofit cost by the **{crossover_period}** period. " if crossover_period else "")
                 + "A phased approach — partial improvements now, full retrofit before the next "
                 "tightening — may be the most cost-effective path."
@@ -2406,9 +2406,9 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         else:
             st.info(
                 f"**Pay the fine in the near term.** At current fine levels, cumulative ACP payments "
-                f"(${cumulative_fine_all:,.0f} through 2050) are less than the high net retrofit cost "
-                f"(${net_high:,.0f}). However, this analysis excludes energy cost savings "
-                f"(typically ${round(sqft * 1.0):,.0f}–${round(sqft * 2.0):,.0f}/yr at $1–2/sqft) "
+                f"({_fmt_dollars(cumulative_fine_all)} through 2050) are less than the high net retrofit cost "
+                f"({_fmt_dollars(net_high)}). However, this analysis excludes energy cost savings "
+                f"(typically {_fmt_dollars(round(sqft * 1.0))}–{_fmt_dollars(round(sqft * 2.0))}/yr at $1–2/sqft) "
                 "which significantly improve the retrofit case. Run the numbers with your energy "
                 "consultant before deciding."
             )
