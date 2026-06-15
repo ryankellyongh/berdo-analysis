@@ -745,6 +745,8 @@ def lookup_building_priority(df, address):
             "Reasons":                     "; ".join(reasons),
         })
 
+    return pd.DataFrame(results)
+
 
 # ---------------------------------------------------------------------------
 # Owner portfolio lookup
