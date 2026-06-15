@@ -2379,9 +2379,9 @@ def render_incentive_optimizer_tab(prefill: dict = None):
             net_low_str  = _fmt_dollars(net_low).replace("$", "USD ")
             fine_5yr_str = _fmt_dollars(fine_5yr).replace("$", "USD ")
             st.success(
-                f"**Retrofit now.** Even at the low estimate, retrofitting "
-                f"({net_low_str} net) costs less than paying fines for just "
-                f"the current 2025–29 period ({fine_5yr_str}). "
+                f"**Retrofit now.** Even at the low estimate, the net retrofit cost "
+                f"({'fully covered by incentives' if net_low == 0 else net_low_str}) "
+                f"is less than one period of BERDO fines ({fine_5yr_str}). "
                 "The financial case for acting immediately is strong."
             )
         elif net_low <= fine_5yr * 2:
@@ -2535,7 +2535,7 @@ if multi_year_mode:
         horizontal=False,
     )
     df_full = all_years[selected_year]
-    show_yoy = st.sidebar.checkbox("Show year-over-year comparison", value=True)
+    show_yoy = st.sidebar.checkbox("Show year-over-year comparison", value=True, key="sidebar_show_yoy")
 else:
     selected_year = years_sorted[0] if years_sorted else 0
     df_full = all_years[selected_year]
@@ -2546,6 +2546,7 @@ st.sidebar.header("Grid decarbonization scenario")
 show_grid_decarb = st.sidebar.checkbox(
     "Show grid decarbonization scenario",
     value=False,
+    key="sidebar_grid_decarb",
     help=(
         "Projects future GHG intensity assuming the ISO-NE grid cleans up "
         "per the City of Boston's official projected emissions factors "
