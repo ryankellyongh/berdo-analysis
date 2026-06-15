@@ -3300,7 +3300,7 @@ def render_emissions_planner_tab(prefill: dict = None):
     compliant_periods_grid      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if grid_emissions_kg[i] <= limits[i] * sqft) if has_grid else None
     compliant_periods_combined  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(grid_emissions_kg[i] - period_reductions_kg[i], 0) <= limits[i] * sqft) if (has_projects and has_grid) else None
 
-    best_compliant = max(filter(None.__ne__, [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined]))
+    _all_compliant = [v for v in [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined] if v is not None]
     st.caption(
         f"Compliant periods: baseline {compliant_periods_baseline}"
         + (f" | with projects {compliant_periods_proj}" if compliant_periods_proj is not None else "")
