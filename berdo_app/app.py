@@ -2141,6 +2141,31 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     net_low  = max(total_cost_low  - total_incentive_high, 0)
     net_high = max(total_cost_high - total_incentive_low,  0)
 
+    # ── Headline summary card ─────────────────────────────────────────────────
+    st.markdown("---")
+
+    # Build the headline sentence
+    net_low_display  = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low)
+    prefill_fine_val = prefill.get("annual_fine_usd", 0) or 0
+    default_energy   = 1.0 * sqft  # $1/sqft default energy savings
+    total_return     = prefill_fine_val + default_energy
+
+    if prefill_fine_val > 0 and total_return > 0 and net_low > 0:
+        headline_payback = round(net_low / total_return, 1)
+        payback_str = f", with an estimated **{headline_payback}-year payback** including energy savings"
+    elif prefill_fine_val > 0 and net_low == 0:
+        payback_str = ", with the retrofit **fully covered by incentives**"
+    else:
+        payback_str = ""
+
+    headline = (
+        f"For this building, you qualify for up to **{_fmt_dollars(total_incentive_high)}** "
+        f"in incentives, reducing your estimated net retrofit cost to **{net_low_display}**"
+        f"{payback_str}."
+    )
+
+    st.info(headline)
+
     st.markdown("---")
 
     # ── Summary metric cards ─────────────────────────────────────────────────
@@ -2247,46 +2272,145 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         if annual_fine_input > 0:
             annual_fine = annual_fine_input
 
+    # ── Cash flow & payback ───────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Cash flow & payback")
+
+    annual_fine = prefill_fine if prefill_fine else None
+
+    if annual_fine is None:
+        st.caption(
+            "Look up your building in the Address Lookup tab to pre-fill your "
+            "estimated annual BERDO fine — or enter it manually below."
+        )
+        annual_fine_input = st.number_input(
+            "Estimated annual BERDO fine ($/yr)",
+            min_value=0, value=0, step=1_000,
+            key="opt_fine_manual",
+        )
+        if annual_fine_input > 0:
+            annual_fine = annual_fine_input
+
     if annual_fine and annual_fine > 0:
-        col_pb1, col_pb2 = st.columns(2)
 
-        payback_low  = round(net_low  / annual_fine, 1) if net_low  > 0 else 0.0
-        payback_high = round(net_high / annual_fine, 1) if net_high > 0 else 0.0
-
-        col_pb1.metric(
-            "Payback — fine avoidance only (low net cost)",
-            f"{payback_low} yrs" if payback_low > 0 else "< 1 yr",
+        # ── Energy savings input ─────────────────────────────────────────────
+        st.caption(
+            "Energy cost savings from a retrofit are typically the largest financial return — "
+            "often larger than fine avoidance alone. Enter an estimate below to include them."
         )
-        col_pb2.metric(
-            "Payback — fine avoidance only (high net cost)",
-            f"{payback_high} yrs" if payback_high > 0 else "< 1 yr",
+        energy_cols = st.columns([1, 1, 2])
+        with energy_cols[0]:
+            energy_savings_psf = st.number_input(
+                "Energy savings ($/sqft/yr)",
+                min_value=0.0, max_value=10.0,
+                value=1.00, step=0.25,
+                key="opt_energy_savings_psf",
+                help=(
+                    "Typical range for Boston commercial buildings: "
+                    "$0.50–$1.50/sqft/yr for HVAC upgrades; "
+                    "$1.00–$2.50/sqft/yr for deep retrofits. "
+                    "Set to 0 to see fine avoidance only."
+                ),
+            )
+        with energy_cols[1]:
+            energy_savings_annual = energy_savings_psf * sqft
+            st.metric(
+                "Annual energy savings",
+                _fmt_dollars(energy_savings_annual),
+                delta=f"at {energy_savings_psf:.2f}/sqft/yr",
+            )
+        with energy_cols[2]:
+            st.caption(
+                "Sources: ASHRAE, DOE BTO, and MA utility program data suggest "
+                "$0.50–$1.00/sqft/yr for controls and lighting, "
+                "$1.00–$2.00/sqft/yr for HVAC replacement, and "
+                "$1.50–$3.00/sqft/yr for deep retrofits. "
+                "Use 0 to see a conservative fine-avoidance-only view."
+            )
+
+        # ── Combined annual benefit ──────────────────────────────────────────
+        total_annual_benefit = annual_fine + energy_savings_annual
+
+        # Payback metrics
+        payback_low_fine_only  = round(net_low  / annual_fine, 1) if net_low  > 0 else 0.0
+        payback_high_fine_only = round(net_high / annual_fine, 1) if net_high > 0 else 0.0
+        payback_low_combined   = round(net_low  / total_annual_benefit, 1) if net_low  > 0 else 0.0
+        payback_high_combined  = round(net_high / total_annual_benefit, 1) if net_high > 0 else 0.0
+
+        pb_cols = st.columns(4)
+        pb_cols[0].metric(
+            "Payback — fine only (low)",
+            f"{payback_low_fine_only} yrs" if payback_low_fine_only > 0 else "< 1 yr",
+        )
+        pb_cols[1].metric(
+            "Payback — fine only (high)",
+            f"{payback_high_fine_only} yrs" if payback_high_fine_only > 0 else "< 1 yr",
+        )
+        pb_cols[2].metric(
+            "Payback — fine + energy (low)",
+            f"{payback_low_combined} yrs" if payback_low_combined > 0 else "< 1 yr",
+            delta=f"{round(payback_low_fine_only - payback_low_combined, 1)} yrs faster" if payback_low_fine_only > payback_low_combined else None,
+        )
+        pb_cols[3].metric(
+            "Payback — fine + energy (high)",
+            f"{payback_high_combined} yrs" if payback_high_combined > 0 else "< 1 yr",
+            delta=f"{round(payback_high_fine_only - payback_high_combined, 1)} yrs faster" if payback_high_fine_only > payback_high_combined else None,
         )
 
-        # Cumulative cash flow chart
+        # ── Cash flow chart ──────────────────────────────────────────────────
         years = list(range(0, 16))
-        cumulative_low  = [-net_low  + annual_fine * y for y in years]
-        cumulative_high = [-net_high + annual_fine * y for y in years]
+        cumulative_low_fine   = [-net_low  + annual_fine * y for y in years]
+        cumulative_high_fine  = [-net_high + annual_fine * y for y in years]
+        cumulative_low_total  = [-net_low  + total_annual_benefit * y for y in years]
+        cumulative_high_total = [-net_high + total_annual_benefit * y for y in years]
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=years, y=cumulative_low,
-            name="Optimistic (low net cost)",
-            mode="lines", line=dict(color="#1D9E75", width=2),
-            fill="tozeroy", fillcolor="rgba(29,158,117,0.08)",
-        ))
-        fig.add_trace(go.Scatter(
-            x=years, y=cumulative_high,
-            name="Conservative (high net cost)",
-            mode="lines", line=dict(color="#3266ad", width=2, dash="dash"),
-        ))
-        fig.add_hline(y=0, line_width=1, line_dash="dot",
-                      line_color="rgba(128,128,128,0.5)",
-                      annotation_text="Break-even", annotation_position="right")
+
+        if energy_savings_psf > 0:
+            fig.add_trace(go.Scatter(
+                x=years, y=cumulative_low_total,
+                name="Low cost + energy savings",
+                mode="lines", line=dict(color="#1D9E75", width=2.5),
+                fill="tozeroy", fillcolor="rgba(29,158,117,0.08)",
+            ))
+            fig.add_trace(go.Scatter(
+                x=years, y=cumulative_high_total,
+                name="High cost + energy savings",
+                mode="lines", line=dict(color="#1D9E75", width=1.5, dash="dot"),
+            ))
+            fig.add_trace(go.Scatter(
+                x=years, y=cumulative_low_fine,
+                name="Low cost — fine avoidance only",
+                mode="lines", line=dict(color="#3266ad", width=1.5, dash="dash"),
+            ))
+            fig.add_trace(go.Scatter(
+                x=years, y=cumulative_high_fine,
+                name="High cost — fine avoidance only",
+                mode="lines", line=dict(color="#9B59B6", width=1.5, dash="dash"),
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=years, y=cumulative_low_fine,
+                name="Low net cost",
+                mode="lines", line=dict(color="#1D9E75", width=2),
+                fill="tozeroy", fillcolor="rgba(29,158,117,0.08)",
+            ))
+            fig.add_trace(go.Scatter(
+                x=years, y=cumulative_high_fine,
+                name="High net cost",
+                mode="lines", line=dict(color="#3266ad", width=2, dash="dash"),
+            ))
+
+        fig.add_hline(
+            y=0, line_width=1, line_dash="dot",
+            line_color="rgba(128,128,128,0.5)",
+            annotation_text="Break-even", annotation_position="right",
+        )
         fig.update_layout(
             xaxis_title="Years from retrofit",
             yaxis_title="Cumulative cash flow (USD)",
-            height=320,
-            margin=dict(t=30, b=40, l=60, r=40),
+            height=340,
+            margin=dict(t=30, b=40, l=60, r=60),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
@@ -2295,22 +2419,44 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
         st.plotly_chart(fig, use_container_width=True)
 
+        energy_note = (
+            f"Green lines include {_fmt_dollars(energy_savings_annual)}/yr in energy savings "
+            f"at {energy_savings_psf:.2f}/sqft/yr. Dashed lines show fine avoidance only. "
+            if energy_savings_psf > 0 else
+            "Set energy savings above zero to see how savings shorten payback. "
+        )
         st.caption(
-            "Cash flow assumes annual fine avoidance is the only return — "
-            "energy cost savings (typically $0.50–$2.00/sqft/yr) would improve payback further. "
-            "Not an investment projection. Consult a financial advisor."
+            energy_note +
+            "Not an investment projection. Energy savings are estimates — actual savings "
+            "depend on building operations, utility rates, and project scope. "
+            "Consult a licensed energy auditor for project-specific figures."
         )
 
-        if payback_low <= 10:
+        # ── Payback summary message ──────────────────────────────────────────
+        best_payback = payback_low_combined if energy_savings_psf > 0 else payback_low_fine_only
+        if best_payback == 0:
             st.success(
-                f"At the low net cost estimate, this retrofit pays back in "
-                f"**{payback_low} years** from BERDO fine avoidance alone — "
-                "generally considered favourable for commercial real estate."
+                "At the low net cost estimate, the retrofit is fully covered by incentives — "
+                "any energy savings and fine avoidance are pure return from day one."
+            )
+        elif best_payback <= 7:
+            st.success(
+                f"Strong financial case: best-case payback is **{best_payback} years** "
+                f"({'fine avoidance + energy savings' if energy_savings_psf > 0 else 'fine avoidance alone'}). "
+                "This is well within typical commercial real estate investment horizons."
+            )
+        elif best_payback <= 12:
+            st.info(
+                f"Reasonable case: best-case payback is **{best_payback} years**. "
+                "Within a standard hold period for most commercial properties. "
+                + ("Increasing energy savings assumptions or reducing net cost would strengthen the case." if energy_savings_psf < 1.0 else "")
             )
         else:
             st.info(
-                f"At the low net cost estimate, payback is {payback_low} years from fine avoidance alone. "
-                "Energy cost savings and carbon credit value (if applicable) would shorten this further."
+                f"Longer payback: best-case is **{best_payback} years**. "
+                "Fine avoidance alone may not justify the investment — consider whether "
+                "energy savings, carbon credit value, or asset value appreciation change the picture. "
+                "A phased retrofit approach may improve the near-term economics."
             )
 
     # ── Retrofit vs. compliance decision ─────────────────────────────────────
