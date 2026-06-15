@@ -2287,25 +2287,6 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         if annual_fine_input > 0:
             annual_fine = annual_fine_input
 
-    # ── Cash flow & payback ───────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("Cash flow & payback")
-
-    annual_fine = prefill_fine if prefill_fine else None
-
-    if annual_fine is None:
-        st.caption(
-            "Look up your building in the Address Lookup tab to pre-fill your "
-            "estimated annual BERDO fine — or enter it manually below."
-        )
-        annual_fine_input = st.number_input(
-            "Estimated annual BERDO fine ($/yr)",
-            min_value=0, value=0, step=1_000,
-            key="opt_fine_manual",
-        )
-        if annual_fine_input > 0:
-            annual_fine = annual_fine_input
-
     if annual_fine and annual_fine > 0:
 
         # ── Energy savings input ─────────────────────────────────────────────
