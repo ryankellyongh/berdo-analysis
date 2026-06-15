@@ -2896,7 +2896,7 @@ Actual awards depend on application outcome, project documentation, and contract
 # EMISSIONS PLANNER — Tab 5
 # ---------------------------------------------------------------------------
 
-def render_emissions_planner_tab(prefill: dict = None):
+def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None):
     """
     Tab 5 — Emissions Planner.
     Shows compliance projection table across all BERDO periods,
@@ -3092,62 +3092,42 @@ def render_emissions_planner_tab(prefill: dict = None):
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
-    # ── Grid decarbonization settings ────────────────────────────────────────
+    # ── Grid decarbonization — read from sidebar ──────────────────────────────
     st.markdown("---")
     st.subheader("Emissions Compliance Projection")
-
-    grid_cols = st.columns([1, 2, 3])
-    with grid_cols[0]:
-        apply_grid = st.checkbox(
-            "Apply grid decarbonization",
-            value=False,
-            key="ep_grid_decarb",
-            help=(
-                "Projects the electricity component of emissions declining as ISO-NE grid "
-                "cleans up, using the City of Boston's official Appendix B projected grid "
-                "emissions factors. Fossil fuel use is held constant."
-            ),
-        )
-    with grid_cols[1]:
-        elec_share_pct = st.slider(
-            "Electricity share of GHG emissions (%)",
-            min_value=0, max_value=100, value=50, step=5,
-            key="ep_elec_share",
-            disabled=not apply_grid,
-            help=(
-                "Percentage of this building's total GHG emissions from grid electricity. "
-                "Check your BERDO report or use 50% as a starting estimate."
-            ),
-        )
-    with grid_cols[2]:
-        if apply_grid:
-            base_ef = PROJECTED_GRID_EF.get(2025, 249)
-            ef_2050 = PROJECTED_GRID_EF.get(2050, 150)
-            st.caption(
-                f"Base year grid EF (2025): {base_ef} kg/MWh. "
-                f"Projected EF at 2050: {ef_2050} kg/MWh "
-                f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
-                "Source: BERDO Emissions Factors List, Appendix B (May 2026)."
-            )
-        else:
-            st.caption(
-                "Enable grid decarbonization above to model how ISO-NE grid cleaning "
-                "reduces electricity-attributed emissions over time."
-            )
 
     if berdo_category not in BERDO_STANDARDS:
         st.warning("Select a valid building type above to see the compliance projection.")
         return
 
+    apply_grid = show_grid_decarb
+    elec_share_val = elec_share if elec_share is not None else 0.5
+
+    if apply_grid:
+        base_ef = PROJECTED_GRID_EF.get(2025, 249)
+        ef_2050 = PROJECTED_GRID_EF.get(2050, 150)
+        st.caption(
+            f"Grid decarbonization is ON (sidebar). "
+            f"Electricity share: {round(elec_share_val * 100)}%. "
+            f"Base year grid EF (2025): {base_ef} kg/MWh → {ef_2050} kg/MWh at 2050 "
+            f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
+            "Toggle in the sidebar to turn off."
+        )
+    else:
+        st.caption(
+            "Grid decarbonization is OFF. "
+            "Enable it in the sidebar to model how ISO-NE grid cleaning reduces "
+            "electricity-attributed emissions over time."
+        )
+
     limits             = BERDO_STANDARDS[berdo_category]
-    total_emissions_kg = ghg_intensity * sqft  # kg CO₂e/yr baseline
-    elec_share         = elec_share_pct / 100.0
+    total_emissions_kg = ghg_intensity * sqft
 
     # ── Grid decarbonization — project intensities per period ─────────────────
     if apply_grid:
         projected_intensities = project_ghg_intensities(
             ghg_intensity=ghg_intensity,
-            elec_share=elec_share,
+            elec_share=elec_share_val,
             base_year=2025,
         )
         grid_emissions_kg = [pi * sqft for pi in projected_intensities]
@@ -3683,4 +3663,8 @@ with tab_optimizer:
 # ---------------------------------------------------------------------------
 with tab_planner:
     planner_prefill = st.session_state.get("planner_prefill", {})
-    render_emissions_planner_tab(prefill=planner_prefill)
+    render_emissions_planner_tab(
+        prefill=planner_prefill,
+        show_grid_decarb=show_grid_decarb,
+        elec_share=elec_share,
+    )
