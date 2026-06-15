@@ -723,13 +723,23 @@ def lookup_building_priority(df, address):
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
             "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
             "Primary Fuel":                infer_primary_fuel(row),
+            # Fuel usage columns — needed for get_fuel_breakdown()
+            "fuel_natural_gas_kbtu":       row.get("fuel_natural_gas_kbtu"),
+            "fuel_electricity_kwh":        row.get("fuel_electricity_kwh"),
+            "fuel_district_steam_kbtu":    row.get("fuel_district_steam_kbtu"),
+            "fuel_district_hot_water_kbtu":row.get("fuel_district_hot_water_kbtu"),
+            "fuel_oil1_kbtu":              row.get("fuel_oil1_kbtu"),
+            "fuel_oil2_kbtu":              row.get("fuel_oil2_kbtu"),
+            "fuel_oil4_kbtu":              row.get("fuel_oil4_kbtu"),
+            "fuel_oil56_kbtu":             row.get("fuel_oil56_kbtu"),
+            "fuel_propane_kbtu":           row.get("fuel_propane_kbtu"),
+            "fuel_diesel_kbtu":            row.get("fuel_diesel_kbtu"),
+            "fuel_kerosene_kbtu":          row.get("fuel_kerosene_kbtu"),
             "Compliance Status":           row.get("compliance_status"),
             "Priority Level":              priority,
             "Priority Score":              score,
             "Reasons":                     "; ".join(reasons),
         })
-
-    return pd.DataFrame(results)
 
 
 # ---------------------------------------------------------------------------
