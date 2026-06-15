@@ -2109,7 +2109,7 @@ INCENTIVE_STACK = [
 ]
 
 RETROFIT_SCOPES_OPT = list(RETROFIT_COST_PER_SQFT.keys())
-FUEL_TYPES_OPT = ["Natural gas", "Fuel oil", "Electric", "Mixed / unknown"]
+FUEL_TYPES_OPT = ["Natural gas", "Fuel oil", "Electric", "District steam", "Mixed / unknown"]
 OWNERSHIP_TYPES_OPT = ["For-profit", "Nonprofit / Government", "Not sure"]
 
 
@@ -2168,6 +2168,9 @@ def render_incentive_optimizer_tab(prefill: dict = None):
             type_options_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
             if prefill["berdo_category"] in type_options_init:
                 st.session_state["opt_btype"] = prefill["berdo_category"]
+        if prefill.get("primary_fuel"):
+            if prefill["primary_fuel"] in FUEL_TYPES_OPT:
+                st.session_state["opt_fuel"] = prefill["primary_fuel"]
         st.session_state["opt_last_injected_addr"] = prefill_addr_key
 
     st.subheader("Building inputs")
@@ -3646,6 +3649,7 @@ with tab_address:
                 "address":       top.get("Building Address", address_input),
                 "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else 50_000,
                 "berdo_category": berdo_cat,
+                "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
             }
 
             # Calculate fine for 2025–29 period if possible
