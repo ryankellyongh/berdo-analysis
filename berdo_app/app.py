@@ -485,7 +485,56 @@ COLUMN_RENAME_MAP = {
     "Estimated Total GHG Emissions e(kgCO2e)": "ghg_emissions",
     "Reporting Compliance Status": "compliance_status",
     "First Emissions Compliance Year (Projected)": "compliance_year",
+    # Fuel usage columns (all in kBtu except Electricity which is kWh)
+    "Natural Gas Usage (kBtu)":       "fuel_natural_gas_kbtu",
+    "Electricity Usage (kWh)":        "fuel_electricity_kwh",
+    "District Steam Usage (kBtu)":    "fuel_district_steam_kbtu",
+    "District Hot Water Usage (kBtu)":"fuel_district_hot_water_kbtu",
+    "Fuel Oil 1 Usage (kBtu)":        "fuel_oil1_kbtu",
+    "Fuel Oil 2 Usage (kBtu)":        "fuel_oil2_kbtu",
+    "Fuel Oil 4 Usage (kBtu)":        "fuel_oil4_kbtu",
+    "Fuel Oil 5 and 6 Usage (kBtu)":  "fuel_oil56_kbtu",
+    "Propane Usage (kBtu)":           "fuel_propane_kbtu",
+    "Diesel Usage (kBtu)":            "fuel_diesel_kbtu",
+    "Kerosene Usage (kBtu)":          "fuel_kerosene_kbtu",
 }
+
+def infer_primary_fuel(row) -> str:
+    """
+    Infer a building's primary heating fuel from BERDO reported usage columns.
+    All values converted to kBtu for comparison.
+    Electricity: kWh × 3.412 → kBtu.
+    Fuel oils combined into one bucket.
+    Returns dominant fuel if >60% of total, else 'Mixed / unknown'.
+    Maps to the dropdown options used in the Retrofit Estimator and Incentive Optimizer.
+    """
+    def _get(col): return float(row.get(col) or 0)
+
+    gas_kbtu     = _get("fuel_natural_gas_kbtu")
+    elec_kbtu    = _get("fuel_electricity_kwh") * 3.412
+    steam_kbtu   = _get("fuel_district_steam_kbtu") + _get("fuel_district_hot_water_kbtu")
+    oil_kbtu     = (_get("fuel_oil1_kbtu") + _get("fuel_oil2_kbtu") +
+                    _get("fuel_oil4_kbtu") + _get("fuel_oil56_kbtu"))
+    other_kbtu   = _get("fuel_propane_kbtu") + _get("fuel_diesel_kbtu") + _get("fuel_kerosene_kbtu")
+
+    total = gas_kbtu + elec_kbtu + steam_kbtu + oil_kbtu + other_kbtu
+    if total <= 0:
+        return "Mixed / unknown"
+
+    buckets = {
+        "Natural gas":    gas_kbtu,
+        "Electric":       elec_kbtu,
+        "District steam": steam_kbtu,
+        "Fuel oil":       oil_kbtu,
+        "Mixed / unknown": other_kbtu,
+    }
+    dominant_fuel = max(buckets, key=buckets.get)
+    dominant_share = buckets[dominant_fuel] / total
+
+    if dominant_share >= 0.60:
+        return dominant_fuel
+    return "Mixed / unknown"
+
 
 REQUIRED_COLUMNS = [
     "Building Address", "Property Owner Name", "property_type",
@@ -510,6 +559,17 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
     df["gross_floor_area"] = pd.to_numeric(df["gross_floor_area"], errors="coerce")
     df["site_eui"]         = pd.to_numeric(df["site_eui"],         errors="coerce")
     df["ghg_emissions"]    = pd.to_numeric(df["ghg_emissions"],    errors="coerce")
+
+    # Load fuel usage columns as numeric
+    fuel_cols = [
+        "fuel_natural_gas_kbtu", "fuel_electricity_kwh",
+        "fuel_district_steam_kbtu", "fuel_district_hot_water_kbtu",
+        "fuel_oil1_kbtu", "fuel_oil2_kbtu", "fuel_oil4_kbtu", "fuel_oil56_kbtu",
+        "fuel_propane_kbtu", "fuel_diesel_kbtu", "fuel_kerosene_kbtu",
+    ]
+    for col in fuel_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
     valid = (
         df["ghg_emissions"].notna() &
@@ -621,6 +681,7 @@ def lookup_building_priority(df, address):
             "Site EUI":                    row.get("site_eui"),
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
             "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
+            "Primary Fuel":                infer_primary_fuel(row),
             "Compliance Status":           row.get("compliance_status"),
             "Priority Level":              priority,
             "Priority Score":              score,
@@ -1435,6 +1496,10 @@ def render_retrofit_tab(prefill: dict = None):
             type_opts_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
             if prefill["berdo_category"] in type_opts_init:
                 st.session_state["ret_btype"] = prefill["berdo_category"]
+        if prefill.get("primary_fuel"):
+            fuel_opts = ["Natural gas", "Fuel oil", "Electric", "District steam", "Mixed / unknown"]
+            if prefill["primary_fuel"] in fuel_opts:
+                st.session_state["ret_fuel"] = prefill["primary_fuel"]
         st.session_state["ret_last_injected_addr"] = prefill_addr_key
 
     if prefill_addr_key:
@@ -1473,8 +1538,9 @@ def render_retrofit_tab(prefill: dict = None):
 
         fuel_type = st.selectbox(
             "Primary heating fuel",
-            options=["Natural gas", "Fuel oil", "Electric", "Mixed / unknown"],
-            help="Affects which electrification incentives are most relevant.",
+            options=["Natural gas", "Fuel oil", "Electric", "District steam", "Mixed / unknown"],
+            help="Auto-detected from reported BERDO fuel usage. Affects which electrification incentives are most relevant.",
+            key="ret_fuel",
         )
 
     st.subheader("Retrofit scope")
@@ -3602,6 +3668,7 @@ with tab_address:
                 "address":        opt_prefill.get("address", address_input),
                 "sqft":           opt_prefill.get("sqft", 50_000),
                 "berdo_category": berdo_cat,
+                "primary_fuel":   top.get("Primary Fuel", "Mixed / unknown"),
             }
 
             # Also pre-fill the Emissions Planner tab
