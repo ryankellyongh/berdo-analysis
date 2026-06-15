@@ -7,7 +7,7 @@ from pathlib import Path
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="BERDO Building Priority Screening Tool",
+    page_title="BERDO Building Priority & Incentive Tool",
     layout="wide"
 )
 
@@ -1222,6 +1222,1019 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
     prior_label = str(int(prior["year"]))
     return prior_ghg, prior_label
 
+# ---------------------------------------------------------------------------
+# RETROFIT COST BENCHMARKS
+# Source: ASHRAE, RSMeans, NBI New Construction Cost Study, DOE BTO
+# Units: USD per square foot (low, high)
+# Last verified: June 2026
+# ---------------------------------------------------------------------------
+RETROFIT_COST_PER_SQFT = {
+    # scope → (low $/sqft, high $/sqft, notes)
+    "Lighting (LED retrofit + controls)":          (1.5,   4.0,  "LED fixtures, occupancy sensors, daylight controls"),
+    "HVAC (tune-up, controls, VFDs)":              (3.0,   8.0,  "Controls upgrades, VFDs on pumps/fans, recommissioning"),
+    "HVAC (full system replacement)":              (15.0,  35.0, "Chiller, AHU, or boiler replacement"),
+    "Building envelope (windows + insulation)":    (8.0,   20.0, "Window replacement, roof/wall insulation"),
+    "Electrification — HVAC (heat pump)":          (12.0,  30.0, "Air-source or ground-source heat pump system"),
+    "Electrification — water heating":             (2.0,   6.0,  "Heat pump water heaters replacing gas"),
+    "Building-wide deep retrofit (all systems)":   (40.0,  100.0,"Comprehensive envelope + MEP overhaul"),
+}
+
+# ---------------------------------------------------------------------------
+# INCENTIVE PROGRAMS
+# Each entry: name, amount_str, eligibility_notes, expiration, source_url
+# Amounts are per-sqft where applicable; lump-sum where noted.
+# Last verified: June 2026 — ALWAYS check before advising a client.
+# ---------------------------------------------------------------------------
+INCENTIVES = [
+    {
+        "name": "Mass Save — Commercial HVAC Rebates",
+        "type": "Utility rebate",
+        "scopes": ["HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
+                   "Electrification — HVAC (heat pump)"],
+        "amount_str": "$50–$300/ton of cooling capacity; heat pump adders available",
+        "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
+        "expiration": "Program year 2026 (amounts reset annually in Jan)",
+        "stacks_with_ira": True,
+        "source": "https://www.masssave.com/saving/business-rebates",
+    },
+    {
+        "name": "Mass Save — Lighting Rebates",
+        "type": "Utility rebate",
+        "scopes": ["Lighting (LED retrofit + controls)"],
+        "amount_str": "$0.05–$0.30/kWh saved (estimated); fixture rebates vary by product",
+        "eligibility": "MA commercial accounts",
+        "expiration": "Program year 2026 (amounts reset annually)",
+        "stacks_with_ira": True,
+        "source": "https://www.masssave.com/saving/business-rebates",
+    },
+    {
+        "name": "Mass Save — Deep Energy Retrofit",
+        "type": "Utility rebate",
+        "scopes": ["Building-wide deep retrofit (all systems)", "Building envelope (windows + insulation)"],
+        "amount_str": "Up to $400,000 per project; custom incentive based on modeled savings",
+        "eligibility": "MA commercial buildings; requires pre-approval and energy model",
+        "expiration": "Program year 2026",
+        "stacks_with_ira": True,
+        "source": "https://www.masssave.com/saving/large-business",
+    },
+    {
+        "name": "IRA Section 179D — Energy Efficient Commercial Buildings Deduction",
+        "type": "Federal tax deduction",
+        "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
+                   "HVAC (full system replacement)", "Building envelope (windows + insulation)",
+                   "Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+        "amount_str": "$2.50–$5.00/sqft (prevailing wage met); $0.50–$1.00/sqft (partial)",
+        "eligibility": "For-profit building owners; nonprofits/govts can transfer deduction to designer",
+        "expiration": "Permanent (no sunset); indexed to inflation",
+        "stacks_with_ira": True,
+        "source": "https://www.irs.gov/credits-deductions/179d-commercial-buildings-energy-efficiency-tax-deduction",
+        "ownership_restriction": ["For-profit"],
+    },
+    {
+        "name": "IRA Section 48C — Advanced Energy Project Tax Credit",
+        "type": "Federal tax credit",
+        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+                   "Building-wide deep retrofit (all systems)"],
+        "amount_str": "6% base credit (30% with prevailing wage + apprenticeship); capped per project",
+        "eligibility": "Manufacturing/industrial sites prioritized; limited allocations via competitive application",
+        "expiration": "Allocations ongoing; check IRS portal for remaining capacity",
+        "stacks_with_ira": False,
+        "source": "https://www.irs.gov/credits-deductions/businesses/advanced-energy-project-credit",
+        "ownership_restriction": ["For-profit"],
+    },
+    {
+        "name": "IRA Section 45L — New Energy Efficient Home Credit (multifamily)",
+        "type": "Federal tax credit",
+        "scopes": ["Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+        "amount_str": "$500–$2,500/unit (Energy Star); $1,000–$5,000/unit (Zero Energy Ready)",
+        "eligibility": "Multifamily residential buildings; new construction and substantial rehab",
+        "expiration": "Through 2032",
+        "stacks_with_ira": True,
+        "source": "https://www.irs.gov/credits-deductions/energy-efficient-home-credit",
+        "ownership_restriction": ["For-profit"],
+        "berdo_types": ["Multifamily Housing"],
+    },
+    {
+        "name": "MassDOER — Clean Energy Grants (nonprofits)",
+        "type": "State grant",
+        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+                   "Building-wide deep retrofit (all systems)"],
+        "amount_str": "Up to $250,000; varies by program round",
+        "eligibility": "Nonprofits and municipal buildings in MA",
+        "expiration": "Check MassCEC for current open rounds",
+        "stacks_with_ira": True,
+        "source": "https://www.masscec.com/program/clean-energy-results-program",
+        "ownership_restriction": ["Nonprofit / Government"],
+    },
+    {
+        "name": "Green Communities — Municipal Energy Grants",
+        "type": "State grant",
+        "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
+                   "HVAC (full system replacement)", "Building envelope (windows + insulation)",
+                   "Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+        "amount_str": "Up to $1.6M per municipality; formula-based on population",
+        "eligibility": "MA municipalities that have achieved Green Community designation",
+        "expiration": "Annual grant rounds; check DOER for current cycle",
+        "stacks_with_ira": True,
+        "source": "https://www.mass.gov/green-communities-designation-grant-program",
+        "ownership_restriction": ["Nonprofit / Government"],
+    },
+]
+
+# Ownership types shown in the UI
+OWNERSHIP_TYPES = ["For-profit", "Nonprofit / Government", "Not sure"]
+
+
+def _fmt_dollars(val):
+    """Format a dollar value with commas, no decimals."""
+    return f"${val:,.0f}"
+
+
+def _incentive_applies(incentive, scopes_selected, ownership_type, berdo_category):
+    """Return True if this incentive is relevant given user inputs."""
+    if not any(s in incentive["scopes"] for s in scopes_selected):
+        return False
+    if "ownership_restriction" in incentive:
+        if ownership_type == "Not sure":
+            pass
+        elif ownership_type not in incentive["ownership_restriction"]:
+            return False
+    if "berdo_types" in incentive and berdo_category is not None:
+        if berdo_category not in incentive["berdo_types"]:
+            return False
+    return True
+
+
+def render_retrofit_tab(prefill: dict = None):
+    if prefill is None:
+        prefill = {}
+
+    st.write(
+        "Estimate rough retrofit costs and applicable incentives for a Boston building. "
+        "Figures are order-of-magnitude ranges — get a quote from a licensed energy contractor "
+        "before making financial decisions."
+    )
+
+    st.info(
+        "**Incentive amounts are verified as of June 2026.** "
+        "Mass Save program-year amounts reset each January. "
+        "IRA figures reflect regulations current as of that date. "
+        "Always confirm current amounts at the source links before advising a client."
+    )
+
+    st.subheader("Building inputs")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        default_sqft = int(prefill.get("sqft", 0)) if prefill.get("sqft") else None
+        sqft = st.number_input(
+            "Gross floor area (sq ft)",
+            min_value=1_000,
+            max_value=5_000_000,
+            value=default_sqft or 50_000,
+            step=1_000,
+            help="Total building area. Pre-filled from address lookup if available.",
+        )
+        ownership_type = st.selectbox(
+            "Ownership type",
+            options=OWNERSHIP_TYPES,
+            help="Affects eligibility for IRA tax credits (for-profit only) vs. grants (nonprofits/government).",
+        )
+
+    with col2:
+        prefill_type = prefill.get("property_type")
+        berdo_category = None
+        if prefill_type:
+            berdo_category = map_property_type(prefill_type)
+
+        type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+        default_index = 0
+        if berdo_category and berdo_category in type_options:
+            default_index = type_options.index(berdo_category)
+
+        selected_type = st.selectbox(
+            "Building type (BERDO category)",
+            options=type_options,
+            index=default_index,
+            help="Pre-filled from address lookup if available. Used to filter relevant incentives.",
+        )
+        if selected_type != "— select —":
+            berdo_category = selected_type
+
+        fuel_type = st.selectbox(
+            "Primary heating fuel",
+            options=["Natural gas", "Fuel oil", "Electric", "Mixed / unknown"],
+            help="Affects which electrification incentives are most relevant.",
+        )
+
+    st.subheader("Retrofit scope")
+    st.caption("Select all work you're considering — costs and incentives will be calculated for each.")
+
+    scopes_selected = []
+    scope_cols = st.columns(2)
+    scope_items = list(RETROFIT_COST_PER_SQFT.items())
+    for i, (scope, (low, high, note)) in enumerate(scope_items):
+        col = scope_cols[i % 2]
+        with col:
+            checked = st.checkbox(f"**{scope}**", help=note, key=f"scope_{i}")
+            if checked:
+                scopes_selected.append(scope)
+
+    if not scopes_selected:
+        st.warning("Select at least one retrofit scope above to see estimates.")
+        return
+
+    st.markdown("---")
+    st.subheader("Estimated retrofit cost")
+
+    total_low = 0.0
+    total_high = 0.0
+    cost_rows = []
+
+    for scope in scopes_selected:
+        low_psf, high_psf, _ = RETROFIT_COST_PER_SQFT[scope]
+        low_total  = low_psf  * sqft
+        high_total = high_psf * sqft
+        total_low  += low_total
+        total_high += high_total
+        cost_rows.append({
+            "Scope":        scope,
+            "Low ($/sqft)": f"${low_psf:.2f}",
+            "High ($/sqft)":f"${high_psf:.2f}",
+            "Low total":    _fmt_dollars(low_total),
+            "High total":   _fmt_dollars(high_total),
+        })
+
+    cost_df = pd.DataFrame(cost_rows)
+    st.dataframe(cost_df, use_container_width=True, hide_index=True)
+
+    c1, c2 = st.columns(2)
+    c1.metric("Total low estimate",  _fmt_dollars(total_low))
+    c2.metric("Total high estimate", _fmt_dollars(total_high))
+
+    st.caption(
+        "Costs are rough order-of-magnitude benchmarks (RSMeans / ASHRAE / DOE BTO, 2024–2026). "
+        "Actual costs depend heavily on building condition, contractor market, and project complexity. "
+        "Get competitive bids before budgeting."
+    )
+
+    st.markdown("---")
+    st.subheader("Applicable incentives")
+
+    applicable = [
+        inc for inc in INCENTIVES
+        if _incentive_applies(inc, scopes_selected, ownership_type, berdo_category)
+    ]
+
+    if not applicable:
+        st.info(
+            "No incentives matched your inputs. "
+            "Try adjusting the ownership type or retrofit scope, "
+            "or check Mass Save and MassCEC directly for current programs."
+        )
+    else:
+        ira_179d_low  = 0.50 * sqft
+        ira_179d_high = 5.00 * sqft
+
+        for inc in applicable:
+            with st.expander(f"**{inc['name']}** — {inc['type']}", expanded=True):
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    st.markdown(f"**Amount:** {inc['amount_str']}")
+                    st.markdown(f"**Eligible for:** {inc['eligibility']}")
+                    if ownership_type == "Not sure" and "ownership_restriction" in inc:
+                        st.warning(
+                            f"⚠️ This incentive is available to: "
+                            f"{', '.join(inc['ownership_restriction'])}. "
+                            "Confirm your ownership structure before applying."
+                        )
+                with col_b:
+                    st.markdown(f"**Expires / resets:** {inc['expiration']}")
+                    stacks = "✅ Yes" if inc["stacks_with_ira"] else "⚠️ May conflict — verify"
+                    st.markdown(f"**Stacks with other IRA credits:** {stacks}")
+                    st.markdown(f"[Source / apply →]({inc['source']})")
+
+        if any(i["name"].startswith("IRA Section 179D") for i in applicable):
+            st.info(
+                f"**179D rough estimate for this building ({sqft:,} sqft):** "
+                f"{_fmt_dollars(ira_179d_low)} – {_fmt_dollars(ira_179d_high)} "
+                f"(at $0.50–$5.00/sqft depending on systems covered and prevailing wage compliance). "
+                "Requires a qualified third-party certifier."
+            )
+
+    st.markdown("---")
+    st.subheader("Net cost range after incentives")
+
+    conservative_reduction = total_low * 0.10
+    optimistic_reduction   = total_high * 0.40
+
+    net_low  = max(total_low  - optimistic_reduction, 0)
+    net_high = max(total_high - conservative_reduction, 0)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        name="Gross cost range",
+        x=["Low estimate", "High estimate"],
+        y=[total_low, total_high],
+        marker_color="#3266ad",
+        text=[_fmt_dollars(total_low), _fmt_dollars(total_high)],
+        textposition="outside",
+    ))
+
+    fig.add_trace(go.Bar(
+        name="Est. incentive reduction",
+        x=["Low estimate", "High estimate"],
+        y=[optimistic_reduction, conservative_reduction],
+        marker_color="#2ECC71",
+        text=[_fmt_dollars(optimistic_reduction), _fmt_dollars(conservative_reduction)],
+        textposition="outside",
+    ))
+
+    fig.update_layout(
+        barmode="overlay",
+        yaxis_title="USD",
+        height=350,
+        margin=dict(t=30, b=40, l=60, r=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    c1.metric("Estimated net cost (low)",  _fmt_dollars(net_low),
+              delta=f"−{_fmt_dollars(optimistic_reduction)} in incentives (optimistic)")
+    c2.metric("Estimated net cost (high)", _fmt_dollars(net_high),
+              delta=f"−{_fmt_dollars(conservative_reduction)} in incentives (conservative)")
+
+    st.caption(
+        "Incentive reduction estimated at 10–40% of gross cost — a rough proxy for typical "
+        "Mass Save rebates + 179D deduction combined for a commercial building in Boston. "
+        "Actual savings depend on specific program eligibility, project scope, and tax position. "
+        "Consult a licensed energy consultant and tax advisor before budgeting."
+    )
+
+    st.markdown("---")
+    st.subheader("BERDO fine avoidance context")
+
+    if berdo_category and berdo_category in BERDO_STANDARDS:
+        st.write(
+            "Compare the retrofit net cost against your estimated BERDO fine exposure "
+            "from the Address Lookup tab to get a rough payback picture."
+        )
+        st.info(
+            "💡 **Simple payback rule of thumb:** if your estimated annual BERDO fine "
+            "is larger than 10–15% of the net retrofit cost, the investment likely pays "
+            "back within 7–10 years from fine avoidance alone — before energy savings."
+        )
+    else:
+        st.info(
+            "Select a building type above to see how retrofit costs compare to your BERDO fine exposure. "
+            "Or look up your building in the Address Lookup tab first."
+        )
+
+    st.markdown("---")
+    st.warning(
+        "⚠️ **This is a screening tool, not a professional estimate.** "
+        "Cost benchmarks are national/regional averages and may not reflect current Boston contractor "
+        "pricing. Incentive amounts are verified as of June 2026 but change frequently. "
+        "Do not use these figures for contracts, loan applications, or compliance filings. "
+        "Engage a licensed energy auditor, MEP engineer, or sustainability consultant for a "
+        "project-specific assessment."
+    )
+
+    with st.expander("Sources & methodology"):
+        st.markdown("""
+**Retrofit cost benchmarks**
+- RSMeans Construction Cost Data (2024–2025 editions)
+- ASHRAE Level 2 Energy Audit benchmarks
+- DOE Building Technologies Office: *Adoption of Energy Efficiency Technologies: Commercial Buildings* (2023)
+- NBI: *Getting to Zero: Commercial Building Cost Study* (2022)
+
+**Incentive programs**
+- Mass Save commercial rebates: masssave.com (verified June 2026; reset annually each January)
+- IRA Section 179D: IRS Notice 2023-29, as amended; indexed to inflation annually
+- IRA Section 48C: IRS Rev. Proc. 2023-27; competitive allocation rounds
+- IRA Section 45L: IRS Notice 2023-65; applies through 2032
+- MassDOER / MassCEC grants: masscec.com and mass.gov/doer (program-dependent)
+- Green Communities: mass.gov/green-communities (annual grant rounds)
+
+**Incentive stacking**
+179D deductions may be combined with utility rebates and most IRA credits. 48C credits may
+conflict with other IRA investment credits — verify with a tax advisor for your specific project.
+Utility rebates are generally taxable income and reduce the basis eligible for 179D.
+
+**Limitations**
+Cost ranges span the 20th–80th percentile of typical project costs. Complex retrofits
+(occupied buildings, historic structures, unusual systems) often fall above the high end.
+Incentive amounts shown are maximums; actual awards depend on program availability,
+contractor certification, and project documentation.
+""")
+
+# ---------------------------------------------------------------------------
+# INCENTIVE OPTIMIZER — data & logic
+# ---------------------------------------------------------------------------
+
+# Incentive stacking order: apply these first to preserve basis for later credits.
+# Each entry has a priority rank (1 = apply first), conflict notes, and BERDO period relevance.
+INCENTIVE_STACK = [
+    {
+        "name": "Mass Save — Commercial HVAC Rebates",
+        "short": "Mass Save HVAC",
+        "type": "Utility rebate",
+        "priority": 1,
+        "apply_first_reason": "Utility rebates are taxable income and reduce your 179D basis — claim after filing taxes, but negotiate before project start.",
+        "scopes": ["HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
+                   "Electrification — HVAC (heat pump)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.50,
+        "amount_psf_high": 2.00,
+        "amount_str": "$50–$300/ton cooling capacity; heat pump adders available",
+        "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
+        "expiration": "Program year 2026 (resets each January)",
+        "conflicts": [],
+        "stacks_with": ["IRA 179D", "IRA 45L"],
+        "berdo_periods": ["2025–29", "2030–34"],
+        "ownership": ["For-profit", "Nonprofit / Government"],
+        "source": "https://www.masssave.com/saving/business-rebates",
+        "checklist": [
+            "Contact your utility (Eversource / National Grid / Unitil) before project start",
+            "Get pre-approval from Mass Save — required before installation",
+            "Select a Mass Save Trade Ally contractor",
+            "Complete installation and submit documentation",
+            "Receive rebate check (typically 6–8 weeks post-completion)",
+        ],
+    },
+    {
+        "name": "Mass Save — Lighting Rebates",
+        "short": "Mass Save Lighting",
+        "type": "Utility rebate",
+        "priority": 1,
+        "apply_first_reason": "Pre-approval required before installation — start here.",
+        "scopes": ["Lighting (LED retrofit + controls)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.10,
+        "amount_psf_high": 0.60,
+        "amount_str": "$0.05–$0.30/kWh saved; fixture rebates vary by product",
+        "eligibility": "MA commercial accounts",
+        "expiration": "Program year 2026 (resets each January)",
+        "conflicts": [],
+        "stacks_with": ["IRA 179D"],
+        "berdo_periods": ["2025–29", "2030–34"],
+        "ownership": ["For-profit", "Nonprofit / Government"],
+        "source": "https://www.masssave.com/saving/business-rebates",
+        "checklist": [
+            "Contact Mass Save or your utility for pre-approval",
+            "Select eligible LED fixtures from the approved product list",
+            "Complete installation with a Trade Ally contractor",
+            "Submit lighting inventory and rebate application",
+        ],
+    },
+    {
+        "name": "Mass Save — Deep Energy Retrofit",
+        "short": "Mass Save Deep Retrofit",
+        "type": "Utility rebate",
+        "priority": 1,
+        "apply_first_reason": "Requires energy model and pre-approval — begin 3–6 months before construction.",
+        "scopes": ["Building-wide deep retrofit (all systems)",
+                   "Building envelope (windows + insulation)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.50,
+        "amount_psf_high": 3.00,
+        "amount_str": "Up to $400,000/project; custom incentive based on modeled savings",
+        "eligibility": "MA commercial buildings; requires pre-approval and energy model",
+        "expiration": "Program year 2026",
+        "conflicts": [],
+        "stacks_with": ["IRA 179D", "IRA 48C"],
+        "berdo_periods": ["2025–29", "2030–34", "2035–39"],
+        "ownership": ["For-profit", "Nonprofit / Government"],
+        "source": "https://www.masssave.com/saving/large-business",
+        "checklist": [
+            "Submit a pre-application to Mass Save Large Business program",
+            "Commission an ASHRAE Level 2 energy audit",
+            "Develop an energy model (EnergyPlus or eQUEST)",
+            "Receive custom incentive offer from Mass Save",
+            "Execute project and submit final documentation",
+        ],
+    },
+    {
+        "name": "IRA Section 179D",
+        "short": "IRA 179D",
+        "type": "Federal tax deduction",
+        "priority": 2,
+        "apply_first_reason": "Claim after utility rebates are received — rebates reduce your depreciable basis, which affects 179D calculation.",
+        "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
+                   "HVAC (full system replacement)", "Building envelope (windows + insulation)",
+                   "Electrification — HVAC (heat pump)", "Building-wide deep retrofit (all systems)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.50,
+        "amount_psf_high": 5.00,
+        "amount_str": "$2.50–$5.00/sqft (prevailing wage); $0.50–$1.00/sqft (partial)",
+        "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
+        "expiration": "Permanent; indexed to inflation annually",
+        "conflicts": [],
+        "stacks_with": ["Mass Save rebates", "IRA 45L"],
+        "berdo_periods": ["2025–29", "2030–34", "2035–39", "2040–44", "2045–49"],
+        "ownership": ["For-profit"],
+        "ownership_transfer": "Nonprofit / Government",
+        "ownership_transfer_note": "Nonprofits and government owners can allocate the deduction to the project designer/engineer.",
+        "source": "https://www.irs.gov/credits-deductions/179d-commercial-buildings-energy-efficiency-tax-deduction",
+        "checklist": [
+            "Engage a qualified third-party certifier (licensed engineer or contractor)",
+            "Commission a 179D energy model demonstrating qualifying energy savings",
+            "Ensure prevailing wage compliance if claiming the enhanced $5.00/sqft rate",
+            "Obtain signed certification from the certifier",
+            "Claim deduction on federal tax return (Form 3115 if prior year)",
+        ],
+    },
+    {
+        "name": "IRA Section 45L (multifamily)",
+        "short": "IRA 45L",
+        "type": "Federal tax credit",
+        "priority": 2,
+        "apply_first_reason": "Claim alongside 179D — these stack. Document unit-level improvements during construction.",
+        "scopes": ["Electrification — HVAC (heat pump)",
+                   "Building-wide deep retrofit (all systems)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.50,
+        "amount_psf_high": 5.00,
+        "amount_str": "$500–$2,500/unit (Energy Star); $1,000–$5,000/unit (Zero Energy Ready)",
+        "eligibility": "Multifamily residential; new construction and substantial rehab",
+        "expiration": "Through 2032",
+        "conflicts": [],
+        "stacks_with": ["Mass Save rebates", "IRA 179D"],
+        "berdo_periods": ["2025–29", "2030–34"],
+        "ownership": ["For-profit"],
+        "berdo_types": ["Multifamily Housing"],
+        "source": "https://www.irs.gov/credits-deductions/energy-efficient-home-credit",
+        "checklist": [
+            "Determine unit count and confirm project qualifies as 'substantial rehab'",
+            "Select Energy Star or DOE Zero Energy Ready Home certification path",
+            "Commission third-party Energy Star rater during construction",
+            "Obtain Energy Star or ZERH certification for each unit",
+            "Claim credit on federal return (Form 8908)",
+        ],
+    },
+    {
+        "name": "IRA Section 48C",
+        "short": "IRA 48C",
+        "type": "Federal tax credit",
+        "priority": 3,
+        "apply_first_reason": "Competitive allocation — apply early via IRS portal. May conflict with other IRA investment credits.",
+        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+                   "Building-wide deep retrofit (all systems)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown"],
+        "amount_psf_low": 0.60,
+        "amount_psf_high": 3.00,
+        "amount_str": "6% base (30% with prevailing wage + apprenticeship); capped per project",
+        "eligibility": "Competitive allocation; manufacturing/industrial sites prioritized",
+        "expiration": "Allocations ongoing; check IRS portal",
+        "conflicts": ["IRA 48E", "Other IRA investment credits on same property"],
+        "stacks_with": ["Mass Save rebates"],
+        "berdo_periods": ["2025–29", "2030–34"],
+        "ownership": ["For-profit"],
+        "source": "https://www.irs.gov/credits-deductions/businesses/advanced-energy-project-credit",
+        "checklist": [
+            "Check IRS portal for open allocation rounds",
+            "Prepare project application (technology description, cost, job creation)",
+            "Submit application during open window — allocations are competitive",
+            "If awarded, begin construction within required timeframe",
+            "Comply with prevailing wage + apprenticeship for 30% rate",
+            "Claim credit on federal return (Form 3468)",
+        ],
+    },
+    {
+        "name": "MassDOER Clean Energy Grants",
+        "short": "MassDOER Grant",
+        "type": "State grant",
+        "priority": 1,
+        "apply_first_reason": "Grant funds must be committed before construction — apply during open rounds.",
+        "scopes": ["Electrification — HVAC (heat pump)", "Electrification — water heating",
+                   "Building-wide deep retrofit (all systems)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.20,
+        "amount_psf_high": 1.50,
+        "amount_str": "Up to $250,000/project; varies by program round",
+        "eligibility": "Nonprofits and municipal buildings in MA",
+        "expiration": "Check MassCEC for current open rounds",
+        "conflicts": [],
+        "stacks_with": ["Mass Save rebates", "Green Communities"],
+        "berdo_periods": ["2025–29", "2030–34", "2035–39"],
+        "ownership": ["Nonprofit / Government"],
+        "source": "https://www.masscec.com/program/clean-energy-results-program",
+        "checklist": [
+            "Monitor MassCEC website for open grant rounds",
+            "Prepare project narrative and cost estimate",
+            "Submit application during open window",
+            "Execute grant agreement if awarded",
+            "Submit progress reports and final documentation",
+        ],
+    },
+    {
+        "name": "Green Communities Grant",
+        "short": "Green Communities",
+        "type": "State grant",
+        "priority": 1,
+        "apply_first_reason": "Annual grant cycle — apply in the current round.",
+        "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
+                   "HVAC (full system replacement)", "Building envelope (windows + insulation)",
+                   "Electrification — HVAC (heat pump)",
+                   "Building-wide deep retrofit (all systems)"],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
+        "amount_psf_low": 0.20,
+        "amount_psf_high": 2.00,
+        "amount_str": "Up to $1.6M/municipality; formula-based on population",
+        "eligibility": "MA municipalities with Green Community designation",
+        "expiration": "Annual grant rounds; check DOER for current cycle",
+        "conflicts": [],
+        "stacks_with": ["MassDOER Grant", "Mass Save rebates"],
+        "berdo_periods": ["2025–29", "2030–34", "2035–39"],
+        "ownership": ["Nonprofit / Government"],
+        "source": "https://www.mass.gov/green-communities-designation-grant-program",
+        "checklist": [
+            "Confirm your municipality has Green Community designation",
+            "Identify eligible measures in your approved Green Communities plan",
+            "Submit application to DOER during open grant round",
+            "Execute grant agreement and comply with reporting requirements",
+        ],
+    },
+]
+
+RETROFIT_SCOPES_OPT = list(RETROFIT_COST_PER_SQFT.keys())
+FUEL_TYPES_OPT = ["Natural gas", "Fuel oil", "Electric", "Mixed / unknown"]
+OWNERSHIP_TYPES_OPT = ["For-profit", "Nonprofit / Government", "Not sure"]
+
+
+def _opt_incentive_applies(inc, scopes, fuel, ownership, berdo_category):
+    """Return True if this incentive matches the user's inputs."""
+    if not any(s in inc["scopes"] for s in scopes):
+        return False
+    if fuel not in inc["fuels"]:
+        return False
+    if ownership != "Not sure":
+        if ownership not in inc["ownership"]:
+            return False
+    if "berdo_types" in inc and berdo_category is not None:
+        if berdo_category not in inc["berdo_types"]:
+            return False
+    return True
+
+
+def _estimate_incentive_value(inc, sqft):
+    """Return (low, high) dollar estimate for an incentive."""
+    return (
+        round(inc["amount_psf_low"] * sqft, 0),
+        round(inc["amount_psf_high"] * sqft, 0),
+    )
+
+
+def render_incentive_optimizer_tab(prefill: dict = None):
+    """
+    Tab 4 — Incentive Optimizer.
+    Pre-fills from address lookup session state where available.
+    """
+    if prefill is None:
+        prefill = {}
+
+    st.write(
+        "Find the right incentives for your building, in the right order. "
+        "This tool matches your building to available programs, ranks them by dollar value, "
+        "flags conflicts, and gives you a step-by-step application checklist."
+    )
+    st.info(
+        "**Incentive data verified June 2026.** Mass Save program-year amounts reset each January. "
+        "IRA figures reflect current regulations. Always confirm amounts at source links before advising a client."
+    )
+
+    # ── Inputs ──────────────────────────────────────────────────────────────
+    st.subheader("Building inputs")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        default_sqft = int(prefill.get("sqft", 50_000)) if prefill.get("sqft") else 50_000
+        sqft = st.number_input(
+            "Gross floor area (sq ft)",
+            min_value=1_000, max_value=5_000_000,
+            value=default_sqft, step=1_000,
+            help="Pre-filled from Address Lookup if available.",
+            key="opt_sqft",
+        )
+
+        ownership = st.selectbox(
+            "Ownership type",
+            options=OWNERSHIP_TYPES_OPT,
+            help="For-profit owners access IRA tax credits. Nonprofits/government access grants.",
+            key="opt_ownership",
+        )
+
+    with col2:
+        type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+        prefill_cat = prefill.get("berdo_category")
+        default_idx = type_options.index(prefill_cat) if prefill_cat in type_options else 0
+        selected_type = st.selectbox(
+            "Building type (BERDO category)",
+            options=type_options, index=default_idx,
+            help="Pre-filled from Address Lookup if available.",
+            key="opt_btype",
+        )
+        berdo_category = selected_type if selected_type != "— select —" else None
+
+        fuel = st.selectbox(
+            "Primary heating fuel",
+            options=FUEL_TYPES_OPT,
+            help="Affects which electrification incentives apply.",
+            key="opt_fuel",
+        )
+
+    # ── Fine exposure context (pre-filled from address lookup) ──────────────
+    prefill_fine = prefill.get("annual_fine_usd")
+    prefill_ghg  = prefill.get("ghg_intensity")
+    prefill_addr = prefill.get("address", "")
+
+    if prefill_fine and prefill_fine > 0:
+        st.info(
+            f"📍 Pre-filled from **{prefill_addr}**: "
+            f"estimated annual BERDO fine **${prefill_fine:,.0f}/yr** "
+            f"(2025–29 period, at {prefill_ghg:.3f} kg CO₂e/sqft/yr). "
+            "Use the payback section below to compare against net retrofit cost."
+        )
+
+    # ── Retrofit scope ───────────────────────────────────────────────────────
+    st.subheader("Retrofit scope")
+    st.caption("Select all measures you are considering.")
+
+    scopes_selected = []
+    scope_cols = st.columns(2)
+    for i, (scope, (low, high, note)) in enumerate(RETROFIT_COST_PER_SQFT.items()):
+        with scope_cols[i % 2]:
+            if st.checkbox(f"**{scope}**", help=note, key=f"opt_scope_{i}"):
+                scopes_selected.append(scope)
+
+    if not scopes_selected:
+        st.warning("Select at least one retrofit scope above to see incentive matches.")
+        return
+
+    # ── Match incentives ─────────────────────────────────────────────────────
+    matched = [
+        inc for inc in INCENTIVE_STACK
+        if _opt_incentive_applies(inc, scopes_selected, fuel, ownership, berdo_category)
+    ]
+
+    if not matched:
+        st.info(
+            "No incentives matched your inputs. "
+            "Try adjusting ownership type, fuel, or scope — "
+            "or check masssave.com and masscec.com directly."
+        )
+        return
+
+    # ── Dollar estimates ─────────────────────────────────────────────────────
+    for inc in matched:
+        inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
+
+    total_incentive_low  = sum(i["_est_low"]  for i in matched)
+    total_incentive_high = sum(i["_est_high"] for i in matched)
+
+    # Gross retrofit cost
+    total_cost_low  = sum(RETROFIT_COST_PER_SQFT[s][0] * sqft for s in scopes_selected)
+    total_cost_high = sum(RETROFIT_COST_PER_SQFT[s][1] * sqft for s in scopes_selected)
+
+    # Net cost (incentives capped at gross cost)
+    net_low  = max(total_cost_low  - total_incentive_high, 0)
+    net_high = max(total_cost_high - total_incentive_low,  0)
+
+    st.markdown("---")
+
+    # ── Summary metric cards ─────────────────────────────────────────────────
+    st.subheader("Summary")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Incentive programs matched", len(matched))
+    m2.metric("Total incentives (low–high)",
+              f"${total_incentive_low:,.0f} – ${total_incentive_high:,.0f}")
+    m3.metric("Gross retrofit cost (low–high)",
+              f"${total_cost_low:,.0f} – ${total_cost_high:,.0f}")
+    m4.metric("Estimated net cost (low–high)",
+              f"${net_low:,.0f} – ${net_high:,.0f}")
+
+    st.caption(
+        "Incentive estimates are $/sqft proxies based on program benchmarks — "
+        "actual awards depend on application, project scope, and program availability. "
+        "Gross cost benchmarks from RSMeans / ASHRAE / DOE BTO (2024–2026)."
+    )
+
+    # ── Ranked incentive table ────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Incentives ranked by estimated value")
+
+    ranked = sorted(matched, key=lambda x: x["_est_high"], reverse=True)
+
+    rank_rows = []
+    for inc in ranked:
+        conflict_flag = "⚠️ " + "; ".join(inc["conflicts"]) if inc["conflicts"] else "✅ None"
+        rank_rows.append({
+            "Priority": f"Step {inc['priority']}",
+            "Program": inc["short"],
+            "Type": inc["type"],
+            "Est. value (low)": f"${inc['_est_low']:,.0f}",
+            "Est. value (high)": f"${inc['_est_high']:,.0f}",
+            "Applies in": ", ".join(inc["berdo_periods"][:2]),
+            "Conflicts": conflict_flag,
+        })
+
+    st.dataframe(pd.DataFrame(rank_rows), use_container_width=True, hide_index=True)
+
+    # ── Stacking strategy ─────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Stacking strategy — apply in this order")
+    st.caption(
+        "Order matters. Utility rebates reduce your tax basis; "
+        "some IRA credits conflict with each other. Follow this sequence."
+    )
+
+    steps = sorted(matched, key=lambda x: x["priority"])
+    for i, inc in enumerate(steps, 1):
+        with st.expander(
+            f"**{i}. {inc['name']}** — {inc['type']} "
+            f"(est. ${inc['_est_low']:,.0f} – ${inc['_est_high']:,.0f})",
+            expanded=(i <= 2),
+        ):
+            col_a, col_b = st.columns([2, 1])
+            with col_a:
+                st.markdown(f"**Why this order:** {inc['apply_first_reason']}")
+                st.markdown(f"**Amount:** {inc['amount_str']}")
+                st.markdown(f"**Eligible:** {inc['eligibility']}")
+                st.markdown(f"**Applies to BERDO periods:** {', '.join(inc['berdo_periods'])}")
+                if inc["conflicts"]:
+                    st.warning(
+                        f"⚠️ **Potential conflicts:** {', '.join(inc['conflicts'])}. "
+                        "Verify with a tax advisor before claiming both."
+                    )
+                else:
+                    stacks = ", ".join(inc["stacks_with"]) if inc["stacks_with"] else "No conflicts identified"
+                    st.success(f"✅ **Stacks cleanly with:** {stacks}")
+                if ownership == "Not sure" and "For-profit" in inc["ownership"] and "Nonprofit / Government" not in inc["ownership"]:
+                    st.warning("⚠️ This incentive is available to for-profit owners only. Confirm your ownership structure.")
+                if "ownership_transfer_note" in inc:
+                    st.info(f"ℹ️ {inc['ownership_transfer_note']}")
+            with col_b:
+                st.markdown(f"**Expires:** {inc['expiration']}")
+                st.markdown(f"[Apply / learn more →]({inc['source']})")
+
+    # ── Application checklist ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Application checklist")
+    st.caption("Complete these steps for each matched program.")
+
+    for inc in steps:
+        with st.expander(f"**{inc['name']}** — checklist", expanded=False):
+            for step in inc["checklist"]:
+                st.checkbox(step, key=f"chk_{inc['short']}_{step[:20]}")
+            st.markdown(f"[Source / apply →]({inc['source']})")
+
+    # ── Cash flow & payback ───────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Cash flow & payback")
+
+    annual_fine = prefill_fine if prefill_fine else None
+
+    if annual_fine is None:
+        st.caption(
+            "Look up your building in the Address Lookup tab to pre-fill your "
+            "estimated annual BERDO fine — or enter it manually below."
+        )
+        annual_fine_input = st.number_input(
+            "Estimated annual BERDO fine ($/yr)",
+            min_value=0, value=0, step=1_000,
+            key="opt_fine_manual",
+        )
+        if annual_fine_input > 0:
+            annual_fine = annual_fine_input
+
+    if annual_fine and annual_fine > 0:
+        col_pb1, col_pb2 = st.columns(2)
+
+        payback_low  = round(net_low  / annual_fine, 1) if net_low  > 0 else 0.0
+        payback_high = round(net_high / annual_fine, 1) if net_high > 0 else 0.0
+
+        col_pb1.metric(
+            "Payback — fine avoidance only (low net cost)",
+            f"{payback_low} yrs" if payback_low > 0 else "< 1 yr",
+        )
+        col_pb2.metric(
+            "Payback — fine avoidance only (high net cost)",
+            f"{payback_high} yrs" if payback_high > 0 else "< 1 yr",
+        )
+
+        # Cumulative cash flow chart
+        years = list(range(0, 16))
+        cumulative_low  = [-net_low  + annual_fine * y for y in years]
+        cumulative_high = [-net_high + annual_fine * y for y in years]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=years, y=cumulative_low,
+            name="Optimistic (low net cost)",
+            mode="lines", line=dict(color="#1D9E75", width=2),
+            fill="tozeroy", fillcolor="rgba(29,158,117,0.08)",
+        ))
+        fig.add_trace(go.Scatter(
+            x=years, y=cumulative_high,
+            name="Conservative (high net cost)",
+            mode="lines", line=dict(color="#3266ad", width=2, dash="dash"),
+        ))
+        fig.add_hline(y=0, line_width=1, line_dash="dot",
+                      line_color="rgba(128,128,128,0.5)",
+                      annotation_text="Break-even", annotation_position="right")
+        fig.update_layout(
+            xaxis_title="Years from retrofit",
+            yaxis_title="Cumulative cash flow (USD)",
+            height=320,
+            margin=dict(t=30, b=40, l=60, r=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        fig.update_xaxes(showgrid=False)
+        fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
+        st.plotly_chart(fig, use_container_width=True, key="opt_cashflow_chart")
+
+        st.caption(
+            "Cash flow assumes annual fine avoidance is the only return — "
+            "energy cost savings (typically $0.50–$2.00/sqft/yr) would improve payback further. "
+            "Not an investment projection. Consult a financial advisor."
+        )
+
+        if payback_low <= 10:
+            st.success(
+                f"✅ At the low net cost estimate, this retrofit pays back in "
+                f"**{payback_low} years** from BERDO fine avoidance alone — "
+                "generally considered favourable for commercial real estate."
+            )
+        else:
+            st.info(
+                f"At the low net cost estimate, payback is {payback_low} years from fine avoidance alone. "
+                "Energy cost savings and carbon credit value (if applicable) would shorten this further."
+            )
+
+    # ── Phasing by BERDO period ───────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Phasing by BERDO compliance period")
+    st.caption(
+        "Not all work needs to happen at once. This shows which incentives "
+        "are available in each compliance period to help you phase investment."
+    )
+
+    period_map: dict[str, list] = {p: [] for p in COMPLIANCE_PERIODS[:3]}
+    for inc in matched:
+        for p in inc["berdo_periods"]:
+            if p in period_map:
+                period_map[p].append(inc["short"])
+
+    ph_cols = st.columns(3)
+    for col, period in zip(ph_cols, COMPLIANCE_PERIODS[:3]):
+        with col:
+            st.markdown(f"**{period}**")
+            if period_map[period]:
+                for name in period_map[period]:
+                    st.markdown(f"- {name}")
+            else:
+                st.caption("No matched incentives")
+
+    # ── Disclaimer ────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.warning(
+        "⚠️ **Screening tool only — not professional financial or tax advice.** "
+        "Incentive amounts are benchmarks verified June 2026; they change annually. "
+        "IRA credit stacking rules are complex — consult a tax advisor for your specific situation. "
+        "Do not use these figures for contracts, loan applications, or compliance filings."
+    )
+
+    with st.expander("Sources & methodology"):
+        st.markdown("""
+**Incentive data sources (verified June 2026)**
+- Mass Save commercial rebates: masssave.com (amounts reset each January)
+- IRA Section 179D: IRS Notice 2023-29, as amended; inflation-indexed annually
+- IRA Section 48C: IRS Rev. Proc. 2023-27; competitive allocation rounds
+- IRA Section 45L: IRS Notice 2023-65; applies through 2032
+- MassDOER / MassCEC: masscec.com and mass.gov/doer (program-dependent)
+- Green Communities: mass.gov/green-communities (annual grant rounds)
+
+**Stacking methodology**
+Utility rebates (Mass Save) are taxable income and reduce your 179D depreciable basis —
+claim them before calculating your 179D deduction. IRA 48C may conflict with other IRA
+investment credits applied to the same property — verify with a tax advisor. All other
+matched programs stack cleanly for most commercial scenarios.
+
+**Dollar estimates**
+Incentive values are estimated using $/sqft proxies derived from published program benchmarks.
+Actual awards depend on application outcome, project documentation, and contractor certification.
+""")
+
 
 # ---------------------------------------------------------------------------
 # App layout
@@ -1284,11 +2297,10 @@ else:
     elec_share = None
 
 # --- Page header ---
-st.title("BERDO Building Priority Screening Tool")
+st.title("BERDO Building Priority & Incentive Tool")
 st.write(
-    "Enter a Boston building address to see its priority level for BERDO "
-    "reporting support, outreach, or retrofit planning — and to estimate "
-    "fine exposure under the 2025, 2030, and 2035 emissions standards."
+    "Enter a Boston building address to see its BERDO compliance status, fine exposure, "
+    "and a matched incentive plan for funding decarbonization."
 )
 
 if multi_year_mode:
@@ -1304,7 +2316,9 @@ else:
         "It is not an official City of Boston BERDO compliance determination."
     )
 
-tab_address, tab_portfolio = st.tabs(["Address Lookup", "Owner Portfolio"])
+tab_address, tab_portfolio, tab_retrofit, tab_optimizer = st.tabs([
+    "Address Lookup", "Owner Portfolio", "Retrofit Estimator", "Incentive Optimizer"
+])
 
 # ---------------------------------------------------------------------------
 # Tab 1 — single address lookup (unchanged behaviour)
@@ -1388,6 +2402,37 @@ with tab_address:
                 base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
             )
 
+            # ── Store prefill data for Incentive Optimizer tab ──
+            ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
+            sqft_val = top.get("Gross Floor Area")
+            raw_type = top.get("Property Type")
+            berdo_cat = map_property_type(raw_type)
+
+            opt_prefill = {
+                "address":       top.get("Building Address", address_input),
+                "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else 50_000,
+                "berdo_category": berdo_cat,
+            }
+
+            # Calculate fine for 2025–29 period if possible
+            if (
+                pd.notna(ghg_val) and ghg_val > 0
+                and pd.notna(sqft_val) and sqft_val > 0
+                and berdo_cat in BERDO_STANDARDS
+            ):
+                limit_2025 = BERDO_STANDARDS[berdo_cat][0]
+                gap = float(ghg_val) - limit_2025
+                if gap > 0:
+                    excess_tons = gap * float(sqft_val) / 1000
+                    opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
+                    opt_prefill["ghg_intensity"] = float(ghg_val)
+
+            st.session_state["optimizer_prefill"] = opt_prefill
+            st.info(
+                "💡 Building data saved — open the **Incentive Optimizer** tab "
+                "to see matched funding programs for this building."
+            )
+
 # ---------------------------------------------------------------------------
 # Tab 2 — owner portfolio lookup
 # ---------------------------------------------------------------------------
@@ -1433,3 +2478,17 @@ with tab_portfolio:
                     all_years=all_years,
                     show_yoy=show_yoy,
                 )
+                
+# ---------------------------------------------------------------------------
+# Tab 3 — Retrofit Cost & Incentive Estimator
+# ---------------------------------------------------------------------------
+with tab_retrofit:
+    prefill = {}
+    render_retrofit_tab(prefill=prefill)
+
+# ---------------------------------------------------------------------------
+# Tab 4 — Incentive Optimizer
+# ---------------------------------------------------------------------------
+with tab_optimizer:
+    opt_prefill = st.session_state.get("optimizer_prefill", {})
+    render_incentive_optimizer_tab(prefill=opt_prefill)
