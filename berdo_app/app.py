@@ -2313,6 +2313,146 @@ def render_incentive_optimizer_tab(prefill: dict = None):
                 "Energy cost savings and carbon credit value (if applicable) would shorten this further."
             )
 
+    # ── Retrofit vs. compliance decision ─────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Retrofit vs. pay the fine")
+    st.caption(
+        "Sometimes paying the ACP fine is cheaper than retrofitting — at least in the near term. "
+        "This section compares both paths so you can make an informed decision."
+    )
+
+    if not annual_fine or annual_fine == 0:
+        st.info(
+            "Look up your building in the Address Lookup tab or enter your annual fine above "
+            "to see the retrofit vs. compliance comparison."
+        )
+    elif berdo_category and berdo_category in BERDO_STANDARDS:
+        # Cost of paying the fine across each compliance period
+        fine_5yr  = annual_fine * 5
+        fine_10yr = annual_fine * 10
+        fine_25yr = annual_fine * 25  # all 5 periods through 2050
+
+        # Future period fines — limits tighten each period
+        limits = BERDO_STANDARDS[berdo_category]
+        prefill_ghg_val = prefill.get("ghg_intensity")
+
+        period_fines = []
+        if prefill_ghg_val:
+            for i, period in enumerate(COMPLIANCE_PERIODS[:5]):
+                limit = limits[i]
+                gap = max(prefill_ghg_val - limit, 0)
+                excess_tons = gap * sqft / 1000
+                period_fines.append({
+                    "period": period,
+                    "limit": limit,
+                    "annual_fine": round(excess_tons * ACP_RATE, 0),
+                    "5yr_fine": round(excess_tons * ACP_RATE * 5, 0),
+                })
+
+        # ── Decision matrix ──────────────────────────────────────────────────
+        st.markdown("#### 5-year cost comparison")
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric(
+            "Pay the fine (5 yrs, current period)",
+            f"${fine_5yr:,.0f}",
+            delta="No upfront capital required",
+        )
+        d2.metric(
+            "Retrofit — net cost (low estimate)",
+            f"${net_low:,.0f}",
+            delta="One-time capital outlay",
+        )
+        d3.metric(
+            "Retrofit — net cost (high estimate)",
+            f"${net_high:,.0f}",
+            delta="One-time capital outlay",
+        )
+
+        # ── Plain-English recommendation ─────────────────────────────────────
+        st.markdown("#### Recommendation")
+
+        # Compare net_low to cumulative fine cost across all periods
+        cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_25yr
+
+        if net_low <= fine_5yr:
+            st.success(
+                f"**Retrofit now.** Even at the low estimate, retrofitting (${net_low:,.0f} net) "
+                f"costs less than paying fines for just the current 2025–29 period (${fine_5yr:,.0f}). "
+                "The financial case for acting immediately is strong."
+            )
+        elif net_low <= fine_5yr * 2:
+            st.warning(
+                f"**Retrofit soon.** The low net retrofit cost (${net_low:,.0f}) is roughly "
+                f"{round(net_low / annual_fine, 1)} years of fines. That's within a typical "
+                "investment horizon, especially since BERDO limits tighten each period — "
+                "delaying means higher fines and potentially higher retrofit costs later."
+            )
+        elif net_low <= cumulative_fine_all:
+            # Find the period where fines exceed retrofit cost
+            running = 0
+            crossover_period = None
+            for r in period_fines:
+                running += r["5yr_fine"]
+                if running >= net_low and crossover_period is None:
+                    crossover_period = r["period"]
+            st.info(
+                f"**Consider phasing.** Paying the fine is cheaper in the short term "
+                f"(${fine_5yr:,.0f} for 2025–29 vs. ${net_low:,.0f} net retrofit cost). "
+                + (f"However, cumulative fines exceed the low retrofit cost by the **{crossover_period}** period. " if crossover_period else "")
+                + "A phased approach — partial improvements now, full retrofit before the next "
+                "tightening — may be the most cost-effective path."
+            )
+        else:
+            st.info(
+                f"**Pay the fine in the near term.** At current fine levels, cumulative ACP payments "
+                f"(${cumulative_fine_all:,.0f} through 2050) are less than the high net retrofit cost "
+                f"(${net_high:,.0f}). However, this analysis excludes energy cost savings "
+                f"(typically ${round(sqft * 1.0):,.0f}–${round(sqft * 2.0):,.0f}/yr at $1–2/sqft) "
+                "which significantly improve the retrofit case. Run the numbers with your energy "
+                "consultant before deciding."
+            )
+
+        # ── Period-by-period fine escalation table ───────────────────────────
+        if period_fines:
+            st.markdown("#### How fines escalate as limits tighten")
+            st.caption(
+                "BERDO limits tighten every five years. If no retrofit is made, "
+                "annual fines increase each period as the gap widens."
+            )
+
+            fine_rows = []
+            running_total = 0
+            for r in period_fines:
+                running_total += r["5yr_fine"]
+                fine_rows.append({
+                    "Period":           r["period"],
+                    "BERDO limit":      f"{r['limit']} kg CO₂e/sf/yr",
+                    "Annual fine":      f"${r['annual_fine']:,.0f}",
+                    "5-yr fine":        f"${r['5yr_fine']:,.0f}",
+                    "Cumulative fines": f"${running_total:,.0f}",
+                    "vs. net retrofit (low)": (
+                        "Fine cheaper" if r["5yr_fine"] < net_low
+                        else "Retrofit cheaper this period"
+                    ),
+                })
+
+            st.dataframe(
+                pd.DataFrame(fine_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.caption(
+                "Assumes current GHG intensity is held flat with no operational changes. "
+                "Grid decarbonization (if enabled in sidebar) would reduce electricity-attributed "
+                "emissions and lower future fines independently of any retrofit."
+            )
+    else:
+        st.info(
+            "Select a building type above to see the retrofit vs. fine comparison."
+        )
+
     # ── Phasing by BERDO period ───────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Phasing by BERDO compliance period")
