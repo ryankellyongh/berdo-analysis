@@ -620,6 +620,7 @@ def lookup_building_priority(df, address):
             "Gross Floor Area":            row.get("gross_floor_area"),
             "Site EUI":                    row.get("site_eui"),
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
+            "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
             "Compliance Status":           row.get("compliance_status"),
             "Priority Level":              priority,
             "Priority Score":              score,
@@ -3121,7 +3122,17 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         )
 
     limits             = BERDO_STANDARDS[berdo_category]
-    total_emissions_kg = ghg_intensity * sqft
+    # Use the raw reported GHG emissions total when available (more accurate than
+    # intensity × sqft which suffers from rounding). Fall back to intensity × sqft.
+    ghg_emissions_raw = prefill.get("ghg_emissions_kg")
+    if ghg_emissions_raw and ghg_emissions_raw > 0:
+        total_emissions_kg = float(ghg_emissions_raw)
+        st.caption(
+            f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr** (from reported BERDO data). "
+            f"Derived intensity: {total_emissions_kg / sqft:.3f} kg CO₂e/sqft/yr."
+        )
+    else:
+        total_emissions_kg = ghg_intensity * sqft
 
     # ── Grid decarbonization — project intensities per period ─────────────────
     if apply_grid:
@@ -3154,76 +3165,79 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     has_projects = any(r > 0 for r in period_reductions_kg)
     has_grid     = apply_grid
 
-    # ── Build table ───────────────────────────────────────────────────────────
-    table_rows = []
+    # ── Build two stacked tables ──────────────────────────────────────────────
+    emissions_rows = []
+    fines_rows     = []
+
     for i, period in enumerate(COMPLIANCE_PERIODS):
         limit_psf  = limits[i]
         limit_kg   = limit_psf * sqft
 
-        # Scenario A: flat baseline, no projects
-        baseline_kg = total_emissions_kg
-        gap_baseline = baseline_kg - limit_kg
-        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
+        baseline_kg  = total_emissions_kg
+        grid_kg      = grid_emissions_kg[i]
+        proj_kg      = max(baseline_kg - period_reductions_kg[i], 0)
+        combined_kg  = max(grid_kg    - period_reductions_kg[i], 0)
 
-        # Scenario B: grid decarb only (no projects)
-        grid_kg  = grid_emissions_kg[i]
-        gap_grid = grid_kg - limit_kg
-        fine_grid = round(max(gap_grid, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
+        gap_baseline = baseline_kg  - limit_kg
+        gap_grid     = grid_kg      - limit_kg
+        gap_proj     = proj_kg      - limit_kg
+        gap_combined = combined_kg  - limit_kg
 
-        # Scenario C: projects only (no grid decarb)
-        proj_kg  = max(baseline_kg - period_reductions_kg[i], 0)
-        gap_proj = proj_kg - limit_kg
-        fine_proj = round(max(gap_proj, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
-
-        # Scenario D: grid decarb + projects (combined)
-        combined_kg  = max(grid_kg - period_reductions_kg[i], 0)
-        gap_combined = combined_kg - limit_kg
-        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 2) if limit_kg > 0 else 0
+        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
+        fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
+        fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
+        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0) if limit_kg > 0 else 0
 
         def _ou(gap):
-            if gap < 0:
-                return f"{abs(gap)/1000:,.1f} MT Under"
-            elif gap > 0:
-                return f"{gap/1000:,.1f} MT Over"
+            if gap < 0:   return f"{abs(gap)/1000:,.0f} MT Under"
+            elif gap > 0: return f"{gap/1000:,.0f} MT Over"
             return "At limit"
 
-        row = {
-            "Period":                                   period,
-            "BERDO limit (kg CO₂e/yr)":                f"{limit_kg:,.0f}" if limit_kg > 0 else "0 (net zero)",
-            "Baseline emissions (kg CO₂e/yr)":         f"{baseline_kg:,.0f}",
-            "Over/under — baseline":                   _ou(gap_baseline),
-            "ACP — baseline ($/yr)":                   f"${fine_baseline:,.0f}" if fine_baseline > 0 else "$0",
+        def _fmt_kg(v): return f"{v:,.0f}"
+        def _fmt_fine(v): return f"${v:,.0f}" if v > 0 else "$0"
+
+        # ── Emissions table row ──────────────────────────────────────────────
+        erow = {
+            "Period":         period,
+            "BERDO limit":    _fmt_kg(limit_kg) if limit_kg > 0 else "0 (net zero)",
+            "Baseline":       _fmt_kg(baseline_kg),
+            "Status":         _ou(gap_baseline),
         }
-
         if has_projects:
-            row["Reductions from projects (kg CO₂e/yr)"] = f"{period_reductions_kg[i]:,.0f}" if period_reductions_kg[i] > 0 else "—"
-            row["Emissions after projects (kg CO₂e/yr)"]  = f"{proj_kg:,.0f}"
-            row["Over/under — with projects"]             = _ou(gap_proj)
-            row["ACP — with projects ($/yr)"]             = f"${fine_proj:,.0f}" if fine_proj > 0 else "$0"
-
+            erow["Reductions"]       = _fmt_kg(period_reductions_kg[i]) if period_reductions_kg[i] > 0 else "—"
+            erow["After projects"]   = _fmt_kg(proj_kg)
+            erow["Status (projects)"] = _ou(gap_proj)
         if has_grid:
-            row["Emissions — grid decarb only (kg CO₂e/yr)"] = f"{grid_kg:,.0f}"
-            row["Over/under — grid decarb only"]             = _ou(gap_grid)
-            row["ACP — grid decarb only ($/yr)"]             = f"${fine_grid:,.0f}" if fine_grid > 0 else "$0"
-
+            erow["Grid decarb"]      = _fmt_kg(grid_kg)
+            erow["Status (grid)"]    = _ou(gap_grid)
         if has_projects and has_grid:
-            row["Emissions — grid + projects (kg CO₂e/yr)"] = f"{combined_kg:,.0f}"
-            row["Over/under — grid + projects"]              = _ou(gap_combined)
-            row["ACP — grid + projects ($/yr)"]              = f"${fine_combined:,.0f}" if fine_combined > 0 else "$0"
+            erow["Grid + projects"]         = _fmt_kg(combined_kg)
+            erow["Status (grid + projects)"] = _ou(gap_combined)
+        emissions_rows.append(erow)
 
-        table_rows.append(row)
+        # ── Fines table row ──────────────────────────────────────────────────
+        frow = {
+            "Period":             period,
+            "ACP — baseline":     _fmt_fine(fine_baseline),
+        }
+        if has_projects:
+            frow["ACP — with projects"]  = _fmt_fine(fine_proj)
+        if has_grid:
+            frow["ACP — grid decarb"]    = _fmt_fine(fine_grid)
+        if has_projects and has_grid:
+            frow["ACP — grid + projects"] = _fmt_fine(fine_combined)
+        fines_rows.append(frow)
 
-    st.dataframe(
-        pd.DataFrame(table_rows),
-        use_container_width=True,
-        hide_index=True,
-    )
+    # ── Table 1: Emissions ────────────────────────────────────────────────────
+    st.markdown("#### Projected emissions vs. BERDO limit (kg CO₂e/yr)")
+    st.dataframe(pd.DataFrame(emissions_rows), use_container_width=True, hide_index=True)
+
+    # ── Table 2: ACP fines ───────────────────────────────────────────────────
+    st.markdown("#### Estimated ACP fine ($/yr)")
+    st.caption("Alternative Compliance Payment at $234/metric ton CO₂e over limit.")
+    st.dataframe(pd.DataFrame(fines_rows), use_container_width=True, hide_index=True)
 
     st.caption(
-        f"Showing {'baseline only' if not has_projects and not has_grid else ''}"
-        f"{'baseline + projects' if has_projects and not has_grid else ''}"
-        f"{'baseline + grid decarbonization' if has_grid and not has_projects else ''}"
-        f"{'baseline + projects + grid decarbonization + combined' if has_projects and has_grid else ''}. "
         "ACP = $234/metric ton CO₂e over limit. "
         "Not an official City of Boston BERDO compliance determination."
     )
@@ -3577,11 +3591,13 @@ with tab_address:
             st.session_state["optimizer_prefill"] = opt_prefill
 
             # Also pre-fill the Emissions Planner tab
+            ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
             planner_prefill = {
-                "address":       opt_prefill.get("address", address_input),
-                "sqft":          opt_prefill.get("sqft", 50_000),
-                "berdo_category": berdo_cat,
-                "ghg_intensity": float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0,
+                "address":          opt_prefill.get("address", address_input),
+                "sqft":             opt_prefill.get("sqft", 50_000),
+                "berdo_category":   berdo_cat,
+                "ghg_intensity":    float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0,
+                "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
             }
             st.session_state["planner_prefill"] = planner_prefill
             # Inject directly into widget state for planner
