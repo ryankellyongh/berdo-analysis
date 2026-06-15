@@ -383,7 +383,7 @@ def render_compliance_section(
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
-    st.plotly_chart(fig, use_container_width=True, key=f"compliance_chart_{id(row)}")
+    st.plotly_chart(fig, use_container_width=True)
 
     # --- Fine exposure summary ---
     non_compliant_periods = [g for g in gaps if not g["compliant"]]
@@ -939,7 +939,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
-    st.plotly_chart(fig, use_container_width=True, key="portfolio_compliance_chart")
+    st.plotly_chart(fig, use_container_width=True)
 
     st.caption(
         "Blended standard per BERDO 2.0: area-weighted average of each building's sector limit. "
@@ -1210,7 +1210,7 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
-    st.plotly_chart(fig, use_container_width=True, key="yoy_trend_chart")
+    st.plotly_chart(fig, use_container_width=True)
 
     if 2022 in [r["year"] for r in records] and trend_df.loc[trend_df["year"] == 2022, "ghg_intensity"].isna().all():
         st.caption(
@@ -1663,12 +1663,12 @@ def render_retrofit_tab(prefill: dict = None):
     fig = go.Figure()
 
     fig.add_trace(go.Bar(
-        name="Gross cost range",
+        name="Gross cost",
         x=["Low", "Condition-adjusted", "High"],
         y=[total_low, total_adjusted, total_high],
         marker_color="#3266ad",
         text=[_fmt_dollars(total_low), _fmt_dollars(total_adjusted), _fmt_dollars(total_high)],
-        textposition="outside",
+        textposition="auto",
     ))
 
     fig.add_trace(go.Bar(
@@ -1677,11 +1677,11 @@ def render_retrofit_tab(prefill: dict = None):
         y=[optimistic_reduction, adj_reduction, conservative_reduction],
         marker_color="#2ECC71",
         text=[_fmt_dollars(optimistic_reduction), _fmt_dollars(adj_reduction), _fmt_dollars(conservative_reduction)],
-        textposition="outside",
+        textposition="auto",
     ))
 
     fig.update_layout(
-        barmode="overlay",
+        barmode="group",
         yaxis_title="USD",
         height=350,
         margin=dict(t=30, b=40, l=60, r=40),
@@ -1692,7 +1692,7 @@ def render_retrofit_tab(prefill: dict = None):
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
-    st.plotly_chart(fig, use_container_width=True, key="retrofit_net_cost_chart")
+    st.plotly_chart(fig, use_container_width=True)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Net cost (low)",
@@ -2295,7 +2295,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         )
         fig.update_xaxes(showgrid=False)
         fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
-        st.plotly_chart(fig, use_container_width=True, key="opt_cashflow_chart")
+        st.plotly_chart(fig, use_container_width=True)
 
         st.caption(
             "Cash flow assumes annual fine avoidance is the only return — "
