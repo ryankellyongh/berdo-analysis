@@ -637,12 +637,11 @@ def load_all_years() -> dict[int, pd.DataFrame]:
       1. berdo_<year>.csv files  →  multi-year mode
       2. berdo.csv               →  single-year fallback (keyed as year 0)
     """
-    # Look for data/ relative to app.py first, then one level up (repo root)
-    # This handles both berdo_app/data/ and data/ at repo root
-    app_dir  = Path(__file__).parent
-    data_dir = app_dir / "data"
+    # Streamlit Cloud runs from repo root, so data/ resolves correctly.
+    # Also check relative to app.py location as fallback.
+    data_dir = Path("data")
     if not data_dir.exists() or not any(data_dir.glob("berdo_*.csv")):
-        data_dir = app_dir.parent / "data"
+        data_dir = Path(__file__).parent.parent / "data"
     year_files = sorted(data_dir.glob("berdo_*.csv"))
 
     year_map: dict[int, pd.DataFrame] = {}
