@@ -455,9 +455,9 @@ Scores of 6 or above are flagged as High priority. Scores of 3–5 are Moderate.
 
 The tool compares each building's reported GHG intensity (kg CO₂e per square foot per year)
 against the BERDO 2.0 emissions limits for its property type. If the building exceeds the limit,
-the tool estimates the annual Alternative Compliance Payment (ACP) at $234 per excess metric
+the tool estimates the annual Alternative Compliance Payment (ACP) at \$234 per excess metric
 ton of CO₂e. Buildings that do not make ACPs and remain non-compliant face additional daily
-fines of $1,000/day (buildings over 35,000 sq ft or 35+ units) or $300/day (smaller covered
+fines of \$1,000/day (buildings over 35,000 sq ft or 35+ units) or \$300/day (smaller covered
 buildings).
 
 **What is the grid decarbonization scenario?**
@@ -3525,7 +3525,7 @@ the 2030–34 period and all subsequent periods.
 
 **ACP fines**
 
-Alternative Compliance Payments are assessed at $234 per metric ton of CO₂e above the 
+Alternative Compliance Payments are assessed at \$234 per metric ton of CO₂e above the 
 building's emissions limit. The table shows annual fines; the summary metrics multiply by 
 5 years per period for cumulative exposure.
 
@@ -3683,7 +3683,7 @@ with tab_address:
                 st.markdown("""
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
-- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of $150–$300/day for missing the annual May 15 reporting deadline ($300/day for buildings over 35,000 sq ft; $150/day for smaller covered buildings). Note: the 2026 reporting deadline was extended to August 15, 2026. Separate daily fines of $1,000/day (buildings over 35,000 sq ft) or $300/day (smaller covered buildings) apply for failing to meet emissions standards.
+- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). Note: the 2026 reporting deadline was extended to August 15, 2026. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
 
 **Site EUI (Energy Use Intensity)**
 - Measures how much energy a building uses per square foot per year (kBtu/sq ft/yr). A higher EUI means the building uses more energy relative to its size. Missing EUI typically means the building did not submit complete energy data.
