@@ -1527,6 +1527,447 @@ def _incentive_applies(incentive, scopes_selected, ownership_type, berdo_categor
     return True
 
 
+def render_retrofit_tab(prefill: dict = None):
+    if prefill is None:
+        prefill = {}
+
+    st.write(
+        "Estimate rough retrofit costs and applicable incentives for a Boston building. "
+        "Figures are order-of-magnitude ranges — get a quote from a licensed energy contractor "
+        "before making financial decisions."
+    )
+
+    st.info(
+        "**Incentive amounts are verified as of June 2026.** "
+        "Mass Save program-year amounts reset each January. "
+        "IRA figures reflect regulations current as of that date. "
+        "Always confirm current amounts at the source links before advising a client."
+    )
+
+    st.subheader("Building inputs")
+
+    # Inject prefill into session state when a new address lookup arrives
+    prefill_addr_key = prefill.get("address", "")
+    last_injected    = st.session_state.get("ret_last_injected_addr", "")
+    if prefill_addr_key and prefill_addr_key != last_injected:
+        if prefill.get("sqft"):
+            st.session_state["ret_sqft"] = int(prefill["sqft"])
+        if prefill.get("berdo_category"):
+            type_opts_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+            if prefill["berdo_category"] in type_opts_init:
+                st.session_state["ret_btype"] = prefill["berdo_category"]
+        if prefill.get("primary_fuel"):
+            fuel_opts = ["Natural gas", "Fuel oil", "Electric", "District steam", "Mixed / unknown"]
+            if prefill["primary_fuel"] in fuel_opts:
+                st.session_state["ret_fuel"] = prefill["primary_fuel"]
+        st.session_state["ret_last_injected_addr"] = prefill_addr_key
+
+    if prefill_addr_key:
+        st.caption(f"Pre-filled from: {prefill_addr_key}")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        sqft = st.number_input(
+            "Gross floor area (sq ft)",
+            min_value=1_000,
+            max_value=5_000_000,
+            value=st.session_state.get("ret_sqft", 50_000),
+            step=1_000,
+            help="Total building area. Pre-filled from Address Lookup if available.",
+            key="ret_sqft",
+        )
+        ownership_type = st.selectbox(
+            "Ownership type",
+            options=OWNERSHIP_TYPES,
+            help="Affects eligibility for IRA tax credits (for-profit only) vs. grants (nonprofits/government).",
+        )
+
+    with col2:
+        type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+        prefill_cat  = st.session_state.get("ret_btype", "— select —")
+        default_index = type_options.index(prefill_cat) if prefill_cat in type_options else 0
+        selected_type = st.selectbox(
+            "Building type (BERDO category)",
+            options=type_options,
+            index=default_index,
+            help="Pre-filled from Address Lookup if available.",
+            key="ret_btype",
+        )
+        berdo_category = selected_type if selected_type != "— select —" else None
+
+        fuel_type = st.selectbox(
+            "Primary heating fuel",
+            options=["Natural gas", "Fuel oil", "Electric", "District steam", "Mixed / unknown"],
+            help="Auto-detected from reported BERDO fuel usage. Affects which electrification incentives are most relevant.",
+            key="ret_fuel",
+        )
+
+    st.subheader("Retrofit scope")
+    st.caption("Select all work you're considering — costs and incentives will be calculated for each.")
+
+    scopes_selected = []
+    scope_cols = st.columns(2)
+    scope_items = list(RETROFIT_COST_PER_SQFT.items())
+    for i, (scope, (low, high, note)) in enumerate(scope_items):
+        col = scope_cols[i % 2]
+        with col:
+            checked = st.checkbox(f"**{scope}**", help=note, key=f"scope_{i}")
+            if checked:
+                scopes_selected.append(scope)
+
+    if not scopes_selected:
+        st.warning("Select at least one retrofit scope above to see estimates.")
+        return
+
+    # ── Building condition qualifier ─────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Building condition")
+    st.caption(
+        "These questions narrow the cost range. Answer as many as you can — "
+        "each shifts the estimate toward the low or high end."
+    )
+
+    cond_cols = st.columns(2)
+    with cond_cols[0]:
+        occupied = st.radio(
+            "Will the building be occupied during construction?",
+            options=["Yes — fully occupied", "Partially occupied / phased", "No — vacant during work"],
+            index=1,
+            key="cond_occupied",
+            help="Occupied buildings require phasing, protection, and off-hours work — adding 15–30% to labor cost.",
+        )
+        system_age = st.radio(
+            "Age of existing mechanical systems (HVAC, plumbing)?",
+            options=["Under 15 years — modern, reusable infrastructure",
+                     "15–30 years — partial reuse likely",
+                     "Over 30 years — full replacement expected"],
+            index=1,
+            key="cond_age",
+            help="Older systems often require full replacement of distribution, controls, and electrical — pushing toward the high end.",
+        )
+    with cond_cols[1]:
+        historic = st.radio(
+            "Is the building historic or architecturally constrained?",
+            options=["Yes — landmark / historic restrictions apply",
+                     "No — standard commercial construction"],
+            index=1,
+            key="cond_historic",
+            help="Historic buildings face restrictions on envelope changes and equipment placement, adding 10–25% to certain scopes.",
+        )
+        prior_audit = st.radio(
+            "Has an energy audit or feasibility study been completed?",
+            options=["Yes — ASHRAE Level 2 or equivalent",
+                     "No — rough estimate only"],
+            index=1,
+            key="cond_audit",
+            help="A completed audit means fewer unknowns, which typically produces more accurate (often lower) bids.",
+        )
+
+    # ── Compute condition adjustment factor ──────────────────────────────────
+    # Each answer shifts the midpoint estimate up or down within the range.
+    # Factor applied to the low end (pushes it up) and high end (pulled down).
+    condition_score = 0  # -2 (favorable) to +4 (unfavorable)
+
+    if "fully occupied" in occupied:
+        condition_score += 2
+    elif "Partially" in occupied:
+        condition_score += 1
+
+    if "Over 30" in system_age:
+        condition_score += 2
+    elif "15–30" in system_age:
+        condition_score += 1
+
+    if "landmark" in historic:
+        condition_score += 1
+
+    if "No —" in prior_audit:
+        condition_score += 1
+
+    # Map score (0–6) to a position fraction within the range (0.0 = low end, 1.0 = high end)
+    position = min(condition_score / 6.0, 1.0)
+
+    condition_label = (
+        "Favorable — estimate closer to low end"    if condition_score <= 1 else
+        "Moderate — mid-range estimate"             if condition_score <= 3 else
+        "Challenging — estimate closer to high end"
+    )
+
+    st.markdown("---")
+    st.subheader("Estimated retrofit cost")
+
+    # Apply Boston labor multiplier to national benchmarks
+    apply_boston = st.checkbox(
+        "Apply Boston labor cost multiplier (1.25x)",
+        value=True,
+        key="boston_multiplier_toggle",
+        help=(
+            "Boston construction labor runs ~25% above the national RSMeans baseline "
+            "(RSMeans City Cost Index, 2024-2025). Uncheck to see national benchmark figures."
+        ),
+    )
+    multiplier = BOSTON_LABOR_MULTIPLIER if apply_boston else 1.0
+
+    total_low = 0.0
+    total_high = 0.0
+    total_adjusted = 0.0
+    cost_rows = []
+
+    for scope in scopes_selected:
+        low_psf_nat, high_psf_nat, _ = RETROFIT_COST_PER_SQFT[scope]
+        low_psf  = low_psf_nat  * multiplier
+        high_psf = high_psf_nat * multiplier
+        low_total  = low_psf  * sqft
+        high_total = high_psf * sqft
+        # Condition-adjusted point estimate: interpolate within range
+        adj_psf   = low_psf + position * (high_psf - low_psf)
+        adj_total = adj_psf * sqft
+        total_low      += low_total
+        total_high     += high_total
+        total_adjusted += adj_total
+        cost_rows.append({
+            "Scope":             scope,
+            "Low ($/sqft)":      f"${low_psf:.2f}",
+            "High ($/sqft)":     f"${high_psf:.2f}",
+            "Adjusted ($/sqft)": f"${adj_psf:.2f}",
+            "Low total":         _fmt_dollars(low_total),
+            "Adjusted total":    _fmt_dollars(adj_total),
+            "High total":        _fmt_dollars(high_total),
+        })
+
+    cost_df = pd.DataFrame(cost_rows)
+    st.dataframe(cost_df, use_container_width=True, hide_index=True)
+
+    # Condition badge
+    badge_color = (
+        "Low" if condition_score <= 1 else
+        "Mid" if condition_score <= 3 else
+        "High"
+    )
+    st.caption(
+        f"{badge_color} **Building condition: {condition_label}** "
+        f"(score {condition_score}/6) — "
+        f"Adjusted estimate: **{_fmt_dollars(total_adjusted)}** "
+        f"(between low {_fmt_dollars(total_low)} and high {_fmt_dollars(total_high)})"
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Low estimate",      _fmt_dollars(total_low),
+              delta="National low × Boston multiplier" if apply_boston else "National baseline low")
+    c2.metric("Condition-adjusted", _fmt_dollars(total_adjusted),
+              delta=condition_label)
+    c3.metric("High estimate",     _fmt_dollars(total_high),
+              delta="National high × Boston multiplier" if apply_boston else "National baseline high")
+
+    multiplier_note = (
+        f"Boston 1.25x multiplier applied to national RSMeans baselines. "
+        if apply_boston else
+        "National RSMeans baseline (no Boston multiplier). "
+    )
+    st.caption(
+        multiplier_note +
+        "Condition-adjusted estimate interpolates within the range based on your answers above. "
+        "Get competitive bids before budgeting."
+    )
+
+    st.markdown("---")
+    st.subheader("Applicable incentives")
+
+    applicable = [
+        inc for inc in INCENTIVES
+        if _incentive_applies(inc, scopes_selected, ownership_type, berdo_category)
+    ]
+
+    if not applicable:
+        st.info(
+            "No incentives matched your inputs. "
+            "Try adjusting the ownership type or retrofit scope, "
+            "or check Mass Save and MassCEC directly for current programs."
+        )
+    else:
+        for inc in applicable:
+            with st.expander(f"**{inc['name']}** — {inc['type']}", expanded=True):
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    st.markdown(f"**Amount:** {inc['amount_str']}", unsafe_allow_html=True)
+                    st.markdown(f"**Eligible for:** {inc['eligibility']}", unsafe_allow_html=True)
+                    if ownership_type == "Not sure" and "ownership_restriction" in inc:
+                        st.warning(
+                            f"This incentive is available to: "
+                            f"{', '.join(inc['ownership_restriction'])}. "
+                            "Confirm your ownership structure before applying."
+                        )
+                with col_b:
+                    st.markdown(f"**Expires / resets:** {inc['expiration']}")
+                    stacks = "Yes" if inc["stacks_with_ira"] else "May conflict — verify"
+                    st.markdown(f"**Stacks with other IRA credits:** {stacks}")
+                    st.markdown(f"[Source / apply →]({inc['source']})")
+
+        if any(i["name"].startswith("IRA Section 179D") for i in applicable):
+            ira_179d_low  = 0.58 * sqft
+            ira_179d_high = 5.81 * sqft
+            st.warning(
+                "179D note: This deduction is only available for construction that began on or before "
+                "June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). If your project started "
+                "before that date, you may still qualify — confirm with a tax advisor."
+            )
+            low_str  = _fmt_dollars(ira_179d_low).replace("$", "USD ")
+            high_str = _fmt_dollars(ira_179d_high).replace("$", "USD ")
+            st.info(
+                f"179D rough estimate for this building ({sqft:,} sqft): "
+                f"{low_str} to {high_str} "
+                f"(at USD 0.58–5.81/sqft, 2025 inflation-adjusted; prevailing wage and apprenticeship required for maximum). "
+                "Requires a qualified third-party certifier. "
+                "Source: DOE energy.gov/eere/buildings/179d"
+            )
+
+    st.markdown("---")
+    st.subheader("Net cost after incentives")
+
+    # Match against INCENTIVE_STACK — the same data and logic used by the Incentive Optimizer tab,
+    # so the numbers here are consistent with the full stacking analysis there.
+    _matched = [
+        inc for inc in INCENTIVE_STACK
+        if _opt_incentive_applies(inc, scopes_selected, fuel_type, ownership_type, berdo_category)
+    ]
+    for inc in _matched:
+        inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
+
+    # Exclude financing (C-PACE) and free prerequisite services (audits) from the dollar total —
+    # they don't reduce project cost directly.
+    _grants = [i for i in _matched if not i.get("is_financing") and not i.get("is_prerequisite")]
+    _inc_low  = sum(i["_est_low"]  for i in _grants)
+    _inc_high = sum(i["_est_high"] for i in _grants)
+
+    # Pair correctly: cheapest project + most incentives = best case; vice versa = worst case.
+    _net_low  = max(total_low      - _inc_high, 0)
+    _net_adj  = max(total_adjusted - (_inc_low + _inc_high) / 2, 0)
+    _net_high = max(total_high     - _inc_low,  0)
+
+    _bar_inc = [
+        min(_inc_high, total_low),
+        min((_inc_low + _inc_high) / 2, total_adjusted),
+        min(_inc_low,  total_high),
+    ]
+
+    if _grants:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name="Gross cost",
+            x=["Low", "Condition-adjusted", "High"],
+            y=[total_low, total_adjusted, total_high],
+            marker_color="#3266ad",
+            text=[_fmt_dollars(total_low), _fmt_dollars(total_adjusted), _fmt_dollars(total_high)],
+            textposition="auto",
+        ))
+        fig.add_trace(go.Bar(
+            name=f"Matched incentives ({len(_grants)} program{'s' if len(_grants) != 1 else ''})",
+            x=["Low", "Condition-adjusted", "High"],
+            y=_bar_inc,
+            marker_color="#2ECC71",
+            text=[_fmt_dollars(v) for v in _bar_inc],
+            textposition="auto",
+        ))
+        fig.update_layout(
+            barmode="group",
+            yaxis_title="USD",
+            height=350,
+            margin=dict(t=30, b=40, l=60, r=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        fig.update_xaxes(showgrid=False)
+        fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
+        st.plotly_chart(fig, use_container_width=True)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Net cost — low scenario",
+                  _fmt_dollars(_net_low),
+                  delta=f"-{_fmt_dollars(_bar_inc[0])} incentives")
+        c2.metric("Net cost — condition-adjusted",
+                  _fmt_dollars(_net_adj),
+                  delta=f"-{_fmt_dollars(_bar_inc[1])} incentives")
+        c3.metric("Net cost — high scenario",
+                  _fmt_dollars(_net_high),
+                  delta=f"-{_fmt_dollars(_bar_inc[2])} incentives")
+
+        st.caption(
+            f"Incentive range: {_fmt_dollars(_inc_low)}–{_fmt_dollars(_inc_high)} "
+            f"from {len(_grants)} matched program(s), estimated using $/sqft benchmarks from the same "
+            "data as the Incentive Optimizer tab. Financing (C-PACE) and free services (energy audit) "
+            "are not counted here — they don't reduce project cost directly. "
+            "Actual awards depend on application outcome, project scope, and program availability. "
+            "See the Incentive Optimizer tab for the full stacking strategy and application checklist."
+        )
+    else:
+        st.info(
+            "No dollar-value incentive programs matched this scope and ownership combination. "
+            "Check Mass Save and MassCEC directly, or adjust your inputs."
+        )
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Gross cost — low",           _fmt_dollars(total_low))
+        c2.metric("Gross cost — condition-adj", _fmt_dollars(total_adjusted))
+        c3.metric("Gross cost — high",          _fmt_dollars(total_high))
+
+    st.markdown("---")
+    st.subheader("BERDO fine avoidance context")
+
+    if berdo_category and berdo_category in BERDO_STANDARDS:
+        st.write(
+            "Compare the retrofit net cost against your estimated BERDO fine exposure "
+            "from the Address Lookup tab to get a rough payback picture."
+        )
+        st.info(
+            "**Simple payback rule of thumb:** if your estimated annual BERDO fine "
+            "is larger than 10–15% of the net retrofit cost, the investment likely pays "
+            "back within 7–10 years from fine avoidance alone — before energy savings."
+        )
+    else:
+        st.info(
+            "Select a building type above to see how retrofit costs compare to your BERDO fine exposure. "
+            "Or look up your building in the Address Lookup tab first."
+        )
+
+    st.markdown("---")
+    st.warning(
+        "**This is a screening tool, not a professional estimate.** "
+        "Cost benchmarks are national/regional averages and may not reflect current Boston contractor "
+        "pricing. Incentive amounts are verified as of June 2026 but change frequently. "
+        "Do not use these figures for contracts, loan applications, or compliance filings. "
+        "Engage a licensed energy auditor, MEP engineer, or sustainability consultant for a "
+        "project-specific assessment."
+    )
+
+    with st.expander("Sources & methodology"):
+        st.markdown("""
+**Retrofit cost benchmarks**
+- RSMeans Construction Cost Data (2024–2025 editions)
+- ASHRAE Level 2 Energy Audit benchmarks
+- DOE Building Technologies Office: *Adoption of Energy Efficiency Technologies: Commercial Buildings* (2023)
+- NBI: *Getting to Zero: Commercial Building Cost Study* (2022)
+
+**Incentive programs**
+- Mass Save commercial rebates: masssave.com (verified June 2026; reset annually each January)
+- IRA Section 179D: IRS Notice 2023-29, as amended; indexed to inflation annually
+- IRA Section 48C: IRS Rev. Proc. 2023-27; competitive allocation rounds
+- IRA Section 45L: IRS Notice 2023-65; applies through 2032
+- MassDOER / MassCEC grants: masscec.com and mass.gov/doer (program-dependent)
+- Green Communities: mass.gov/green-communities (annual grant rounds)
+
+**Incentive stacking**
+179D deductions may be combined with utility rebates and most IRA credits. 48C credits may
+conflict with other IRA investment credits — verify with a tax advisor for your specific project.
+Utility rebates are generally taxable income and reduce the basis eligible for 179D.
+
+**Limitations**
+Cost ranges span the 20th–80th percentile of typical project costs. Complex retrofits
+(occupied buildings, historic structures, unusual systems) often fall above the high end.
+Incentive amounts shown are maximums; actual awards depend on program availability,
+contractor certification, and project documentation.
+""")
+
 # ---------------------------------------------------------------------------
 # INCENTIVE OPTIMIZER — data & logic
 # ---------------------------------------------------------------------------
@@ -1785,26 +2226,22 @@ def _estimate_incentive_value(inc, sqft):
     )
 
 
-def render_retrofit_optimizer_tab(prefill: dict = None):
+def render_incentive_optimizer_tab(prefill: dict = None):
     """
-    Combined Retrofit Cost Estimator + Incentive Optimizer.
-    Shows cost estimates (with building condition adjustment and Boston multiplier),
-    then matches incentives, ranks them, and models payback — all from one set of inputs.
+    Tab 4 — Incentive Optimizer.
     Pre-fills from address lookup session state where available.
     """
     if prefill is None:
         prefill = {}
 
     st.write(
-        "Estimate retrofit costs and find the right incentives — in one place. "
-        "Enter your building details and select the scopes you're considering to see "
-        "condition-adjusted cost ranges, matched funding programs, stacking order, and payback."
+        "Find the right incentives for your building, in the right order. "
+        "This tool matches your building to available programs, ranks them by dollar value, "
+        "flags conflicts, and gives you a step-by-step application checklist."
     )
     st.info(
-        "**Incentive data verified June 2026.** "
-        "Mass Save program-year amounts reset each January. "
-        "IRA figures reflect current regulations. "
-        "Always confirm amounts at source links before advising a client."
+        "**Incentive data verified June 2026.** Mass Save program-year amounts reset each January. "
+        "IRA figures reflect current regulations. Always confirm amounts at source links before advising a client."
     )
 
     # ── Inputs ──────────────────────────────────────────────────────────────
@@ -1890,121 +2327,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 scopes_selected.append(scope)
 
     if not scopes_selected:
-        st.warning("Select at least one retrofit scope above to see estimates.")
+        st.warning("Select at least one retrofit scope above to see incentive matches.")
         return
-
-    # ── Building condition ────────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("Building condition")
-    st.caption(
-        "These questions narrow the cost range — each shifts the estimate toward the low or high end."
-    )
-
-    cond_cols = st.columns(2)
-    with cond_cols[0]:
-        occupied = st.radio(
-            "Will the building be occupied during construction?",
-            options=["Yes — fully occupied", "Partially occupied / phased", "No — vacant during work"],
-            index=1, key="cond_occupied",
-            help="Occupied buildings require phasing, protection, and off-hours work — adding 15–30% to labor cost.",
-        )
-        system_age = st.radio(
-            "Age of existing mechanical systems (HVAC, plumbing)?",
-            options=["Under 15 years — modern, reusable infrastructure",
-                     "15–30 years — partial reuse likely",
-                     "Over 30 years — full replacement expected"],
-            index=1, key="cond_age",
-            help="Older systems often require full replacement of distribution, controls, and electrical.",
-        )
-    with cond_cols[1]:
-        historic = st.radio(
-            "Is the building historic or architecturally constrained?",
-            options=["Yes — landmark / historic restrictions apply",
-                     "No — standard commercial construction"],
-            index=1, key="cond_historic",
-            help="Historic buildings face restrictions on envelope changes and equipment placement, adding 10–25%.",
-        )
-        prior_audit = st.radio(
-            "Has an energy audit or feasibility study been completed?",
-            options=["Yes — ASHRAE Level 2 or equivalent",
-                     "No — rough estimate only"],
-            index=1, key="cond_audit",
-            help="A completed audit means fewer unknowns — typically producing more accurate (often lower) bids.",
-        )
-
-    condition_score = 0
-    if "fully occupied" in occupied:  condition_score += 2
-    elif "Partially"    in occupied:  condition_score += 1
-    if "Over 30"        in system_age: condition_score += 2
-    elif "15–30"        in system_age: condition_score += 1
-    if "landmark"       in historic:   condition_score += 1
-    if "No —"           in prior_audit: condition_score += 1
-
-    position = min(condition_score / 6.0, 1.0)
-    condition_label = (
-        "Favorable — estimate closer to low end"    if condition_score <= 1 else
-        "Moderate — mid-range estimate"             if condition_score <= 3 else
-        "Challenging — estimate closer to high end"
-    )
-
-    # ── Estimated retrofit cost ───────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("Estimated retrofit cost")
-
-    apply_boston = st.checkbox(
-        "Apply Boston labor cost multiplier (1.25x)",
-        value=True, key="boston_multiplier_toggle",
-        help=(
-            "Boston construction labor runs ~25% above the national RSMeans baseline "
-            "(RSMeans City Cost Index, 2024–2025). Uncheck to see national benchmark figures."
-        ),
-    )
-    multiplier = BOSTON_LABOR_MULTIPLIER if apply_boston else 1.0
-
-    cost_rows = []
-    total_cost_low      = 0.0
-    total_cost_high     = 0.0
-    total_cost_adjusted = 0.0
-
-    for scope in scopes_selected:
-        low_nat, high_nat, _ = RETROFIT_COST_PER_SQFT[scope]
-        low_psf  = low_nat  * multiplier
-        high_psf = high_nat * multiplier
-        adj_psf  = low_psf + position * (high_psf - low_psf)
-        cost_rows.append({
-            "Scope":             scope,
-            "Low ($/sqft)":      f"${low_psf:.2f}",
-            "Adjusted ($/sqft)": f"${adj_psf:.2f}",
-            "High ($/sqft)":     f"${high_psf:.2f}",
-            "Low total":         _fmt_dollars(low_psf * sqft),
-            "Adjusted total":    _fmt_dollars(adj_psf * sqft),
-            "High total":        _fmt_dollars(high_psf * sqft),
-        })
-        total_cost_low      += low_psf  * sqft
-        total_cost_high     += high_psf * sqft
-        total_cost_adjusted += adj_psf  * sqft
-
-    st.dataframe(pd.DataFrame(cost_rows), use_container_width=True, hide_index=True)
-
-    badge = "Low" if condition_score <= 1 else "Mid" if condition_score <= 3 else "High"
-    st.caption(
-        f"{badge} **Building condition: {condition_label}** (score {condition_score}/6) — "
-        f"Adjusted estimate: **{_fmt_dollars(total_cost_adjusted)}** "
-        f"(between low {_fmt_dollars(total_cost_low)} and high {_fmt_dollars(total_cost_high)})"
-    )
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Low estimate",       _fmt_dollars(total_cost_low),
-              delta="Boston low" if apply_boston else "National low")
-    c2.metric("Condition-adjusted", _fmt_dollars(total_cost_adjusted),
-              delta=condition_label)
-    c3.metric("High estimate",      _fmt_dollars(total_cost_high),
-              delta="Boston high" if apply_boston else "National high")
-    st.caption(
-        ("Boston 1.25x multiplier applied to national RSMeans baselines. "
-         if apply_boston else "National RSMeans baselines (no Boston multiplier). ") +
-        "Condition-adjusted estimate interpolates within the range based on your answers above. "
-        "Get competitive bids before budgeting."
-    )
 
     # ── Planned project — emissions reduction calculator ─────────────────────
     st.markdown("---")
@@ -2166,39 +2490,39 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     total_incentive_low  = sum(i["_est_low"]  for i in matched)
     total_incentive_high = sum(i["_est_high"] for i in matched)
 
-    # total_cost_low / total_cost_high / total_cost_adjusted are computed in the
-    # "Estimated retrofit cost" section above (Boston multiplier + condition applied).
+    # Gross retrofit cost
+    total_cost_low  = sum(RETROFIT_COST_PER_SQFT[s][0] * sqft for s in scopes_selected)
+    total_cost_high = sum(RETROFIT_COST_PER_SQFT[s][1] * sqft for s in scopes_selected)
 
     # Net cost (incentives capped at gross cost)
-    net_low      = max(total_cost_low      - total_incentive_high, 0)
-    net_high     = max(total_cost_high     - total_incentive_low,  0)
-    net_adjusted = max(total_cost_adjusted - (total_incentive_low + total_incentive_high) / 2, 0)
+    net_low  = max(total_cost_low  - total_incentive_high, 0)
+    net_high = max(total_cost_high - total_incentive_low,  0)
 
     # ── Headline summary card ─────────────────────────────────────────────────
     st.markdown("---")
 
     # Build the headline sentence
     incentive_str   = _fmt_dollars(total_incentive_high).replace("$", "USD ")
-    net_adj_display = "fully covered by incentives" if net_adjusted == 0 else _fmt_dollars(net_adjusted).replace("$", "USD ")
+    net_low_display = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
     prefill_fine_val = prefill.get("annual_fine_usd", 0) or 0
     default_energy   = 1.0 * sqft  # $1/sqft default energy savings
     total_return     = prefill_fine_val + default_energy
 
     # Cap headline payback — don't show absurd numbers for large buildings
-    if prefill_fine_val > 0 and total_return > 0 and net_adjusted > 0:
-        headline_payback_raw = net_adjusted / total_return
+    if prefill_fine_val > 0 and total_return > 0 and net_low > 0:
+        headline_payback_raw = net_low / total_return
         if headline_payback_raw <= 50:
             payback_str = f", with an estimated {round(headline_payback_raw, 1)}-year payback including energy savings"
         else:
             payback_str = " — energy savings are the primary return driver for a building this size"
-    elif prefill_fine_val > 0 and net_adjusted == 0:
+    elif prefill_fine_val > 0 and net_low == 0:
         payback_str = ", with the retrofit fully covered by incentives"
     else:
         payback_str = ""
 
     headline = (
         f"For this building, you qualify for up to {incentive_str} "
-        f"in grants and tax credits, reducing your condition-adjusted net retrofit cost to {net_adj_display}"
+        f"in incentives, reducing your estimated net retrofit cost to {net_low_display}"
         f"{payback_str}."
     )
 
@@ -2209,11 +2533,13 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     # ── Summary metric cards ─────────────────────────────────────────────────
     st.subheader("Summary")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Grants & credits matched", len(matched))
-    m2.metric("Total grants/credits (low–high)",
+    m1.metric("Incentive programs matched", len(matched))
+    m2.metric("Total incentives (low–high)",
               f"${total_incentive_low:,.0f} – ${total_incentive_high:,.0f}")
-    m3.metric("Gross cost (condition-adjusted)", _fmt_dollars(total_cost_adjusted))
-    m4.metric("Net cost (condition-adjusted)", _fmt_dollars(net_adjusted))
+    m3.metric("Gross retrofit cost (low–high)",
+              f"${total_cost_low:,.0f} – ${total_cost_high:,.0f}")
+    m4.metric("Estimated net cost (low–high)",
+              f"${net_low:,.0f} – ${net_high:,.0f}")
 
     st.caption(
         "Incentive estimates are $/sqft proxies based on program benchmarks — "
@@ -3316,8 +3642,9 @@ else:
         "It is not an official City of Boston BERDO compliance determination."
     )
 
-tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
-    "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
+tab_address, tab_portfolio, tab_retrofit, tab_optimizer, tab_planner = st.tabs([
+    "Address Lookup", "Owner Portfolio", "Retrofit Estimator",
+    "Incentive Optimizer", "Emissions Planner"
 ])
 
 # ---------------------------------------------------------------------------
@@ -3375,7 +3702,7 @@ with tab_address:
                 dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
                 st.caption(
                     f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
-                    "Used to pre-fill the Retrofit & Incentives and Emissions Planner tabs."
+                    "Used to pre-fill the Retrofit Estimator and Incentive Optimizer."
                 )
 
             with st.expander("What do these fields mean?"):
@@ -3421,7 +3748,7 @@ with tab_address:
                 base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
             )
 
-            # ── Store prefill data for Retrofit & Incentives tab ──
+            # ── Store prefill data for Incentive Optimizer tab ──
             ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
             sqft_val = top.get("Gross Floor Area")
             raw_type = top.get("Property Type")
@@ -3449,6 +3776,14 @@ with tab_address:
 
             st.session_state["optimizer_prefill"] = opt_prefill
 
+            # Also pre-fill the Retrofit Estimator tab
+            st.session_state["retrofit_prefill"] = {
+                "address":        opt_prefill.get("address", address_input),
+                "sqft":           opt_prefill.get("sqft", 50_000),
+                "berdo_category": berdo_cat,
+                "primary_fuel":   top.get("Primary Fuel", "Mixed / unknown"),
+            }
+
             # Also pre-fill the Emissions Planner tab
             ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
             planner_prefill = {
@@ -3469,7 +3804,7 @@ with tab_address:
             st.session_state["ep_last_injected_addr"] = planner_prefill["address"]
 
             st.info(
-                "Building data saved — open the **Retrofit & Incentives** or **Emissions Planner** tabs "
+                "Building data saved — open the **Incentive Optimizer** or **Emissions Planner** tabs "
                 "to model funding programs and compliance trajectory for this building."
             )
 
@@ -3520,11 +3855,18 @@ with tab_portfolio:
                 )
                 
 # ---------------------------------------------------------------------------
-# Tab 3 — Retrofit Cost Estimator + Incentive Optimizer (merged)
+# Tab 3 — Retrofit Cost & Incentive Estimator
 # ---------------------------------------------------------------------------
-with tab_retrofit_optimizer:
+with tab_retrofit:
+    retrofit_prefill = st.session_state.get("retrofit_prefill", {})
+    render_retrofit_tab(prefill=retrofit_prefill)
+
+# ---------------------------------------------------------------------------
+# Tab 4 — Incentive Optimizer
+# ---------------------------------------------------------------------------
+with tab_optimizer:
     opt_prefill = st.session_state.get("optimizer_prefill", {})
-    render_retrofit_optimizer_tab(prefill=opt_prefill)
+    render_incentive_optimizer_tab(prefill=opt_prefill)
 
 # ---------------------------------------------------------------------------
 # Tab 5 — Emissions Planner
