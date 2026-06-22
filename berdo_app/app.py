@@ -51,31 +51,6 @@ PROJECTED_GRID_EF = {
     2047: 163, 2048: 159, 2049: 155, 2050: 150,
 }
 
-# ---------------------------------------------------------------------------
-# Massachusetts RPS Class I minimum percentage by year
-# Source: 225 CMR 14.00 — grows 2 pp/yr from 2020 through 2029, then 1 pp/yr.
-# 2024 value (24%) confirmed per BERDO Renewable Energy and Emissions Compliance
-# Guidance (City of Boston, 2024). Used in BERDO formula:
-#   Electricity emissions = kWh × (1 − RPS_Class_I%) × grid_EF
-# ---------------------------------------------------------------------------
-RPS_CLASS_I_PCT = {
-    2022: 0.20, 2023: 0.22, 2024: 0.24, 2025: 0.26, 2026: 0.28,
-    2027: 0.30, 2028: 0.32, 2029: 0.34,
-    2030: 0.35, 2031: 0.36, 2032: 0.37, 2033: 0.38, 2034: 0.39,
-    2035: 0.40, 2036: 0.41, 2037: 0.42, 2038: 0.43, 2039: 0.44,
-    2040: 0.45, 2041: 0.46, 2042: 0.47, 2043: 0.48, 2044: 0.49,
-    2045: 0.50, 2046: 0.51, 2047: 0.52, 2048: 0.53, 2049: 0.54, 2050: 0.55,
-}
-
-# BCCE tier renewable percentages for 2025 (Boston Community Choice Electricity)
-# Source: GreenerU / BERDO calculations guidance (April 2025)
-# Basic is the auto-enrolled default; Standard and Green 100 require opt-up.
-BCCE_TIERS = {
-    "Not enrolled / Basic (auto — ~27% renewable)": 0.27,
-    "Standard (42% renewable)":                      0.42,
-    "Green 100 (100% renewable — zero electricity emissions)": 1.00,
-}
-
 # Representative year for each compliance period (midpoint, or period start for 2050+)
 PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 
@@ -147,8 +122,26 @@ PROPERTY_TYPE_MAP = {
     "self-storage facility": "Storage",
     "warehouse and storage": "Storage",
     "parking": "Services",
-    "mixed use property": "Office",
+    # "mixed use property" is intentionally NOT mapped here.
+    # BERDO requires a true area-weighted blended standard for mixed-use buildings.
+    # Silently applying Office limits produces incorrect compliance calculations.
+    # See is_mixed_use_type() and the mixed-use warning in render_compliance_section.
 }
+
+# Property type strings that indicate a mixed-use building requiring a blended
+# BERDO standard.  Extend this set as additional ESPM variants are encountered.
+MIXED_USE_PROPERTY_TYPES: set[str] = {
+    "mixed use property",
+    "mixed use",
+    "mixed-use property",
+}
+
+
+def is_mixed_use_type(raw_type) -> bool:
+    """Return True if raw_type is a known mixed-use ESPM property type."""
+    if not isinstance(raw_type, str) or pd.isna(raw_type):
+        return False
+    return raw_type.strip().lower() in MIXED_USE_PROPERTY_TYPES
 
 
 def map_property_type(raw_type):
@@ -246,11 +239,56 @@ def render_compliance_section(
         return
 
     if berdo_category is None:
-        st.warning(
-            f"Property type **{raw_type}** could not be mapped to a BERDO "
-            "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
-            "gap calculations."
-        )
+        if is_mixed_use_type(raw_type):
+            st.warning(
+                "⚠️ **Mixed-use building — blended standard required.** "
+                "BERDO does not apply a single use-type limit to this building. "
+                "Instead, the City calculates an area-weighted blended emissions limit "
+                "based on the square footage dedicated to each space use. "
+                "This tool cannot auto-calculate that standard without the use breakdown."
+            )
+            with st.expander("How to calculate your blended standard", expanded=True):
+                st.markdown(
+                    "**Formula:**  "
+                    "Blended limit = Σ (sqft per use × limit for that use) ÷ total sqft  \n\n"
+                    "**Example:** A 100,000 sqft building that is 60% multifamily housing "
+                    "and 40% retail:  \n"
+                    "- (60,000 × 4.1) + (40,000 × 7.1) = 246,000 + 284,000 = 530,000  \n"
+                    "- 530,000 ÷ 100,000 = **5.3 kg CO₂e/sqft/yr** blended 2025–29 limit  \n\n"
+                    "**Next steps:**\n"
+                    "1. Get the use-type breakdown from ESPM or your property records.\n"
+                    "2. Use the limits in the table below to calculate your blended limit.\n"
+                    "3. Enter your building's GHG intensity and the manually-calculated "
+                    "blended limit in the **Emissions Planner** tab to model compliance."
+                )
+                _limits_ref = pd.DataFrame([
+                    {"Building Use":    btype,
+                     "2025–29 limit":   f"{lims[0]:.1f}",
+                     "2030–34 limit":   f"{lims[1]:.1f}",
+                     "2035–39 limit":   f"{lims[2]:.1f}",
+                     "2050 (net zero)": "0.0"}
+                    for btype, lims in sorted(BERDO_STANDARDS.items())
+                ])
+                st.dataframe(_limits_ref, use_container_width=True, hide_index=True)
+                st.caption(
+                    "Units: kg CO₂e / sqft / yr. "
+                    "Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021). "
+                    "For the official blended-standard worksheet, see boston.gov/berdo."
+                )
+            st.info(
+                "**Was this building previously showing Office limits?** "
+                f"This building's reported type is **{raw_type}**. "
+                "The tool was previously mapping this to Office (5.3 kg CO₂e/sqft in 2025–29), "
+                "which is incorrect unless Office is the building's dominant use. "
+                "A mixed-use building with significant residential or retail space will have "
+                "a different blended limit — potentially more or less stringent than Office."
+            )
+        else:
+            st.warning(
+                f"Property type **{raw_type}** could not be mapped to a BERDO "
+                "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
+                "gap calculations."
+            )
         return
 
     gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category)
@@ -1150,12 +1188,25 @@ marked "Did not report" in the excluded table represent additional unknown expos
     )
 
     breakdown_rows = []
+    mixed_use_rows = []          # Buildings that need a blended standard
     for _, row in valid.iterrows():
         sqft      = pd.to_numeric(row["Gross Floor Area"], errors="coerce")
         intensity = pd.to_numeric(row["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
-        berdo_cat = map_property_type(row.get("Property Type"))
+        raw_ptype = row.get("Property Type")
+        berdo_cat = map_property_type(raw_ptype)
 
-        if pd.isna(sqft) or pd.isna(intensity) or berdo_cat is None:
+        if pd.isna(sqft) or pd.isna(intensity):
+            continue
+
+        if berdo_cat is None:
+            if is_mixed_use_type(raw_ptype):
+                mixed_use_rows.append({
+                    "Address":        row["Building Address"],
+                    "Property Type":  raw_ptype,
+                    "Sq Ft":          f"{int(sqft):,}" if not pd.isna(sqft) else "—",
+                    "GHG (kg/sf/yr)": round(intensity, 3),
+                    "Note": "Blended standard required — cannot auto-calculate gap",
+                })
             continue
 
         limit_2025 = BERDO_STANDARDS[berdo_cat][0]
@@ -1196,7 +1247,25 @@ marked "Did not report" in the excluded table represent additional unknown expos
             "Negative = surplus that can offset other buildings in the portfolio."
         )
 
-    # --- Excluded buildings ---
+    # --- Mixed-use buildings — flagged separately ---
+    if mixed_use_rows:
+        with st.expander(
+            f"⚠️ Mixed-use buildings requiring manual review ({len(mixed_use_rows)})",
+            expanded=True,
+        ):
+            st.warning(
+                "These buildings are reported as mixed-use and are **excluded from the "
+                "portfolio blended standard calculation** above. BERDO requires an "
+                "area-weighted blended limit based on each building's use-type breakdown. "
+                "The portfolio compliance figures above understate true exposure if these "
+                "buildings are significant emitters. "
+                "Use the Address Lookup tab for each building to see the blended-standard guidance."
+            )
+            st.dataframe(
+                pd.DataFrame(mixed_use_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
     if excluded_rows:
         not_reported = sum(
             1 for r in excluded_rows if "did not report" in r["Exclusion Reason"].lower()
@@ -3331,164 +3400,6 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     has_projects = any(r > 0 for r in period_reductions_kg)
     has_grid     = apply_grid
 
-    # ── Renewable Energy Compliance Pathways ─────────────────────────────────
-    st.markdown("---")
-    st.subheader("Renewable Energy Compliance Pathways")
-    st.caption(
-        "MA Class I RECs and BCCE enrollment reduce **electricity-attributed emissions only** — "
-        "they cannot offset fossil fuel use (gas, oil, steam). "
-        "Use the project table above for fuel switching or efficiency retrofits."
-    )
-
-    re_col1, re_col2, re_col3 = st.columns(3)
-    with re_col1:
-        elec_mwh_input = st.number_input(
-            "Annual electricity use (MWh/yr)",
-            min_value=0.0, max_value=100_000.0,
-            value=0.0, step=50.0,
-            key="ep_elec_mwh",
-            help=(
-                "From your ESPM annual summary or Eversource bill. "
-                "1 MWh = 1,000 kWh. Pre-filling from BERDO data is not yet "
-                "supported — enter manually from your utility records."
-            ),
-        )
-    with re_col2:
-        bcce_tier_input = st.selectbox(
-            "BCCE enrollment tier",
-            options=list(BCCE_TIERS.keys()),
-            key="ep_bcce_tier",
-            help=(
-                "Boston Community Choice Electricity. ~65% of Boston accounts are "
-                "auto-enrolled in Basic. Standard and Green 100 require opt-up at "
-                "boston.gov/bcce. Percentages shown are for 2025."
-            ),
-        )
-    with re_col3:
-        rec_mwh_input = st.number_input(
-            "Additional RECs purchased (MWh/yr)",
-            min_value=0.0, max_value=100_000.0,
-            value=0.0, step=10.0,
-            key="ep_rec_mwh",
-            help=(
-                "Each MA Class I REC covers 1 MWh of electricity. "
-                "Purchase through the City of Boston's REC Connector Program "
-                "(Green Energy Consumers Alliance) or independent REC brokers. "
-                "Only non-emitting MA Class I RECs are eligible for BERDO compliance."
-            ),
-        )
-
-    # Calculate renewable reductions
-    re_reduction_kg = 0.0
-    _has_re_inputs = elec_mwh_input > 0
-
-    if _has_re_inputs:
-        _grid_ef_2025 = PROJECTED_GRID_EF.get(2025, 249)   # kg CO₂e/MWh
-        _rps_2025     = RPS_CLASS_I_PCT.get(2025, 0.26)
-
-        # Electricity emissions under the RPS baseline
-        # Formula: emissions = kWh × (1 − RPS%) × grid_EF  →  MWh × grid_EF × (1 − RPS%)
-        _elec_baseline_kg = elec_mwh_input * (1 - _rps_2025) * _grid_ef_2025
-
-        # BCCE reduction
-        _bcce_pct = BCCE_TIERS[bcce_tier_input]
-        if _bcce_pct >= 1.0:
-            # Green 100 → zero electricity emissions
-            _bcce_reduction_kg = _elec_baseline_kg
-        else:
-            # Additional coverage above the RPS baseline
-            _extra_coverage = max(_bcce_pct - _rps_2025, 0.0)
-            _bcce_reduction_kg = elec_mwh_input * _extra_coverage * _grid_ef_2025
-
-        # REC reduction — each MWh of additional REC reduces electricity emissions
-        # by exactly grid_EF kg, capped at remaining electricity emissions
-        _remaining_after_bcce = max(_elec_baseline_kg - _bcce_reduction_kg, 0.0)
-        _rec_reduction_kg     = min(rec_mwh_input * _grid_ef_2025, _remaining_after_bcce)
-
-        re_reduction_kg = _bcce_reduction_kg + _rec_reduction_kg
-
-        # ── Metric cards ──────────────────────────────────────────────────────
-        mc1, mc2, mc3 = st.columns(3)
-        mc1.metric(
-            "BCCE reduction",
-            f"{_bcce_reduction_kg:,.0f} kg/yr",
-            delta=(
-                f"{_bcce_reduction_kg / total_emissions_kg * 100:.1f}% of baseline"
-                if _bcce_reduction_kg > 0 else "No additional coverage vs RPS"
-            ),
-            delta_color="inverse" if _bcce_reduction_kg > 0 else "off",
-            help="Reduction from BCCE tier's renewable % above the RPS Class I baseline.",
-        )
-        mc2.metric(
-            "Additional REC reduction",
-            f"{_rec_reduction_kg:,.0f} kg/yr",
-            delta=(
-                f"{rec_mwh_input:.0f} MWh × {_grid_ef_2025} kg/MWh"
-                if _rec_reduction_kg > 0 else "Enter RECs above to model"
-            ),
-            delta_color="inverse" if _rec_reduction_kg > 0 else "off",
-            help="Each MA Class I REC (1 MWh) reduces BERDO electricity emissions by the grid emissions factor.",
-        )
-        mc3.metric(
-            "Total renewable reduction",
-            f"{re_reduction_kg:,.0f} kg/yr",
-            delta=f"{re_reduction_kg / total_emissions_kg * 100:.1f}% of baseline",
-            delta_color="inverse",
-        )
-
-        # ── REC cost estimate ─────────────────────────────────────────────────
-        if rec_mwh_input > 0:
-            _rec_cost_low  = rec_mwh_input * 5
-            _rec_cost_high = rec_mwh_input * 25
-            st.info(
-                f"Estimated annual REC cost: USD {_rec_cost_low:,.0f}–{_rec_cost_high:,.0f} "
-                f"at $5–$25/MWh (market rate estimate, 2026). "
-                "Purchase through the City of Boston's REC Connector Program "
-                "(Green Energy Consumers Alliance). "
-                "Compare against your annual BERDO ACP fine to assess cost-effectiveness. "
-                "RECs must be retired in NEPOOL GIS within 6 months after the compliance year end."
-            )
-
-        # ── Gap guidance — can RECs alone close this building? ───────────────
-        if berdo_category in BERDO_STANDARDS:
-            _limit_2025_kg = BERDO_STANDARDS[berdo_category][0] * sqft
-            _gap_before_re = max(total_emissions_kg - _limit_2025_kg, 0.0)
-            if _gap_before_re > 0 and _elec_baseline_kg > 0:
-                _recs_to_close = _gap_before_re / _grid_ef_2025   # MWh needed
-                _recs_max      = _remaining_after_bcce / _grid_ef_2025
-                if _gap_before_re <= _remaining_after_bcce:
-                    st.success(
-                        f"Your 2025–29 compliance gap ({_gap_before_re / 1000:.1f} MT CO₂e/yr) "
-                        f"is fully within your electricity emissions. Purchasing approximately "
-                        f"**{_recs_to_close:.0f} additional RECs/yr** (on top of any BCCE) "
-                        f"could close the gap without a physical retrofit. "
-                        f"Estimated cost: USD {_recs_to_close * 5:,.0f}–{_recs_to_close * 25:,.0f}/yr."
-                    )
-                else:
-                    _fossil_gap_kg = _gap_before_re - _remaining_after_bcce
-                    st.warning(
-                        f"Your 2025–29 compliance gap ({_gap_before_re / 1000:.1f} MT/yr) exceeds "
-                        f"your electricity-attributed emissions ({_elec_baseline_kg / 1000:.1f} MT/yr). "
-                        f"Maxing out RECs ({_recs_max:.0f}/yr) closes "
-                        f"{_remaining_after_bcce / _gap_before_re * 100:.0f}% of the gap — "
-                        f"the remaining {_fossil_gap_kg / 1000:.1f} MT/yr requires fossil fuel reduction."
-                    )
-
-        st.caption(
-            f"Calculation uses 2025 values: RPS Class I = {_rps_2025*100:.0f}%, "
-            f"grid EF = {_grid_ef_2025} kg CO₂e/MWh (BERDO Appendix B). "
-            "Source: BERDO Renewable Energy and Emissions Compliance Guidance (City of Boston, 2024). "
-            "Electricity emissions only — does not capture interactions with on-site solar or PPAs."
-        )
-
-    else:
-        st.caption(
-            "Enter your annual electricity consumption (MWh/yr) to model BCCE and REC reductions. "
-            "Find this in ESPM under 'Monthly Data → Electricity' or on your annual Eversource summary."
-        )
-
-    has_renewables = re_reduction_kg > 0
-
     # ── Build two stacked tables ──────────────────────────────────────────────
     emissions_rows = []
     fines_rows     = []
@@ -3501,22 +3412,16 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         grid_kg      = grid_emissions_kg[i]
         proj_kg      = max(baseline_kg - period_reductions_kg[i], 0)
         combined_kg  = max(grid_kg    - period_reductions_kg[i], 0)
-        re_kg        = max(baseline_kg - re_reduction_kg, 0)
-        re_proj_kg   = max(proj_kg     - re_reduction_kg, 0)
 
         gap_baseline = baseline_kg  - limit_kg
         gap_grid     = grid_kg      - limit_kg
         gap_proj     = proj_kg      - limit_kg
         gap_combined = combined_kg  - limit_kg
-        gap_re       = re_kg        - limit_kg
-        gap_re_proj  = re_proj_kg   - limit_kg
 
         fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0)
         fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0)
         fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0)
         fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0)
-        fine_re       = round(max(gap_re,       0) / 1000 * ACP_RATE, 0)
-        fine_re_proj  = round(max(gap_re_proj,  0) / 1000 * ACP_RATE, 0)
 
         def _ou(gap):
             if gap < 0:   return f"{abs(gap)/1000:,.0f} MT Under"
@@ -3543,12 +3448,6 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         if has_projects and has_grid:
             erow["Grid + projects"]         = _fmt_kg(combined_kg)
             erow["Status (grid + projects)"] = _ou(gap_combined)
-        if has_renewables:
-            erow["After renewables"]         = _fmt_kg(re_kg)
-            erow["Status (renewables)"]      = _ou(gap_re)
-        if has_renewables and has_projects:
-            erow["Projects + renewables"]    = _fmt_kg(re_proj_kg)
-            erow["Status (proj + RE)"]       = _ou(gap_re_proj)
         emissions_rows.append(erow)
 
         # ── Fines table row ──────────────────────────────────────────────────
@@ -3562,10 +3461,6 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             frow["ACP — grid decarb"]    = _fmt_fine(fine_grid)
         if has_projects and has_grid:
             frow["ACP — grid + projects"] = _fmt_fine(fine_combined)
-        if has_renewables:
-            frow["ACP — with renewables"]        = _fmt_fine(fine_re)
-        if has_renewables and has_projects:
-            frow["ACP — projects + renewables"]  = _fmt_fine(fine_re_proj)
         fines_rows.append(frow)
 
     # ── Table 1: Emissions ────────────────────────────────────────────────────
@@ -3593,16 +3488,9 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     proj_fines_cumul     = _cumulative_fine([max(total_emissions_kg - period_reductions_kg[i], 0) for i in range(len(COMPLIANCE_PERIODS))])
     grid_fines_cumul     = _cumulative_fine(grid_emissions_kg)
     combined_fines_cumul = _cumulative_fine([max(grid_emissions_kg[i] - period_reductions_kg[i], 0) for i in range(len(COMPLIANCE_PERIODS))])
-    re_fines_cumul       = _cumulative_fine([max(total_emissions_kg - re_reduction_kg, 0)] * len(COMPLIANCE_PERIODS))
-    re_proj_fines_cumul  = _cumulative_fine([max(total_emissions_kg - period_reductions_kg[i] - re_reduction_kg, 0) for i in range(len(COMPLIANCE_PERIODS))])
 
     st.markdown("---")
-    num_cols = (1
-                + (1 if has_projects  else 0)
-                + (1 if has_grid      else 0)
-                + (1 if has_projects and has_grid else 0)
-                + (1 if has_renewables else 0)
-                + (1 if has_renewables and has_projects else 0))
+    num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
     s_cols = st.columns(max(num_cols, 2))
 
     s_cols[0].metric(
@@ -3634,38 +3522,18 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             f"${combined_fines_cumul:,.0f}",
             delta=f"-${savings_c:,.0f} vs baseline" if savings_c > 0 else "No change",
         )
-        col_idx += 1
-    if has_renewables:
-        savings_re = baseline_fines_cumul - re_fines_cumul
-        s_cols[col_idx].metric(
-            "Cumulative ACP — with renewables",
-            f"${re_fines_cumul:,.0f}",
-            delta=f"-${savings_re:,.0f} vs baseline" if savings_re > 0 else "No change",
-        )
-        col_idx += 1
-    if has_renewables and has_projects:
-        savings_re_proj = baseline_fines_cumul - re_proj_fines_cumul
-        s_cols[col_idx].metric(
-            "Cumulative ACP — projects + renewables",
-            f"${re_proj_fines_cumul:,.0f}",
-            delta=f"-${savings_re_proj:,.0f} vs baseline" if savings_re_proj > 0 else "No change",
-        )
 
     compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
     compliant_periods_proj      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(total_emissions_kg - period_reductions_kg[i], 0) <= limits[i] * sqft) if has_projects else None
     compliant_periods_grid      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if grid_emissions_kg[i] <= limits[i] * sqft) if has_grid else None
     compliant_periods_combined  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(grid_emissions_kg[i] - period_reductions_kg[i], 0) <= limits[i] * sqft) if (has_projects and has_grid) else None
-    compliant_periods_re        = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(total_emissions_kg - re_reduction_kg, 0) <= limits[i] * sqft) if has_renewables else None
-    compliant_periods_re_proj   = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(total_emissions_kg - period_reductions_kg[i] - re_reduction_kg, 0) <= limits[i] * sqft) if (has_renewables and has_projects) else None
 
-    _all_compliant = [v for v in [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined, compliant_periods_re, compliant_periods_re_proj] if v is not None]
+    _all_compliant = [v for v in [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined] if v is not None]
     st.caption(
         f"Compliant periods: baseline {compliant_periods_baseline}"
         + (f" | with projects {compliant_periods_proj}" if compliant_periods_proj is not None else "")
         + (f" | grid decarb only {compliant_periods_grid}" if compliant_periods_grid is not None else "")
         + (f" | grid + projects {compliant_periods_combined}" if compliant_periods_combined is not None else "")
-        + (f" | with renewables {compliant_periods_re}" if compliant_periods_re is not None else "")
-        + (f" | projects + renewables {compliant_periods_re_proj}" if compliant_periods_re_proj is not None else "")
         + f" (out of {len(COMPLIANCE_PERIODS)} periods)."
     )
 
@@ -3886,7 +3754,15 @@ with tab_address:
 
             st.write("**Reasons:**", top["Reasons"])
 
-            # ── Fuel breakdown ────────────────────────────────────────────────
+            # ── Mixed-use flag ────────────────────────────────────────────────
+            if is_mixed_use_type(top.get("Property Type")):
+                st.error(
+                    "⚠️ **Mixed-use building — compliance figures below are not reliable.** "
+                    "BERDO requires a blended emissions limit for mixed-use properties, "
+                    "calculated from the area-weighted average of each space use type's limit. "
+                    "This tool cannot calculate that automatically from the reported property type. "
+                    "The Compliance Gap Analysis section below explains what to do next."
+                )
             fuel_breakdown = get_fuel_breakdown(top)
             primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
             if fuel_breakdown:
