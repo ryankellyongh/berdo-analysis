@@ -1,3 +1,4 @@
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -2200,18 +2201,20 @@ def _estimate_incentive_value(inc, sqft):
     )
 
 
-def render_incentive_optimizer_tab(prefill: dict = None):
+def render_retrofit_optimizer_tab(prefill: dict = None):
     """
-    Tab 4 — Incentive Optimizer.
+    Tab 3 — Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer).
+    Collects building inputs once, then shows condition-adjusted cost estimates,
+    matched incentives ranked by value, stacking order, and payback.
     Pre-fills from address lookup session state where available.
     """
     if prefill is None:
         prefill = {}
 
     st.write(
-        "Find the right incentives for your building, in the right order. "
-        "This tool matches your building to available programs, ranks them by dollar value, "
-        "flags conflicts, and gives you a step-by-step application checklist."
+        "Estimate retrofit costs and find the right incentives — in one place. "
+        "Enter your building details and the scopes you're considering to see "
+        "condition-adjusted cost ranges, matched funding programs, stacking order, and payback."
     )
     st.info(
         "**Incentive data verified June 2026.** Mass Save program-year amounts reset each January. "
@@ -2303,6 +2306,85 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     if not scopes_selected:
         st.warning("Select at least one retrofit scope above to see incentive matches.")
         return
+
+    # ── Estimated retrofit cost (folded in from the former Retrofit Estimator) ─
+    st.markdown("---")
+    st.subheader("Estimated retrofit cost")
+    st.caption(
+        "Order-of-magnitude ranges from RSMeans / ASHRAE / DOE benchmarks. "
+        "Answer the condition question below to narrow the estimate. "
+        "Get competitive bids before budgeting."
+    )
+
+    prior_audit = st.radio(
+        "Has an energy audit or feasibility study been completed?",
+        options=["Yes — ASHRAE Level 2 or equivalent", "No — rough estimate only"],
+        index=1,
+        key="opt_cond_audit",
+        help=(
+            "An audit replaces range assumptions with building-specific data. "
+            "Without one, unknowns tend to push costs toward the upper half of the range — "
+            "so this estimate defaults to the mid-range as a conservative starting point."
+        ),
+    )
+    has_audit = "ASHRAE" in prior_audit
+    if has_audit:
+        position        = 0.20
+        condition_label = "Audit complete — estimate toward low end"
+    else:
+        position        = 0.55
+        condition_label = "No audit — mid-range estimate (actual scope may run higher)"
+
+    apply_boston = st.checkbox(
+        "Apply Boston labor cost multiplier (1.25x)",
+        value=True, key="opt_boston_multiplier",
+        help=(
+            "Boston construction labor runs ~25% above the national RSMeans baseline "
+            "(RSMeans City Cost Index, 2024–2025). Uncheck to see national benchmark figures."
+        ),
+    )
+    multiplier = BOSTON_LABOR_MULTIPLIER if apply_boston else 1.0
+
+    cost_rows = []
+    total_cost_low = total_cost_high = total_cost_adjusted = 0.0
+    for scope in scopes_selected:
+        low_nat, high_nat, _ = RETROFIT_COST_PER_SQFT[scope]
+        low_psf  = low_nat  * multiplier
+        high_psf = high_nat * multiplier
+        adj_psf  = low_psf + position * (high_psf - low_psf)
+        cost_rows.append({
+            "Scope":             scope,
+            "Low ($/sqft)":      f"${low_psf:.2f}",
+            "Adjusted ($/sqft)": f"${adj_psf:.2f}",
+            "High ($/sqft)":     f"${high_psf:.2f}",
+            "Low total":         _fmt_dollars(low_psf * sqft),
+            "Adjusted total":    _fmt_dollars(adj_psf * sqft),
+            "High total":        _fmt_dollars(high_psf * sqft),
+        })
+        total_cost_low      += low_psf  * sqft
+        total_cost_high     += high_psf * sqft
+        total_cost_adjusted += adj_psf  * sqft
+
+    st.dataframe(pd.DataFrame(cost_rows), use_container_width=True, hide_index=True)
+
+    _badge = "Low" if has_audit else "Mid"
+    st.caption(
+        f"{_badge} **{condition_label}** — Adjusted estimate: "
+        f"**{_fmt_dollars(total_cost_adjusted)}** "
+        f"(between low {_fmt_dollars(total_cost_low)} and high {_fmt_dollars(total_cost_high)})"
+    )
+    _cc1, _cc2, _cc3 = st.columns(3)
+    _cc1.metric("Low estimate",       _fmt_dollars(total_cost_low),
+                delta="Boston low" if apply_boston else "National low")
+    _cc2.metric("Condition-adjusted", _fmt_dollars(total_cost_adjusted),
+                delta=condition_label)
+    _cc3.metric("High estimate",      _fmt_dollars(total_cost_high),
+                delta="Boston high" if apply_boston else "National high")
+    st.caption(
+        ("Boston 1.25x multiplier applied to national RSMeans baselines. "
+         if apply_boston else "National RSMeans baselines (no Boston multiplier). ") +
+        "Adjusted estimate uses the low end with an audit on file, mid-range without one."
+    )
 
     # ── Planned project — emissions reduction calculator ─────────────────────
     st.markdown("---")
@@ -2464,9 +2546,11 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     total_incentive_low  = sum(i["_est_low"]  for i in matched)
     total_incentive_high = sum(i["_est_high"] for i in matched)
 
-    # Gross retrofit cost
-    total_cost_low  = sum(RETROFIT_COST_PER_SQFT[s][0] * sqft for s in scopes_selected)
-    total_cost_high = sum(RETROFIT_COST_PER_SQFT[s][1] * sqft for s in scopes_selected)
+    # Gross retrofit cost — reuse the Boston-multiplier + condition-adjusted totals
+    # computed in the "Estimated retrofit cost" section above, so the cost shown
+    # there and the net cost here are consistent. (Previously this recomputed raw
+    # national baselines, understating cost whenever the Boston multiplier applied.)
+    # total_cost_low / total_cost_high already set above.
 
     # Net cost (incentives capped at gross cost)
     net_low  = max(total_cost_low  - total_incentive_high, 0)
@@ -3115,62 +3199,6 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         "Uses the same emissions factors BERDO applies (EPA Portfolio Manager)."
     )
 
-    # Baseline used for percentage-based (Simple mode) reductions — matches the
-    # downstream compliance baseline (reported data first, intensity × sqft fallback).
-    _baseline_ghg_raw = prefill.get("ghg_emissions_kg")
-    if _baseline_ghg_raw and _baseline_ghg_raw > 0:
-        baseline_kg_for_pct = float(_baseline_ghg_raw)
-    else:
-        baseline_kg_for_pct = ghg_intensity * sqft
-
-    # Typical share of a building's total emissions addressable by each measure type.
-    # Used to translate a "% reduction of the affected system" into a building-level
-    # emissions reduction. These are screening defaults — a real audit refines them.
-    MEASURE_TYPES = {
-        "Fuel switching — gas/oil heating → heat pump": {
-            "share": 0.55,
-            "help": "Space + water heating is typically ~40–70% of a building's emissions. Default assumes 55% addressable.",
-        },
-        "HVAC upgrade — controls, VFDs, recommissioning": {
-            "share": 0.30,
-            "help": "HVAC efficiency measures typically address ~20–40% of total emissions.",
-        },
-        "Lighting — LED + controls": {
-            "share": 0.15,
-            "help": "Lighting is typically ~10–20% of commercial building emissions.",
-        },
-        "Building envelope — insulation, windows, air sealing": {
-            "share": 0.20,
-            "help": "Envelope improvements typically cut ~10–25% of heating/cooling load.",
-        },
-        "On-site solar / renewable generation": {
-            "share": 0.25,
-            "help": "Offsets electricity emissions; impact depends on roof capacity and load.",
-        },
-        "Whole-building deep retrofit": {
-            "share": 0.80,
-            "help": "Comprehensive retrofits can address the large majority of emissions.",
-        },
-        "Other / custom": {
-            "share": 1.00,
-            "help": "Percentage applies directly to total building emissions.",
-        },
-    }
-
-    entry_mode = st.radio(
-        "Entry mode",
-        options=["Simple — measure type + % reduction", "Advanced — exact fuel quantity"],
-        index=0,
-        horizontal=True,
-        key="ep_entry_mode",
-        help=(
-            "Simple mode is for quick screening when you know the kind of project but not "
-            "exact fuel numbers. Advanced mode lets you enter precise fuel quantities "
-            "(therms, gallons, kWh) for a more accurate estimate."
-        ),
-    )
-    simple_mode = entry_mode.startswith("Simple")
-
     # Initialise project list in session state
     if "ep_projects" not in st.session_state:
         st.session_state["ep_projects"] = []
@@ -3181,17 +3209,13 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             st.session_state["ep_projects"].append({
                 "name": "",
                 "year": 2030,
-                # Simple-mode fields
-                "measure": list(MEASURE_TYPES.keys())[0],
-                "pct": 0.0,
-                # Advanced-mode fields
                 "fuel": "Natural gas",
                 "unit": "therms",
                 "amount": 0.0,
                 "reduction_kg": 0.0,
             })
 
-    # Advanced-mode conversion tables
+    # Project entry table
     fuel_unit_options = {
         "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
         "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
@@ -3227,73 +3251,10 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             ef = FUEL_EF_KG_PER_KBTU.get(fuel, 0.05311)
         return round(kbtu * ef, 2)
 
-    def calc_reduction_kg_pct(measure, pct):
-        """Simple mode: % reduction of the system this measure addresses."""
-        share = MEASURE_TYPES.get(measure, {}).get("share", 1.0)
-        return round(baseline_kg_for_pct * share * (pct / 100.0), 2)
-
     projects_to_remove = []
     projects = st.session_state["ep_projects"]
 
-    if projects and simple_mode:
-        # ── Simple mode rows ──────────────────────────────────────────────────
-        header_cols = st.columns([3, 1.3, 3.5, 1.6, 2, 0.9])
-        header_cols[0].caption("Project name")
-        header_cols[1].caption("Year")
-        header_cols[2].caption("Measure type")
-        header_cols[3].caption("% reduction")
-        header_cols[4].caption("Emission reduction (kg CO₂e/yr)")
-        header_cols[5].caption("")
-
-        measure_list = list(MEASURE_TYPES.keys())
-        for idx, proj in enumerate(projects):
-            row = st.columns([3, 1.3, 3.5, 1.6, 2, 0.9])
-            with row[0]:
-                proj["name"] = st.text_input(
-                    "Name", value=proj.get("name", ""),
-                    key=f"ep_proj_name_{idx}", label_visibility="collapsed",
-                    placeholder="e.g. Boiler → heat pump",
-                )
-            with row[1]:
-                period_years = list(range(2025, 2051))
-                curr_yr = proj.get("year", 2030)
-                yr_idx  = period_years.index(curr_yr) if curr_yr in period_years else 5
-                proj["year"] = st.selectbox(
-                    "Year", options=period_years, index=yr_idx,
-                    key=f"ep_proj_year_{idx}", label_visibility="collapsed",
-                )
-            with row[2]:
-                curr_measure = proj.get("measure", measure_list[0])
-                m_idx = measure_list.index(curr_measure) if curr_measure in measure_list else 0
-                proj["measure"] = st.selectbox(
-                    "Measure", options=measure_list, index=m_idx,
-                    key=f"ep_proj_measure_{idx}", label_visibility="collapsed",
-                    help=MEASURE_TYPES[measure_list[m_idx]]["help"],
-                )
-            with row[3]:
-                proj["pct"] = st.number_input(
-                    "% reduction", min_value=0.0, max_value=100.0,
-                    value=float(proj.get("pct", 0.0)),
-                    step=5.0, key=f"ep_proj_pct_{idx}", label_visibility="collapsed",
-                )
-            with row[4]:
-                proj["reduction_kg"] = calc_reduction_kg_pct(proj["measure"], proj["pct"])
-                st.metric(
-                    "Reduction", f"{proj['reduction_kg']:,.0f}",
-                    label_visibility="collapsed",
-                )
-            with row[5]:
-                if st.button("✕", key=f"ep_remove_{idx}", help="Remove this project"):
-                    projects_to_remove.append(idx)
-
-        st.caption(
-            "Simple mode applies your % reduction to the share of building emissions that "
-            "measure type typically addresses (shown in each measure's tooltip). "
-            "These are screening estimates — a professional energy audit refines them."
-        )
-
-    elif projects and not simple_mode:
-        # ── Advanced mode rows ────────────────────────────────────────────────
+    if projects:
         header_cols = st.columns([3, 1.5, 2, 1.5, 2, 1.5, 1])
         header_cols[0].caption("Project name")
         header_cols[1].caption("Year")
@@ -3311,7 +3272,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                     key=f"ep_proj_name_{idx}", label_visibility="collapsed"
                 )
             with row[1]:
-                period_years = list(range(2025, 2051))
+                period_years = [2025, 2026, 2027, 2028, 2029,
+                                2030, 2031, 2032, 2033, 2034,
+                                2035, 2036, 2037, 2038, 2039,
+                                2040, 2041, 2042, 2043, 2044,
+                                2045, 2046, 2047, 2048, 2049, 2050]
                 curr_yr = proj.get("year", 2030)
                 yr_idx  = period_years.index(curr_yr) if curr_yr in period_years else 5
                 proj["year"] = st.selectbox(
@@ -3346,7 +3311,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                     label_visibility="collapsed"
                 )
             with row[6]:
-                if st.button("✕", key=f"ep_remove_{idx}", help="Remove this project"):
+                if st.button("Remove", key=f"ep_remove_{idx}"):
                     projects_to_remove.append(idx)
 
     for idx in sorted(projects_to_remove, reverse=True):
@@ -3735,9 +3700,8 @@ else:
         "It is not an official City of Boston BERDO compliance determination."
     )
 
-tab_address, tab_portfolio, tab_retrofit, tab_optimizer, tab_planner = st.tabs([
-    "Address Lookup", "Owner Portfolio", "Retrofit Estimator",
-    "Incentive Optimizer", "Emissions Planner"
+tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
+    "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
 ])
 
 # ---------------------------------------------------------------------------
@@ -3795,7 +3759,7 @@ with tab_address:
                 dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
                 st.caption(
                     f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
-                    "Used to pre-fill the Retrofit Estimator and Incentive Optimizer."
+                    "Used to pre-fill the Retrofit & Incentives tab."
                 )
 
             with st.expander("What do these fields mean?"):
@@ -3897,7 +3861,7 @@ with tab_address:
             st.session_state["ep_last_injected_addr"] = planner_prefill["address"]
 
             st.info(
-                "Building data saved — open the **Incentive Optimizer** or **Emissions Planner** tabs "
+                "Building data saved — open the **Retrofit & Incentives** or **Emissions Planner** tabs "
                 "to model funding programs and compliance trajectory for this building."
             )
 
@@ -3948,21 +3912,14 @@ with tab_portfolio:
                 )
                 
 # ---------------------------------------------------------------------------
-# Tab 3 — Retrofit Cost & Incentive Estimator
+# Tab 3 — Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer)
 # ---------------------------------------------------------------------------
-with tab_retrofit:
-    retrofit_prefill = st.session_state.get("retrofit_prefill", {})
-    render_retrofit_tab(prefill=retrofit_prefill)
-
-# ---------------------------------------------------------------------------
-# Tab 4 — Incentive Optimizer
-# ---------------------------------------------------------------------------
-with tab_optimizer:
+with tab_retrofit_optimizer:
     opt_prefill = st.session_state.get("optimizer_prefill", {})
-    render_incentive_optimizer_tab(prefill=opt_prefill)
+    render_retrofit_optimizer_tab(prefill=opt_prefill)
 
 # ---------------------------------------------------------------------------
-# Tab 5 — Emissions Planner
+# Tab 4 — Emissions Planner
 # ---------------------------------------------------------------------------
 with tab_planner:
     planner_prefill = st.session_state.get("planner_prefill", {})
