@@ -1623,76 +1623,28 @@ def render_retrofit_tab(prefill: dict = None):
     # ── Building condition qualifier ─────────────────────────────────────────
     st.markdown("---")
     st.subheader("Building condition")
-    st.caption(
-        "These questions narrow the cost range. Answer as many as you can — "
-        "each shifts the estimate toward the low or high end."
+
+    prior_audit = st.radio(
+        "Has an energy audit or feasibility study been completed?",
+        options=["Yes — ASHRAE Level 2 or equivalent",
+                 "No — rough estimate only"],
+        index=1,
+        key="cond_audit",
+        help=(
+            "An audit replaces range assumptions with building-specific data. "
+            "Without one, unknowns tend to push costs toward the upper half of the range — "
+            "so this estimate is set to the mid-range as a conservative default."
+        ),
     )
 
-    cond_cols = st.columns(2)
-    with cond_cols[0]:
-        occupied = st.radio(
-            "Will the building be occupied during construction?",
-            options=["Yes — fully occupied", "Partially occupied / phased", "No — vacant during work"],
-            index=1,
-            key="cond_occupied",
-            help="Occupied buildings require phasing, protection, and off-hours work — adding 15–30% to labor cost.",
-        )
-        system_age = st.radio(
-            "Age of existing mechanical systems (HVAC, plumbing)?",
-            options=["Under 15 years — modern, reusable infrastructure",
-                     "15–30 years — partial reuse likely",
-                     "Over 30 years — full replacement expected"],
-            index=1,
-            key="cond_age",
-            help="Older systems often require full replacement of distribution, controls, and electrical — pushing toward the high end.",
-        )
-    with cond_cols[1]:
-        historic = st.radio(
-            "Is the building historic or architecturally constrained?",
-            options=["Yes — landmark / historic restrictions apply",
-                     "No — standard commercial construction"],
-            index=1,
-            key="cond_historic",
-            help="Historic buildings face restrictions on envelope changes and equipment placement, adding 10–25% to certain scopes.",
-        )
-        prior_audit = st.radio(
-            "Has an energy audit or feasibility study been completed?",
-            options=["Yes — ASHRAE Level 2 or equivalent",
-                     "No — rough estimate only"],
-            index=1,
-            key="cond_audit",
-            help="A completed audit means fewer unknowns, which typically produces more accurate (often lower) bids.",
-        )
+    has_audit = "ASHRAE" in prior_audit
 
-    # ── Compute condition adjustment factor ──────────────────────────────────
-    # Each answer shifts the midpoint estimate up or down within the range.
-    # Factor applied to the low end (pushes it up) and high end (pulled down).
-    condition_score = 0  # -2 (favorable) to +4 (unfavorable)
-
-    if "fully occupied" in occupied:
-        condition_score += 2
-    elif "Partially" in occupied:
-        condition_score += 1
-
-    if "Over 30" in system_age:
-        condition_score += 2
-    elif "15–30" in system_age:
-        condition_score += 1
-
-    if "landmark" in historic:
-        condition_score += 1
-
-    if "No —" in prior_audit:
-        condition_score += 1
-
-    # Map score (0–6) to a position fraction within the range (0.0 = low end, 1.0 = high end)
-    position = min(condition_score / 6.0, 1.0)
-
-    condition_label = (
-        "Favorable — estimate closer to low end"    if condition_score <= 1 else
-        "Moderate — mid-range estimate"             if condition_score <= 3 else
-        "Challenging — estimate closer to high end"
-    )
+    if has_audit:
+        position        = 0.20
+        condition_label = "Audit complete — estimate toward low end"
+    else:
+        position        = 0.55
+        condition_label = "No audit — mid-range estimate (actual scope may run higher)"
 
     st.markdown("---")
     st.subheader("Estimated retrofit cost")
@@ -1740,14 +1692,9 @@ def render_retrofit_tab(prefill: dict = None):
     st.dataframe(cost_df, use_container_width=True, hide_index=True)
 
     # Condition badge
-    badge_color = (
-        "Low" if condition_score <= 1 else
-        "Mid" if condition_score <= 3 else
-        "High"
-    )
+    badge_color = "Low" if has_audit else "Mid"
     st.caption(
-        f"{badge_color} **Building condition: {condition_label}** "
-        f"(score {condition_score}/6) — "
+        f"{badge_color} **{condition_label}** — "
         f"Adjusted estimate: **{_fmt_dollars(total_adjusted)}** "
         f"(between low {_fmt_dollars(total_low)} and high {_fmt_dollars(total_high)})"
     )
@@ -1767,7 +1714,7 @@ def render_retrofit_tab(prefill: dict = None):
     )
     st.caption(
         multiplier_note +
-        "Condition-adjusted estimate interpolates within the range based on your answers above. "
+        "Adjusted estimate uses the low end with an audit on file, mid-range without one. "
         "Get competitive bids before budgeting."
     )
 
@@ -1823,93 +1770,67 @@ def render_retrofit_tab(prefill: dict = None):
             )
 
     st.markdown("---")
-    st.subheader("Net cost after incentives")
+    st.subheader("Net cost range after incentives")
 
-    # Match against INCENTIVE_STACK — the same data and logic used by the Incentive Optimizer tab,
-    # so the numbers here are consistent with the full stacking analysis there.
-    _matched = [
-        inc for inc in INCENTIVE_STACK
-        if _opt_incentive_applies(inc, scopes_selected, fuel_type, ownership_type, berdo_category)
-    ]
-    for inc in _matched:
-        inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
+    conservative_reduction = total_low * 0.10
+    optimistic_reduction   = total_high * 0.40
+    adj_reduction          = total_adjusted * 0.20  # midpoint proxy
 
-    # Exclude financing (C-PACE) and free prerequisite services (audits) from the dollar total —
-    # they don't reduce project cost directly.
-    _grants = [i for i in _matched if not i.get("is_financing") and not i.get("is_prerequisite")]
-    _inc_low  = sum(i["_est_low"]  for i in _grants)
-    _inc_high = sum(i["_est_high"] for i in _grants)
+    net_low      = max(total_low      - optimistic_reduction,   0)
+    net_adjusted = max(total_adjusted - adj_reduction,          0)
+    net_high     = max(total_high     - conservative_reduction, 0)
 
-    # Pair correctly: cheapest project + most incentives = best case; vice versa = worst case.
-    _net_low  = max(total_low      - _inc_high, 0)
-    _net_adj  = max(total_adjusted - (_inc_low + _inc_high) / 2, 0)
-    _net_high = max(total_high     - _inc_low,  0)
+    fig = go.Figure()
 
-    _bar_inc = [
-        min(_inc_high, total_low),
-        min((_inc_low + _inc_high) / 2, total_adjusted),
-        min(_inc_low,  total_high),
-    ]
+    fig.add_trace(go.Bar(
+        name="Gross cost",
+        x=["Low", "Condition-adjusted", "High"],
+        y=[total_low, total_adjusted, total_high],
+        marker_color="#3266ad",
+        text=[_fmt_dollars(total_low), _fmt_dollars(total_adjusted), _fmt_dollars(total_high)],
+        textposition="auto",
+    ))
 
-    if _grants:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            name="Gross cost",
-            x=["Low", "Condition-adjusted", "High"],
-            y=[total_low, total_adjusted, total_high],
-            marker_color="#3266ad",
-            text=[_fmt_dollars(total_low), _fmt_dollars(total_adjusted), _fmt_dollars(total_high)],
-            textposition="auto",
-        ))
-        fig.add_trace(go.Bar(
-            name=f"Matched incentives ({len(_grants)} program{'s' if len(_grants) != 1 else ''})",
-            x=["Low", "Condition-adjusted", "High"],
-            y=_bar_inc,
-            marker_color="#2ECC71",
-            text=[_fmt_dollars(v) for v in _bar_inc],
-            textposition="auto",
-        ))
-        fig.update_layout(
-            barmode="group",
-            yaxis_title="USD",
-            height=350,
-            margin=dict(t=30, b=40, l=60, r=40),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-        )
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
-        st.plotly_chart(fig, use_container_width=True)
+    fig.add_trace(go.Bar(
+        name="Est. incentive reduction",
+        x=["Low", "Condition-adjusted", "High"],
+        y=[optimistic_reduction, adj_reduction, conservative_reduction],
+        marker_color="#2ECC71",
+        text=[_fmt_dollars(optimistic_reduction), _fmt_dollars(adj_reduction), _fmt_dollars(conservative_reduction)],
+        textposition="auto",
+    ))
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Net cost — low scenario",
-                  _fmt_dollars(_net_low),
-                  delta=f"-{_fmt_dollars(_bar_inc[0])} incentives")
-        c2.metric("Net cost — condition-adjusted",
-                  _fmt_dollars(_net_adj),
-                  delta=f"-{_fmt_dollars(_bar_inc[1])} incentives")
-        c3.metric("Net cost — high scenario",
-                  _fmt_dollars(_net_high),
-                  delta=f"-{_fmt_dollars(_bar_inc[2])} incentives")
+    fig.update_layout(
+        barmode="group",
+        yaxis_title="USD",
+        height=350,
+        margin=dict(t=30, b=40, l=60, r=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
-        st.caption(
-            f"Incentive range: {_fmt_dollars(_inc_low)}–{_fmt_dollars(_inc_high)} "
-            f"from {len(_grants)} matched program(s), estimated using $/sqft benchmarks from the same "
-            "data as the Incentive Optimizer tab. Financing (C-PACE) and free services (energy audit) "
-            "are not counted here — they don't reduce project cost directly. "
-            "Actual awards depend on application outcome, project scope, and program availability. "
-            "See the Incentive Optimizer tab for the full stacking strategy and application checklist."
-        )
-    else:
-        st.info(
-            "No dollar-value incentive programs matched this scope and ownership combination. "
-            "Check Mass Save and MassCEC directly, or adjust your inputs."
-        )
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Gross cost — low",           _fmt_dollars(total_low))
-        c2.metric("Gross cost — condition-adj", _fmt_dollars(total_adjusted))
-        c3.metric("Gross cost — high",          _fmt_dollars(total_high))
+    st.plotly_chart(fig, use_container_width=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Net cost (low)",
+              _fmt_dollars(net_low),
+              delta=f"-{_fmt_dollars(optimistic_reduction)} incentives (optimistic)")
+    c2.metric("Net cost (condition-adjusted)",
+              _fmt_dollars(net_adjusted),
+              delta=f"-{_fmt_dollars(adj_reduction)} incentives (est.)")
+    c3.metric("Net cost (high)",
+              _fmt_dollars(net_high),
+              delta=f"-{_fmt_dollars(conservative_reduction)} incentives (conservative)")
+
+    st.caption(
+        "Incentive reduction estimated at 10–40% of gross cost — a rough proxy for typical "
+        "Mass Save rebates + 179D deduction combined for a commercial building in Boston. "
+        "Actual savings depend on specific program eligibility, project scope, and tax position. "
+        "Consult a licensed energy consultant and tax advisor before budgeting."
+    )
 
     st.markdown("---")
     st.subheader("BERDO fine avoidance context")
