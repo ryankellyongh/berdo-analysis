@@ -1,4 +1,8 @@
 
+import csv
+import io
+from datetime import date
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -191,6 +195,222 @@ def calculate_compliance_gap(ghg_intensity, sqft, berdo_category):
 # ---------------------------------------------------------------------------
 # Compliance gap display
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Export helpers
+# ---------------------------------------------------------------------------
+
+def build_address_csv(top, berdo_cat: str, gaps: list) -> bytes:
+    """
+    Build a multi-section CSV report for a single building (Address Lookup tab).
+    Returns UTF-8-encoded bytes ready for st.download_button.
+    """
+    output = io.StringIO()
+    w = csv.writer(output)
+    today = date.today().strftime("%B %d, %Y")
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    w.writerow(["BERDO Building Compliance Report"])
+    w.writerow(["Generated", today])
+    w.writerow(["Source",
+                "BERDO 2.0 Phase 1 Regulations (Boston APCC, Oct 2021); "
+                "BERDO Emissions Factors List (City of Boston, May 2026)"])
+    w.writerow([])
+
+    # ── Building information ─────────────────────────────────────────────────
+    w.writerow(["BUILDING INFORMATION"])
+    ghg   = top.get("GHG Intensity (kgCO2e/sqft)")
+    sqft  = top.get("Gross Floor Area")
+    eui   = top.get("Site EUI")
+    w.writerow(["Building Address",               top.get("Building Address", "")])
+    w.writerow(["Property Owner",                 top.get("Property Owner Name", "")])
+    w.writerow(["Property Type",                  top.get("Property Type", "")])
+    w.writerow(["BERDO Category",                 berdo_cat or ""])
+    w.writerow(["Gross Floor Area (sq ft)",
+                f"{int(sqft):,}" if pd.notna(sqft) and sqft > 0 else ""])
+    w.writerow(["GHG Intensity (kg CO\u2082e/sqft/yr)",
+                f"{float(ghg):.3f}" if pd.notna(ghg) and ghg > 0 else ""])
+    w.writerow(["Site EUI (kBtu/sqft/yr)",
+                f"{float(eui):.1f}" if pd.notna(eui) and eui > 0 else ""])
+    w.writerow(["Compliance Status",              top.get("Compliance Status", "")])
+    w.writerow(["Priority Level",                 top.get("Priority Level", "")])
+    w.writerow(["Priority Score",                 top.get("Priority Score", "")])
+    w.writerow(["Priority Reasons",               top.get("Reasons", "")])
+    w.writerow([])
+
+    # ── Compliance gap analysis — all six periods ────────────────────────────
+    w.writerow(["COMPLIANCE GAP ANALYSIS — ALL PERIODS"])
+    w.writerow([
+        "Period",
+        "BERDO Limit (kg CO\u2082e/sqft/yr)",
+        "Current Intensity (kg CO\u2082e/sqft/yr)",
+        "Gap (kg CO\u2082e/sqft/yr)",
+        "Status",
+        "Excess Metric Tons CO\u2082e",
+        "Annual ACP Fine (USD)",
+        "Cumulative 5-Year Fine (USD)",
+    ])
+    current_intensity = float(ghg) if pd.notna(ghg) and ghg > 0 else 0.0
+    total_5yr = 0.0
+    for i, g in enumerate(gaps):
+        five_yr = g["annual_fine_usd"] * 5 if not g["compliant"] else 0
+        total_5yr += five_yr
+        w.writerow([
+            COMPLIANCE_PERIODS[i],
+            g["limit"],
+            f"{current_intensity:.3f}",
+            f"{g['gap']:+.3f}",
+            "Compliant" if g["compliant"] else "Non-compliant",
+            f"{g['excess_metric_tons']:,.0f}" if not g["compliant"] else "0",
+            f"${g['annual_fine_usd']:,.0f}" if not g["compliant"] else "$0",
+            f"${five_yr:,.0f}",
+        ])
+    w.writerow([])
+
+    # ── Fine exposure summary ────────────────────────────────────────────────
+    w.writerow(["FINE EXPOSURE SUMMARY (conservative scenario — no reductions)"])
+    w.writerow(["Total cumulative ACP exposure (all periods)", f"${total_5yr:,.0f}"])
+    w.writerow([])
+
+    # ── Notes ────────────────────────────────────────────────────────────────
+    w.writerow(["NOTES"])
+    w.writerow(["ACP rate", "$234 per metric ton CO\u2082e over limit"])
+    w.writerow(["Disclaimer",
+                "Screening tool only — not an official City of Boston BERDO compliance determination."])
+
+    return output.getvalue().encode("utf-8")
+
+
+def build_portfolio_csv(
+    owner_name: str,
+    total_buildings: int,
+    usable_buildings: int,
+    total_sqft: float,
+    total_emissions: float,
+    portfolio_intensity: float,
+    blended_limits: list,
+    current_fine: float,
+    total_5yr: float,
+    breakdown_rows: list,
+    excluded_rows: list,
+) -> bytes:
+    """
+    Build a multi-section CSV report for a portfolio (Owner Portfolio tab).
+    Returns UTF-8-encoded bytes ready for st.download_button.
+    """
+    output = io.StringIO()
+    w = csv.writer(output)
+    today = date.today().strftime("%B %d, %Y")
+    current_limit     = blended_limits[0]
+    current_compliant = portfolio_intensity <= current_limit
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    w.writerow(["BERDO Portfolio Compliance Report"])
+    w.writerow(["Generated",      today])
+    w.writerow(["Property Owner", owner_name])
+    w.writerow([])
+
+    # ── Portfolio summary ────────────────────────────────────────────────────
+    w.writerow(["PORTFOLIO SUMMARY"])
+    w.writerow(["Total buildings (owner of record)", total_buildings])
+    w.writerow(["Buildings included in analysis",    usable_buildings])
+    w.writerow(["Buildings excluded (see below)",    total_buildings - usable_buildings])
+    w.writerow(["Total floor area (sq ft)",          f"{int(total_sqft):,}"])
+    w.writerow(["Total GHG emissions (metric tons CO\u2082e)",
+                f"{int(total_emissions / 1000):,}"])
+    w.writerow(["Portfolio GHG intensity (kg CO\u2082e/sqft/yr)",
+                f"{portfolio_intensity:.4f}"])
+    w.writerow(["2025-29 status",
+                "Compliant" if current_compliant else "Non-compliant"])
+    w.writerow([])
+
+    # ── Period-by-period portfolio compliance ────────────────────────────────
+    w.writerow(["PORTFOLIO COMPLIANCE BY PERIOD"])
+    w.writerow([
+        "Period",
+        "Blended Standard (kg CO\u2082e/sqft/yr)",
+        "Portfolio Intensity (kg CO\u2082e/sqft/yr)",
+        "Gap (kg CO\u2082e/sqft/yr)",
+        "Status",
+        "Excess Metric Tons CO\u2082e",
+        "Annual ACP Fine (USD)",
+        "Cumulative 5-Year Fine (USD)",
+    ])
+    for i, limit in enumerate(blended_limits):
+        gap       = round(portfolio_intensity - limit, 4)
+        compliant = gap <= 0
+        excess    = 0.0 if compliant else round(gap * total_sqft / 1000, 1)
+        fine      = 0.0 if compliant else round(excess * ACP_RATE, 0)
+        w.writerow([
+            COMPLIANCE_PERIODS[i],
+            f"{limit:.4f}",
+            f"{portfolio_intensity:.4f}",
+            f"{gap:+.4f}",
+            "Compliant" if compliant else "Non-compliant",
+            f"{excess:,.0f}" if not compliant else "0",
+            f"${fine:,.0f}" if not compliant else "$0",
+            f"${fine * 5:,.0f}",
+        ])
+    w.writerow([])
+
+    # ── Fine exposure summary ────────────────────────────────────────────────
+    w.writerow(["FINE EXPOSURE SUMMARY (conservative scenario — no reductions)"])
+    w.writerow(["2025-29 annual ACP fine",                      f"${current_fine:,.0f}"])
+    w.writerow(["Total cumulative ACP exposure (all periods)",   f"${total_5yr:,.0f}"])
+    w.writerow([])
+
+    # ── Per-building breakdown ───────────────────────────────────────────────
+    if breakdown_rows:
+        w.writerow(["PER-BUILDING BREAKDOWN"])
+        w.writerow([
+            "Address", "BERDO Category", "Floor Area (sq ft)",
+            "GHG Intensity (kg/sqft/yr)",
+            "2025-29 Limit", "2025-29 Gap (Metric Tons)", "2025-29 Status",
+            "2030-34 Limit", "2030-34 Gap (Metric Tons)", "2030-34 Status",
+            "2035-39 Limit", "2035-39 Gap (Metric Tons)", "2035-39 Status",
+        ])
+        for row in breakdown_rows:
+            w.writerow([
+                row.get("Address", ""),
+                row.get("Type", ""),
+                row.get("Sq Ft", ""),
+                row.get("GHG (kg/sf/yr)", ""),
+                row.get("2025 Limit", ""),
+                row.get("2025 Gap (MT)", ""),
+                row.get("2025", ""),
+                row.get("2030 Limit", ""),
+                row.get("2030 Gap (MT)", ""),
+                row.get("2030", ""),
+                row.get("2035 Limit", ""),
+                row.get("2035 Gap (MT)", ""),
+                row.get("2035", ""),
+            ])
+        w.writerow([])
+
+    # ── Excluded buildings ───────────────────────────────────────────────────
+    if excluded_rows:
+        w.writerow(["EXCLUDED BUILDINGS (not included in portfolio calculation)"])
+        w.writerow(["Building Address", "Property Type", "Compliance Status", "Exclusion Reason"])
+        for row in excluded_rows:
+            w.writerow([
+                row.get("Building Address", ""),
+                row.get("Property Type", ""),
+                row.get("Compliance Status", ""),
+                row.get("Exclusion Reason", ""),
+            ])
+        w.writerow([])
+
+    # ── Notes ────────────────────────────────────────────────────────────────
+    w.writerow(["NOTES"])
+    w.writerow(["Blended standard",
+                "Area-weighted average of per-building BERDO sector limits"])
+    w.writerow(["ACP rate",                    "$234 per metric ton CO\u2082e over limit"])
+    w.writerow(["Portfolio application deadline", "September 1, 2026"])
+    w.writerow(["Disclaimer",
+                "Screening tool only — not an official City of Boston BERDO compliance determination."])
+
+    return output.getvalue().encode("utf-8")
+
+
 def render_compliance_section(
     row,
     prior_year_ghg_intensity=None,
@@ -821,7 +1041,7 @@ def calculate_blended_standard(buildings_df):
 # ---------------------------------------------------------------------------
 # Portfolio compliance section
 # ---------------------------------------------------------------------------
-def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy):
+def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy, owner_name=""):
     """
     Renders BERDO compliance analysis for a multi-building owner portfolio.
     Shows portfolio-level blended standard, aggregate gap, fine exposure,
@@ -1210,6 +1430,35 @@ marked "Did not report" in the excluded table represent additional unknown expos
         "Portfolio compliance pathway to your 2025 emissions reporting. "
         "All buildings must have the same owner and no vacant properties may be included. "
         "Approval from the BERDO Review Board is required."
+    )
+
+    # ── Download portfolio report ─────────────────────────────────────────────
+    csv_bytes = build_portfolio_csv(
+        owner_name=owner_name,
+        total_buildings=total_buildings,
+        usable_buildings=usable_buildings,
+        total_sqft=total_sqft,
+        total_emissions=total_emissions,
+        portfolio_intensity=portfolio_intensity,
+        blended_limits=blended_limits,
+        current_fine=current_fine,
+        total_5yr=total_5yr,
+        breakdown_rows=breakdown_rows if breakdown_rows else [],
+        excluded_rows=excluded_rows,
+    )
+    owner_slug = (
+        str(owner_name).replace(" ", "_").replace(",", "").replace("/", "-")[:50]
+    )
+    st.download_button(
+        label="⬇ Download portfolio report (CSV)",
+        data=csv_bytes,
+        file_name=f"BERDO_Portfolio_{owner_slug}_{date.today()}.csv",
+        mime="text/csv",
+        help=(
+            "Downloads a CSV with portfolio summary, per-period compliance gaps, "
+            "fine exposure estimates, per-building breakdown, and excluded buildings — "
+            "ready to open in Excel."
+        ),
     )
 
 
@@ -3860,6 +4109,31 @@ with tab_address:
                 st.session_state["ep_ghg"] = planner_prefill["ghg_intensity"]
             st.session_state["ep_last_injected_addr"] = planner_prefill["address"]
 
+            # ── Download compliance report ────────────────────────────────────
+            _can_calc = (
+                pd.notna(ghg_val) and ghg_val > 0
+                and pd.notna(sqft_val) and sqft_val > 0
+                and berdo_cat in BERDO_STANDARDS
+            )
+            _export_gaps = (
+                calculate_compliance_gap(float(ghg_val), float(sqft_val), berdo_cat)
+                if _can_calc else []
+            )
+            _addr_slug = (
+                str(top.get("Building Address", address_input))
+                .replace(" ", "_").replace(",", "").replace("/", "-")[:50]
+            )
+            st.download_button(
+                label="⬇ Download compliance report (CSV)",
+                data=build_address_csv(top, berdo_cat, _export_gaps),
+                file_name=f"BERDO_{_addr_slug}_{date.today()}.csv",
+                mime="text/csv",
+                help=(
+                    "Downloads a CSV with building info, per-period compliance gaps, "
+                    "fine exposure estimates, and BERDO limits — ready to open in Excel."
+                ),
+            )
+
             st.info(
                 "Building data saved — open the **Retrofit & Incentives** or **Emissions Planner** tabs "
                 "to model funding programs and compliance trajectory for this building."
@@ -3909,6 +4183,7 @@ with tab_portfolio:
                     elec_share=elec_share if show_grid_decarb else None,
                     all_years=all_years,
                     show_yoy=show_yoy,
+                    owner_name=owner_input,
                 )
                 
 # ---------------------------------------------------------------------------
