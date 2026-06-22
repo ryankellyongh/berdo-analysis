@@ -1,44 +1,7 @@
-import io
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
-
-
-# ---------------------------------------------------------------------------
-# Export helpers
-# ---------------------------------------------------------------------------
-def _excel_bytes(sheets: dict) -> bytes:
-    """Serialize {sheet_name: DataFrame} to Excel workbook bytes."""
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        for name, df in sheets.items():
-            df.to_excel(writer, sheet_name=str(name)[:31], index=False)
-    return buf.getvalue()
-
-
-def _export_btn(
-    sheets: dict,
-    filename: str,
-    label: str = "⬇ Export (.xlsx)",
-    key: str | None = None,
-    help: str = "Download these results as an Excel workbook.",
-):
-    """Right-aligned Excel download button."""
-    _, btn_col = st.columns([5, 1])
-    with btn_col:
-        st.download_button(
-            label=label,
-            data=_excel_bytes(sheets),
-            file_name=filename,
-            mime=(
-                "application/vnd.openxmlformats-officedocument"
-                ".spreadsheetml.sheet"
-            ),
-            key=key,
-            help=help,
-            use_container_width=True,
-        )
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -1208,32 +1171,6 @@ marked "Did not report" in the excluded table represent additional unknown expos
             "Negative = surplus that can offset other buildings in the portfolio."
         )
 
-        # ── Portfolio export ──────────────────────────────────────────────────
-        _portfolio_summary_df = pd.DataFrame([{
-            "Total Buildings (valid)":          usable_buildings,
-            "Total Gross Floor Area (sq ft)":   int(total_sqft),
-            "Total GHG Emissions (kg CO₂e/yr)": round(total_emissions, 0),
-            "Portfolio GHG Intensity (kg/sqft/yr)": portfolio_intensity,
-            **{
-                f"Blended Limit {COMPLIANCE_PERIODS[i]} (kg/sqft/yr)": blended_limits[i]
-                for i in range(len(COMPLIANCE_PERIODS))
-            },
-            **{
-                f"Annual ACP Fine {COMPLIANCE_PERIODS[i]} (USD)": portfolio_fines[i]
-                for i in range(len(COMPLIANCE_PERIODS))
-            },
-        }])
-        _export_btn(
-            {"Portfolio Summary": _portfolio_summary_df, "Buildings": breakdown_df},
-            filename="berdo_portfolio.xlsx",
-            label="⬇ Export portfolio (.xlsx)",
-            key="export_portfolio",
-            help=(
-                "Downloads portfolio aggregate summary and per-building "
-                "surplus/deficit table as a two-sheet Excel workbook."
-            ),
-        )
-
     # --- Excluded buildings ---
     if excluded_rows:
         not_reported = sum(
@@ -1564,6 +1501,36 @@ INCENTIVES = [
         "source": "https://www.mass.gov/green-communities-designation-grant-program",
         "ownership_restriction": ["Nonprofit / Government"],
     },
+    {
+        "name": "PACE Massachusetts — C-PACE Project Financing",
+        "type": "Financing (C-PACE)",
+        "scopes": [
+            "Lighting (LED retrofit + controls)",
+            "HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
+            "Building envelope (windows + insulation)",
+            "Electrification — HVAC (air-source heat pump)",
+            "Electrification — HVAC (ground-source heat pump)",
+            "Electrification — water heating",
+            "Building-wide deep retrofit (all systems)",
+        ],
+        "amount_str": (
+            "Covers up to 100% of project hard and soft costs — repaid as a special "
+            "property tax assessment over up to 20 years at market rates. "
+            "This is financing, not a grant or tax credit; it does not reduce project cost "
+            "but eliminates the need for upfront capital. "
+            "Municipality must have opted in (Boston has). Lender consent required."
+        ),
+        "eligibility": (
+            "Commercial, industrial, and multifamily (5+ units) properties in opted-in "
+            "MA municipalities. A Savings-to-Investment Ratio (SIR) ≥ 1.0 is currently "
+            "required (Governor Healey's FY27 budget proposes removing this — confirm "
+            "current status at mass.gov). Administered by MassDevelopment and DOER."
+        ),
+        "expiration": "Program ongoing — no deadline; apply before construction starts",
+        "stacks_with_ira": True,
+        "source": "https://www.mass.gov/info-details/commercial-pace-property-assessed-clean-energy",
+        "is_financing": True,
+    },
 ]
 
 # Ownership types shown in the UI
@@ -1801,29 +1768,6 @@ def render_retrofit_tab(prefill: dict = None):
 
     cost_df = pd.DataFrame(cost_rows)
     st.dataframe(cost_df, use_container_width=True, hide_index=True)
-
-    # ── Retrofit export (cost table + building inputs summary) ────────────────
-    _inputs_df = pd.DataFrame([{
-        "Gross Floor Area (sq ft)":   sqft,
-        "Building Type (BERDO)":      berdo_category or "Not selected",
-        "Primary Fuel":               fuel_type,
-        "Ownership Type":             ownership_type,
-        "Boston Multiplier Applied":  apply_boston,
-        "Building Condition Score":   f"{condition_score}/6 — {condition_label}",
-        "Total Low Estimate (USD)":   round(total_low, 0),
-        "Total Adjusted Estimate (USD)": round(total_adjusted, 0),
-        "Total High Estimate (USD)":  round(total_high, 0),
-    }])
-    _export_btn(
-        {"Inputs & Summary": _inputs_df, "Cost Estimates": cost_df},
-        filename="berdo_retrofit_costs.xlsx",
-        label="⬇ Export cost estimates (.xlsx)",
-        key="export_retrofit",
-        help=(
-            "Downloads building inputs, summary totals, and the per-scope "
-            "cost table as a two-sheet Excel workbook."
-        ),
-    )
 
     # Condition badge
     badge_color = (
@@ -2256,6 +2200,60 @@ INCENTIVE_STACK = [
             "Execute grant agreement and comply with reporting requirements",
         ],
     },
+    {
+        "name": "PACE Massachusetts — C-PACE Project Financing",
+        "short": "C-PACE",
+        "type": "Financing (C-PACE)",
+        "priority": 1,
+        "apply_first_reason": (
+            "Arrange C-PACE before construction starts — it covers up to 100% of project "
+            "costs, replacing a construction loan. The single biggest bottleneck is "
+            "obtaining written consent from all existing mortgage holders; start that "
+            "conversation first, in parallel with Mass Save pre-approval."
+        ),
+        "scopes": [
+            "Lighting (LED retrofit + controls)",
+            "HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
+            "Building envelope (windows + insulation)",
+            "Electrification — HVAC (air-source heat pump)",
+            "Electrification — HVAC (ground-source heat pump)",
+            "Electrification — water heating",
+            "Building-wide deep retrofit (all systems)",
+        ],
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric", "District steam"],
+        # amount_psf = 0 because C-PACE is financing, not a cost reduction.
+        # It is excluded from the incentive dollar total in the optimizer.
+        "amount_psf_low": 0.0,
+        "amount_psf_high": 0.0,
+        "amount_str": (
+            "Up to 100% of project hard and soft costs; repaid as a property tax "
+            "assessment over up to 20 years at market rates. CPACE lien is senior to "
+            "existing mortgages — lender consent required. Not a grant or tax credit."
+        ),
+        "eligibility": (
+            "Commercial, industrial, and multifamily (5+ units) in opted-in MA "
+            "municipalities (Boston has opted in; check massdevelopment.com for others). "
+            "Savings-to-Investment Ratio ≥ 1.0 currently required — FY27 budget proposes "
+            "removing this. Administered by MassDevelopment and DOER."
+        ),
+        "expiration": "Program ongoing — no deadline; apply before project starts",
+        "conflicts": [],
+        "stacks_with": ["Mass Save rebates", "IRA 179D", "MassDOER Grant"],
+        "berdo_periods": ["2025–29", "2030–34", "2035–39", "2040–44", "2045–49"],
+        "ownership": ["For-profit", "Nonprofit / Government"],
+        "source": "https://www.mass.gov/info-details/commercial-pace-property-assessed-clean-energy",
+        "is_financing": True,
+        "checklist": [
+            "Confirm your municipality has opted into PACE MA (Boston has; check massdevelopment.com for the full list)",
+            "Contact existing mortgage holders for written consent — required before closing; start early",
+            "Get Mass Save rebate pre-approval before project start (rebates stack with C-PACE)",
+            "Engage a MassDevelopment-approved capital provider (Greenworks/Nuveen, Counterpointe, FASTPACE, others)",
+            "Commission a technical report demonstrating Savings-to-Investment Ratio ≥ 1.0 (check if SIR requirement has been removed by FY27 budget)",
+            "Submit PACE MA application to MassDevelopment and DOER for review",
+            "Close C-PACE financing — repayment runs through the property tax bill",
+            "Note: C-PACE lien transfers with the property if sold — disclose to future buyers",
+        ],
+    },
 ]
 
 RETROFIT_SCOPES_OPT = list(RETROFIT_COST_PER_SQFT.keys())
@@ -2547,8 +2545,13 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     for inc in matched:
         inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
 
-    total_incentive_low  = sum(i["_est_low"]  for i in matched)
-    total_incentive_high = sum(i["_est_high"] for i in matched)
+    # Financing programs (C-PACE) are excluded from the grant/credit dollar total —
+    # they cover project costs through debt, not by reducing them.
+    grants_matched    = [i for i in matched if not i.get("is_financing")]
+    financing_matched = [i for i in matched if i.get("is_financing")]
+
+    total_incentive_low  = sum(i["_est_low"]  for i in grants_matched)
+    total_incentive_high = sum(i["_est_high"] for i in grants_matched)
 
     # Gross retrofit cost
     total_cost_low  = sum(RETROFIT_COST_PER_SQFT[s][0] * sqft for s in scopes_selected)
@@ -2593,8 +2596,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     # ── Summary metric cards ─────────────────────────────────────────────────
     st.subheader("Summary")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Incentive programs matched", len(matched))
-    m2.metric("Total incentives (low–high)",
+    m1.metric("Grants & credits matched", len(grants_matched))
+    m2.metric("Total grants/credits (low–high)",
               f"${total_incentive_low:,.0f} – ${total_incentive_high:,.0f}")
     m3.metric("Gross retrofit cost (low–high)",
               f"${total_cost_low:,.0f} – ${total_cost_high:,.0f}")
@@ -2607,6 +2610,17 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         "Gross cost benchmarks from RSMeans / ASHRAE / DOE BTO (2024–2026)."
     )
 
+    if financing_matched:
+        cpace_names = ", ".join(i["short"] for i in financing_matched)
+        st.info(
+            f"**{cpace_names} financing also matched.** "
+            "C-PACE can cover up to 100% of your project costs — repaid through your "
+            "property tax bill over up to 20 years. It is not counted in the grant/credit "
+            "total above because it is debt financing, not a cost reduction. Combined with "
+            "grants and tax credits, C-PACE can reduce or eliminate the need for upfront "
+            "capital entirely. See the stacking strategy below for sequencing."
+        )
+
     # ── Ranked incentive table ────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Incentives ranked by estimated value")
@@ -2616,53 +2630,24 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     rank_rows = []
     for inc in ranked:
         conflict_flag = "; ".join(inc["conflicts"]) if inc["conflicts"] else "None"
+        if inc.get("is_financing"):
+            val_low  = "Financing"
+            val_high = "Up to 100% of project cost"
+        else:
+            val_low  = f"${inc['_est_low']:,.0f}"
+            val_high = f"${inc['_est_high']:,.0f}"
         rank_rows.append({
-            "Program": inc["short"],
-            "Type": inc["type"],
-            "Est. value (low)": f"${inc['_est_low']:,.0f}",
-            "Est. value (high)": f"${inc['_est_high']:,.0f}",
-            "Applies in": ", ".join(inc["berdo_periods"][:2]),
-            "Conflicts": conflict_flag,
+            "Program":           inc["short"],
+            "Type":              inc["type"],
+            "Est. value (low)":  val_low,
+            "Est. value (high)": val_high,
+            "Applies in":        ", ".join(inc["berdo_periods"][:2]),
+            "Conflicts":         conflict_flag,
         })
 
     st.dataframe(pd.DataFrame(rank_rows), use_container_width=True, hide_index=True)
 
-    # ── Optimizer export ──────────────────────────────────────────────────────
-    _stack_rows = []
-    for i, inc in enumerate(sorted(matched, key=lambda x: x["priority"]), 1):
-        _stack_rows.append({
-            "Application Order":  i,
-            "Program":            inc["name"],
-            "Type":               inc["type"],
-            "Est. Value (low)":   f"${inc['_est_low']:,.0f}",
-            "Est. Value (high)":  f"${inc['_est_high']:,.0f}",
-            "Why this order":     inc["apply_first_reason"],
-            "Amount":             inc["amount_str"],
-            "Eligibility":        inc["eligibility"],
-            "Expires":            inc["expiration"],
-            "BERDO Periods":      ", ".join(inc["berdo_periods"]),
-            "Stacks with":        ", ".join(inc["stacks_with"]) if inc["stacks_with"] else "—",
-            "Conflicts":          "; ".join(inc["conflicts"]) if inc["conflicts"] else "None",
-            "Source":             inc["source"],
-        })
-    _checklist_rows = []
-    for inc in sorted(matched, key=lambda x: x["priority"]):
-        for step in inc["checklist"]:
-            _checklist_rows.append({"Program": inc["name"], "Step": step})
-    _export_btn(
-        {
-            "Ranked Incentives":  pd.DataFrame(rank_rows),
-            "Stacking Order":     pd.DataFrame(_stack_rows),
-            "Application Checklist": pd.DataFrame(_checklist_rows),
-        },
-        filename="berdo_incentives.xlsx",
-        label="⬇ Export incentive plan (.xlsx)",
-        key="export_optimizer",
-        help=(
-            "Downloads ranked incentives, stacking order with application "
-            "guidance, and step-by-step checklists as a three-sheet Excel workbook."
-        ),
-    )
+    # ── Stacking strategy ─────────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Stacking strategy — apply in this order")
     st.caption(
@@ -3499,36 +3484,6 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     st.caption("Alternative Compliance Payment at $234/metric ton CO₂e over limit.")
     st.dataframe(pd.DataFrame(fines_rows), use_container_width=True, hide_index=True)
 
-    # ── Emissions planner export ──────────────────────────────────────────────
-    _proj_rows = []
-    for proj in st.session_state.get("ep_projects", []):
-        if proj.get("name") or proj.get("amount", 0) > 0:
-            _proj_rows.append({
-                "Project Name":              proj.get("name", ""),
-                "Implementation Year":       proj.get("year", ""),
-                "Fuel Type":                 proj.get("fuel", ""),
-                "Amount Reduced":            proj.get("amount", 0),
-                "Unit":                      proj.get("unit", ""),
-                "Emission Reduction (kg CO₂e/yr)": proj.get("reduction_kg", 0),
-            })
-    _planner_sheets: dict = {
-        "Emissions Projection": pd.DataFrame(emissions_rows),
-        "ACP Fines":            pd.DataFrame(fines_rows),
-    }
-    if _proj_rows:
-        _planner_sheets["Planned Projects"] = pd.DataFrame(_proj_rows)
-    _addr_label = prefill.get("address", "building")[:30].strip().replace(" ", "_")
-    _export_btn(
-        _planner_sheets,
-        filename=f"berdo_emissions_plan_{_addr_label}.xlsx",
-        label="⬇ Export emissions plan (.xlsx)",
-        key="export_planner",
-        help=(
-            "Downloads emissions projection, ACP fine schedule, and "
-            "planned projects as an Excel workbook."
-        ),
-    )
-
     st.caption(
         "ACP = $234/metric ton CO₂e over limit. "
         "Not an official City of Boston BERDO compliance determination."
@@ -3873,50 +3828,11 @@ with tab_address:
                 base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
             )
 
-            # ── Export ────────────────────────────────────────────────────────
-            ghg_val  = top.get("GHG Intensity (kgCO2e/sqft)")
+            # ── Store prefill data for Incentive Optimizer tab ──
+            ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
             sqft_val = top.get("Gross Floor Area")
             raw_type = top.get("Property Type")
             berdo_cat = map_property_type(raw_type)
-
-            _summary_cols = [
-                "Building Address", "Property Owner Name", "Property Type",
-                "Gross Floor Area", "Site EUI", "GHG Intensity (kgCO2e/sqft)",
-                "Compliance Status", "Priority Level", "Priority Score",
-            ]
-            _summary_df = result[[c for c in _summary_cols if c in result.columns]].copy()
-
-            _export_sheets: dict = {"Building Summary": _summary_df}
-            if (
-                pd.notna(ghg_val) and ghg_val > 0
-                and pd.notna(sqft_val) and sqft_val > 0
-                and berdo_cat in BERDO_STANDARDS
-            ):
-                _gaps = calculate_compliance_gap(float(ghg_val), float(sqft_val), berdo_cat)
-                if _gaps:
-                    _gap_df = pd.DataFrame(_gaps).rename(columns={
-                        "period":              "Compliance Period",
-                        "limit":               "Emissions Limit (kg CO₂e/sqft/yr)",
-                        "gap":                 "Gap (kg CO₂e/sqft/yr)",
-                        "compliant":           "Compliant",
-                        "excess_metric_tons":  "Excess Metric Tons CO₂e",
-                        "annual_fine_usd":     "Annual ACP Fine (USD)",
-                    })
-                    _export_sheets["Compliance Gap"] = _gap_df
-
-            _addr_slug = address_input[:30].strip().replace(" ", "_")
-            _export_btn(
-                _export_sheets,
-                filename=f"berdo_{_addr_slug}.xlsx",
-                label="⬇ Export results (.xlsx)",
-                key="export_address",
-                help=(
-                    "Downloads building summary and compliance gap table "
-                    "as a two-sheet Excel workbook."
-                ),
-            )
-
-            # ── Store prefill data for Incentive Optimizer tab ──
 
             opt_prefill = {
                 "address":       top.get("Building Address", address_input),
