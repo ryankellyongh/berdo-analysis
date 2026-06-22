@@ -13,7 +13,7 @@ st.set_page_config(
 
 # ---------------------------------------------------------------------------
 # BERDO 2.0 emissions standards
-# Source: BERDO 2.0 Draft Phase 1 Regulations (Boston APCC, 2021)
+# Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021)
 # Units: kg CO2e / sq ft / year
 # Periods: 2025-29, 2030-34, 2035-39, 2040-44, 2045-49, 2050+
 # ---------------------------------------------------------------------------
@@ -425,7 +425,7 @@ def render_compliance_section(
             "fossil fuel use held constant. "
         )
     caption += (
-        "Source: BERDO 2.0 Draft Phase 1 Regulations (Boston APCC, 2021); "
+        "Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021); "
         "BERDO Emissions Factors List (City of Boston, May 2026). "
         "Not an official City of Boston compliance determination."
     )
@@ -438,12 +438,13 @@ def render_compliance_section(
 The Building Emissions Reduction and Disclosure Ordinance (BERDO) requires large buildings
 in Boston to reduce greenhouse gas emissions on a mandatory schedule toward net-zero by 2050.
 Buildings over 35,000 sq ft or with 35+ residential units must meet emissions limits starting
-in 2025. Smaller buildings between 20,000 and 35,000 sq ft begin compliance in 2030.
+in 2025. Smaller covered buildings (20,000–35,000 sq ft or 15–34 residential units) begin
+compliance in 2030.
 
 **How is the priority score calculated?**
 
 Each building is scored on four factors:
-- **Not submitted** (3 points): The building did not report data to the City of Boston by the May 15 deadline.
+- **Not submitted** (3 points): The building did not report data to the City of Boston by the annual May 15 deadline (note: the 2026 reporting deadline was extended to August 15, 2026).
 - **Missing property type** (2 points): The building's use category is not recorded, which prevents accurate emissions benchmarking.
 - **Missing or above-median Site EUI** (2 points): The building's energy use intensity is missing or higher than the dataset median, indicating potential inefficiency.
 - **Large floor area** (1 point): Buildings over 100,000 sq ft have greater emissions impact.
@@ -455,7 +456,9 @@ Scores of 6 or above are flagged as High priority. Scores of 3–5 are Moderate.
 The tool compares each building's reported GHG intensity (kg CO₂e per square foot per year)
 against the BERDO 2.0 emissions limits for its property type. If the building exceeds the limit,
 the tool estimates the annual Alternative Compliance Payment (ACP) at $234 per excess metric
-ton of CO₂e.
+ton of CO₂e. Buildings that do not make ACPs and remain non-compliant face additional daily
+fines of $1,000/day (buildings over 35,000 sq ft or 35+ units) or $300/day (smaller covered
+buildings).
 
 **What is the grid decarbonization scenario?**
 
@@ -467,7 +470,7 @@ emissions that come from electricity. If unknown, 50% is a reasonable starting p
 mixed-use or office building; electricity-heavy buildings (all-electric, data centers) should
 use a higher value.
 
-Source: BERDO 2.0 Draft Phase 1 Regulations (Boston APCC, 2021);
+Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021);
 BERDO Emissions Factors List (City of Boston, updated May 5, 2026).
 Not an official City of Boston compliance determination.
 """)
@@ -3526,7 +3529,7 @@ Alternative Compliance Payments are assessed at $234 per metric ton of CO₂e ab
 building's emissions limit. The table shows annual fines; the summary metrics multiply by 
 5 years per period for cumulative exposure.
 
-Source: BERDO 2.0 Draft Phase 1 Regulations (Boston APCC, 2021); 
+Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021); 
 EPA Portfolio Manager Emissions Factors (August 2025).
 Not an official City of Boston BERDO compliance determination.
 """)
@@ -3680,7 +3683,7 @@ with tab_address:
                 st.markdown("""
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
-- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of $300/day (buildings over 35,000 sq ft) for missing the May 15 annual deadline.
+- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of $150–$300/day for missing the annual May 15 reporting deadline ($300/day for buildings over 35,000 sq ft; $150/day for smaller covered buildings). Note: the 2026 reporting deadline was extended to August 15, 2026. Separate daily fines of $1,000/day (buildings over 35,000 sq ft) or $300/day (smaller covered buildings) apply for failing to meet emissions standards.
 
 **Site EUI (Energy Use Intensity)**
 - Measures how much energy a building uses per square foot per year (kBtu/sq ft/yr). A higher EUI means the building uses more energy relative to its size. Missing EUI typically means the building did not submit complete energy data.
