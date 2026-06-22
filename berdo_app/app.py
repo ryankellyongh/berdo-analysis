@@ -194,12 +194,12 @@ def render_compliance_section(
     row,
     prior_year_ghg_intensity=None,
     prior_year_label=None,
-    projected_intensities=None,
     base_year=2025,
 ):
     """
-    projected_intensities: list of 6 floats (one per compliance period) from
-    project_ghg_intensities(), or None to skip the grid decarb overlay.
+    Renders the compliance gap chart for a single building.
+    Grid decarbonization scenario toggle is included inline —
+    no sidebar required.
     """
     ghg_intensity = row.get("GHG Intensity (kgCO2e/sqft)")
     sqft = row.get("Gross Floor Area")
@@ -230,23 +230,61 @@ def render_compliance_section(
 
     gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category)
 
+    st.caption(
+        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
+        f"Floor area: **{int(sqft):,} sq ft** · "
+        f"BERDO category: **{berdo_category}**"
+    )
+
+    # ── Grid decarbonization scenario — inline toggle ─────────────────────────
+    _grid_col, _slider_col = st.columns([2, 3])
+    with _grid_col:
+        show_grid = st.checkbox(
+            "Show grid decarbonization scenario",
+            value=False,
+            key="compliance_grid_decarb",
+            help=(
+                "Projects how ISO-NE grid cleaning reduces electricity-attributed "
+                "emissions over time, using the City of Boston's official projected "
+                "grid emissions factors (BERDO Appendix B, May 2026). "
+                "Fossil fuel use is held constant."
+            ),
+        )
+    if show_grid:
+        with _slider_col:
+            elec_share_pct = st.slider(
+                "Electricity share of GHG emissions (%)",
+                min_value=0, max_value=100, value=50, step=5,
+                key="compliance_elec_share",
+                help=(
+                    "% of this building's GHG from grid electricity vs. fossil fuels. "
+                    "Check ESPM or use 50% as a starting estimate for a typical office building."
+                ),
+            )
+        elec_share = elec_share_pct / 100.0
+        projected_intensities = project_ghg_intensities(
+            ghg_intensity=float(ghg_intensity),
+            elec_share=elec_share,
+            base_year=base_year if base_year in PROJECTED_GRID_EF else 2025,
+        )
+        base_ef = PROJECTED_GRID_EF.get(base_year, PROJECTED_GRID_EF[2025])
+        st.caption(
+            f"Grid EF {base_year}: {base_ef} kg/MWh → {PROJECTED_GRID_EF[2050]} kg/MWh at 2050 "
+            f"({round((1 - PROJECTED_GRID_EF[2050] / base_ef) * 100)}% cleaner). "
+            f"Electricity share: {elec_share_pct}%."
+        )
+    else:
+        projected_intensities = None
+
     # Projected gaps (for grid decarb scenario metric cards)
     if projected_intensities is not None:
         proj_gaps = [
             calculate_compliance_gap(pi, sqft, berdo_category)
             for pi in projected_intensities
         ]
-        # proj_gaps[i] is a list of 6 period gaps for the projected intensity at period i
-        # We only need the gap for each period against its own limit, i.e. proj_gaps[i][i]
         proj_gap_for_period = [proj_gaps[i][i] for i in range(len(COMPLIANCE_PERIODS))]
     else:
         proj_gap_for_period = None
-
-    st.caption(
-        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
-        f"Floor area: **{int(sqft):,} sq ft** · "
-        f"BERDO category: **{berdo_category}**"
-    )
 
     # --- Metric cards (first 3 periods) ---
     cols = st.columns(3)
@@ -1623,28 +1661,76 @@ def render_retrofit_tab(prefill: dict = None):
     # ── Building condition qualifier ─────────────────────────────────────────
     st.markdown("---")
     st.subheader("Building condition")
-
-    prior_audit = st.radio(
-        "Has an energy audit or feasibility study been completed?",
-        options=["Yes — ASHRAE Level 2 or equivalent",
-                 "No — rough estimate only"],
-        index=1,
-        key="cond_audit",
-        help=(
-            "An audit replaces range assumptions with building-specific data. "
-            "Without one, unknowns tend to push costs toward the upper half of the range — "
-            "so this estimate is set to the mid-range as a conservative default."
-        ),
+    st.caption(
+        "These questions narrow the cost range. Answer as many as you can — "
+        "each shifts the estimate toward the low or high end."
     )
 
-    has_audit = "ASHRAE" in prior_audit
+    cond_cols = st.columns(2)
+    with cond_cols[0]:
+        occupied = st.radio(
+            "Will the building be occupied during construction?",
+            options=["Yes — fully occupied", "Partially occupied / phased", "No — vacant during work"],
+            index=1,
+            key="cond_occupied",
+            help="Occupied buildings require phasing, protection, and off-hours work — adding 15–30% to labor cost.",
+        )
+        system_age = st.radio(
+            "Age of existing mechanical systems (HVAC, plumbing)?",
+            options=["Under 15 years — modern, reusable infrastructure",
+                     "15–30 years — partial reuse likely",
+                     "Over 30 years — full replacement expected"],
+            index=1,
+            key="cond_age",
+            help="Older systems often require full replacement of distribution, controls, and electrical — pushing toward the high end.",
+        )
+    with cond_cols[1]:
+        historic = st.radio(
+            "Is the building historic or architecturally constrained?",
+            options=["Yes — landmark / historic restrictions apply",
+                     "No — standard commercial construction"],
+            index=1,
+            key="cond_historic",
+            help="Historic buildings face restrictions on envelope changes and equipment placement, adding 10–25% to certain scopes.",
+        )
+        prior_audit = st.radio(
+            "Has an energy audit or feasibility study been completed?",
+            options=["Yes — ASHRAE Level 2 or equivalent",
+                     "No — rough estimate only"],
+            index=1,
+            key="cond_audit",
+            help="A completed audit means fewer unknowns, which typically produces more accurate (often lower) bids.",
+        )
 
-    if has_audit:
-        position        = 0.20
-        condition_label = "Audit complete — estimate toward low end"
-    else:
-        position        = 0.55
-        condition_label = "No audit — mid-range estimate (actual scope may run higher)"
+    # ── Compute condition adjustment factor ──────────────────────────────────
+    # Each answer shifts the midpoint estimate up or down within the range.
+    # Factor applied to the low end (pushes it up) and high end (pulled down).
+    condition_score = 0  # -2 (favorable) to +4 (unfavorable)
+
+    if "fully occupied" in occupied:
+        condition_score += 2
+    elif "Partially" in occupied:
+        condition_score += 1
+
+    if "Over 30" in system_age:
+        condition_score += 2
+    elif "15–30" in system_age:
+        condition_score += 1
+
+    if "landmark" in historic:
+        condition_score += 1
+
+    if "No —" in prior_audit:
+        condition_score += 1
+
+    # Map score (0–6) to a position fraction within the range (0.0 = low end, 1.0 = high end)
+    position = min(condition_score / 6.0, 1.0)
+
+    condition_label = (
+        "Favorable — estimate closer to low end"    if condition_score <= 1 else
+        "Moderate — mid-range estimate"             if condition_score <= 3 else
+        "Challenging — estimate closer to high end"
+    )
 
     st.markdown("---")
     st.subheader("Estimated retrofit cost")
@@ -1692,9 +1778,14 @@ def render_retrofit_tab(prefill: dict = None):
     st.dataframe(cost_df, use_container_width=True, hide_index=True)
 
     # Condition badge
-    badge_color = "Low" if has_audit else "Mid"
+    badge_color = (
+        "Low" if condition_score <= 1 else
+        "Mid" if condition_score <= 3 else
+        "High"
+    )
     st.caption(
-        f"{badge_color} **{condition_label}** — "
+        f"{badge_color} **Building condition: {condition_label}** "
+        f"(score {condition_score}/6) — "
         f"Adjusted estimate: **{_fmt_dollars(total_adjusted)}** "
         f"(between low {_fmt_dollars(total_low)} and high {_fmt_dollars(total_high)})"
     )
@@ -1714,7 +1805,7 @@ def render_retrofit_tab(prefill: dict = None):
     )
     st.caption(
         multiplier_note +
-        "Adjusted estimate uses the low end with an audit on file, mid-range without one. "
+        "Condition-adjusted estimate interpolates within the range based on your answers above. "
         "Get competitive bids before budgeting."
     )
 
@@ -2985,7 +3076,7 @@ Actual awards depend on application outcome, project documentation, and contract
 # EMISSIONS PLANNER — Tab 5
 # ---------------------------------------------------------------------------
 
-def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None):
+def render_emissions_planner_tab(prefill: dict = None):
     """
     Tab 5 — Emissions Planner.
     Shows compliance projection table across all BERDO periods,
@@ -3181,7 +3272,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
-    # ── Grid decarbonization — read from sidebar ──────────────────────────────
+    # ── Grid decarbonization scenario — inline toggle ─────────────────────────
     st.markdown("---")
     st.subheader("Emissions Compliance Projection")
 
@@ -3189,25 +3280,38 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.warning("Select a valid building type above to see the compliance projection.")
         return
 
-    apply_grid = show_grid_decarb
-    elec_share_val = elec_share if elec_share is not None else 0.5
-
-    if apply_grid:
+    _gd_col, _gd_slider = st.columns([2, 3])
+    with _gd_col:
+        show_grid_decarb = st.checkbox(
+            "Show grid decarbonization scenario",
+            value=False,
+            key="planner_grid_decarb",
+            help=(
+                "Models how ISO-NE grid cleaning reduces electricity-attributed emissions "
+                "over time (BERDO Appendix B, May 2026). Fossil fuel use is held constant."
+            ),
+        )
+    if show_grid_decarb:
+        with _gd_slider:
+            _elec_pct = st.slider(
+                "Electricity share of GHG emissions (%)",
+                min_value=0, max_value=100, value=50, step=5,
+                key="planner_elec_share",
+                help="% of this building's GHG from grid electricity. Use 50% as a starting estimate.",
+            )
+        elec_share = _elec_pct / 100.0
         base_ef = PROJECTED_GRID_EF.get(2025, 249)
         ef_2050 = PROJECTED_GRID_EF.get(2050, 150)
         st.caption(
-            f"Grid decarbonization is ON (sidebar). "
-            f"Electricity share: {round(elec_share_val * 100)}%. "
-            f"Base year grid EF (2025): {base_ef} kg/MWh → {ef_2050} kg/MWh at 2050 "
+            f"Grid EF 2025: {base_ef} kg/MWh → {ef_2050} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
-            "Toggle in the sidebar to turn off."
+            f"Electricity share: {_elec_pct}%."
         )
     else:
-        st.caption(
-            "Grid decarbonization is OFF. "
-            "Enable it in the sidebar to model how ISO-NE grid cleaning reduces "
-            "electricity-attributed emissions over time."
-        )
+        elec_share = None
+
+    apply_grid = show_grid_decarb
+    elec_share_val = elec_share if elec_share is not None else 0.5
 
     limits             = BERDO_STANDARDS[berdo_category]
     # Use the raw reported GHG emissions total when available (more accurate than
@@ -3506,42 +3610,11 @@ else:
     df_full = all_years[selected_year]
     show_yoy = False
 
-# --- Sidebar: grid decarbonization scenario ---
-st.sidebar.header("Grid decarbonization scenario")
-show_grid_decarb = st.sidebar.checkbox(
-    "Show grid decarbonization scenario",
-    value=False,
-    key="sidebar_grid_decarb",
-    help=(
-        "Projects future GHG intensity assuming the ISO-NE grid cleans up "
-        "per the City of Boston's official projected emissions factors "
-        "(Appendix B, BERDO Emissions Factors List, May 2026). "
-        "Fossil fuel use is held constant."
-    ),
-)
-if show_grid_decarb:
-    elec_share_pct = st.sidebar.slider(
-        "Electricity share of GHG emissions (%)",
-        min_value=0,
-        max_value=100,
-        value=50,
-        step=5,
-        help=(
-            "Estimated percentage of this building's total GHG emissions "
-            "that come from grid electricity (vs. fossil fuels such as "
-            "natural gas). Check the building's energy breakdown in ESPM "
-            "or use 50% as a starting estimate for a typical office/mixed-use building."
-        ),
-    )
-    elec_share = elec_share_pct / 100.0
-    base_ef = PROJECTED_GRID_EF.get(selected_year, PROJECTED_GRID_EF[2025])
-    st.sidebar.caption(
-        f"Base year grid EF ({selected_year}): **{base_ef} kg/MWh** "
-        f"(Appendix B). Projected EF at 2050: **{PROJECTED_GRID_EF[2050]} kg/MWh** "
-        f"({round((1 - PROJECTED_GRID_EF[2050] / base_ef) * 100)}% cleaner)."
-    )
-else:
-    elec_share = None
+# show_grid_decarb / elec_share are no longer sidebar globals.
+# Each section (compliance chart, emissions planner) owns its own inline toggle.
+# Portfolio uses no grid scenario overlay.
+show_grid_decarb = False
+elec_share       = None
 
 # --- Page header ---
 st.title("BERDO Building Priority & Incentive Tool")
@@ -3650,22 +3723,10 @@ with tab_address:
                 prior_ghg, prior_label = render_yoy_trend(address_input, all_years)
                 st.markdown("---")
 
-            # --- Grid decarbonization projection ---
-            projected_intensities = None
-            if show_grid_decarb and elec_share is not None:
-                ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
-                if pd.notna(ghg_val) and ghg_val > 0:
-                    projected_intensities = project_ghg_intensities(
-                        ghg_intensity=float(ghg_val),
-                        elec_share=elec_share,
-                        base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
-                    )
-
             render_compliance_section(
                 top,
                 prior_year_ghg_intensity=prior_ghg,
                 prior_year_label=prior_label,
-                projected_intensities=projected_intensities,
                 base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
             )
 
@@ -3794,8 +3855,4 @@ with tab_optimizer:
 # ---------------------------------------------------------------------------
 with tab_planner:
     planner_prefill = st.session_state.get("planner_prefill", {})
-    render_emissions_planner_tab(
-        prefill=planner_prefill,
-        show_grid_decarb=show_grid_decarb,
-        elec_share=elec_share,
-    )
+    render_emissions_planner_tab(prefill=planner_prefill)
