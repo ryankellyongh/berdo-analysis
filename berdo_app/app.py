@@ -122,26 +122,8 @@ PROPERTY_TYPE_MAP = {
     "self-storage facility": "Storage",
     "warehouse and storage": "Storage",
     "parking": "Services",
-    # "mixed use property" is intentionally NOT mapped here.
-    # BERDO requires a true area-weighted blended standard for mixed-use buildings.
-    # Silently applying Office limits produces incorrect compliance calculations.
-    # See is_mixed_use_type() and the mixed-use warning in render_compliance_section.
+    "mixed use property": "Office",
 }
-
-# Property type strings that indicate a mixed-use building requiring a blended
-# BERDO standard.  Extend this set as additional ESPM variants are encountered.
-MIXED_USE_PROPERTY_TYPES: set[str] = {
-    "mixed use property",
-    "mixed use",
-    "mixed-use property",
-}
-
-
-def is_mixed_use_type(raw_type) -> bool:
-    """Return True if raw_type is a known mixed-use ESPM property type."""
-    if not isinstance(raw_type, str) or pd.isna(raw_type):
-        return False
-    return raw_type.strip().lower() in MIXED_USE_PROPERTY_TYPES
 
 
 def map_property_type(raw_type):
@@ -239,56 +221,11 @@ def render_compliance_section(
         return
 
     if berdo_category is None:
-        if is_mixed_use_type(raw_type):
-            st.warning(
-                "⚠️ **Mixed-use building — blended standard required.** "
-                "BERDO does not apply a single use-type limit to this building. "
-                "Instead, the City calculates an area-weighted blended emissions limit "
-                "based on the square footage dedicated to each space use. "
-                "This tool cannot auto-calculate that standard without the use breakdown."
-            )
-            with st.expander("How to calculate your blended standard", expanded=True):
-                st.markdown(
-                    "**Formula:**  "
-                    "Blended limit = Σ (sqft per use × limit for that use) ÷ total sqft  \n\n"
-                    "**Example:** A 100,000 sqft building that is 60% multifamily housing "
-                    "and 40% retail:  \n"
-                    "- (60,000 × 4.1) + (40,000 × 7.1) = 246,000 + 284,000 = 530,000  \n"
-                    "- 530,000 ÷ 100,000 = **5.3 kg CO₂e/sqft/yr** blended 2025–29 limit  \n\n"
-                    "**Next steps:**\n"
-                    "1. Get the use-type breakdown from ESPM or your property records.\n"
-                    "2. Use the limits in the table below to calculate your blended limit.\n"
-                    "3. Enter your building's GHG intensity and the manually-calculated "
-                    "blended limit in the **Emissions Planner** tab to model compliance."
-                )
-                _limits_ref = pd.DataFrame([
-                    {"Building Use":    btype,
-                     "2025–29 limit":   f"{lims[0]:.1f}",
-                     "2030–34 limit":   f"{lims[1]:.1f}",
-                     "2035–39 limit":   f"{lims[2]:.1f}",
-                     "2050 (net zero)": "0.0"}
-                    for btype, lims in sorted(BERDO_STANDARDS.items())
-                ])
-                st.dataframe(_limits_ref, use_container_width=True, hide_index=True)
-                st.caption(
-                    "Units: kg CO₂e / sqft / yr. "
-                    "Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021). "
-                    "For the official blended-standard worksheet, see boston.gov/berdo."
-                )
-            st.info(
-                "**Was this building previously showing Office limits?** "
-                f"This building's reported type is **{raw_type}**. "
-                "The tool was previously mapping this to Office (5.3 kg CO₂e/sqft in 2025–29), "
-                "which is incorrect unless Office is the building's dominant use. "
-                "A mixed-use building with significant residential or retail space will have "
-                "a different blended limit — potentially more or less stringent than Office."
-            )
-        else:
-            st.warning(
-                f"Property type **{raw_type}** could not be mapped to a BERDO "
-                "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
-                "gap calculations."
-            )
+        st.warning(
+            f"Property type **{raw_type}** could not be mapped to a BERDO "
+            "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
+            "gap calculations."
+        )
         return
 
     gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category)
@@ -1188,25 +1125,12 @@ marked "Did not report" in the excluded table represent additional unknown expos
     )
 
     breakdown_rows = []
-    mixed_use_rows = []          # Buildings that need a blended standard
     for _, row in valid.iterrows():
         sqft      = pd.to_numeric(row["Gross Floor Area"], errors="coerce")
         intensity = pd.to_numeric(row["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
-        raw_ptype = row.get("Property Type")
-        berdo_cat = map_property_type(raw_ptype)
+        berdo_cat = map_property_type(row.get("Property Type"))
 
-        if pd.isna(sqft) or pd.isna(intensity):
-            continue
-
-        if berdo_cat is None:
-            if is_mixed_use_type(raw_ptype):
-                mixed_use_rows.append({
-                    "Address":        row["Building Address"],
-                    "Property Type":  raw_ptype,
-                    "Sq Ft":          f"{int(sqft):,}" if not pd.isna(sqft) else "—",
-                    "GHG (kg/sf/yr)": round(intensity, 3),
-                    "Note": "Blended standard required — cannot auto-calculate gap",
-                })
+        if pd.isna(sqft) or pd.isna(intensity) or berdo_cat is None:
             continue
 
         limit_2025 = BERDO_STANDARDS[berdo_cat][0]
@@ -1247,25 +1171,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
             "Negative = surplus that can offset other buildings in the portfolio."
         )
 
-    # --- Mixed-use buildings — flagged separately ---
-    if mixed_use_rows:
-        with st.expander(
-            f"⚠️ Mixed-use buildings requiring manual review ({len(mixed_use_rows)})",
-            expanded=True,
-        ):
-            st.warning(
-                "These buildings are reported as mixed-use and are **excluded from the "
-                "portfolio blended standard calculation** above. BERDO requires an "
-                "area-weighted blended limit based on each building's use-type breakdown. "
-                "The portfolio compliance figures above understate true exposure if these "
-                "buildings are significant emitters. "
-                "Use the Address Lookup tab for each building to see the blended-standard guidance."
-            )
-            st.dataframe(
-                pd.DataFrame(mixed_use_rows),
-                use_container_width=True,
-                hide_index=True,
-            )
+    # --- Excluded buildings ---
     if excluded_rows:
         not_reported = sum(
             1 for r in excluded_rows if "did not report" in r["Exclusion Reason"].lower()
@@ -1502,6 +1408,26 @@ FUEL_UNIT_TO_KBTU = {
 # Last verified: June 2026 — ALWAYS check before advising a client.
 # ---------------------------------------------------------------------------
 INCENTIVES = [
+    {
+        "name": "Mass Save — Energy Audit (Scoping Study / Comprehensive Building Assessment)",
+        "type": "Free technical assistance",
+        "scopes": list(RETROFIT_COST_PER_SQFT.keys()),  # applies to all scopes
+        "amount_str": (
+            "No-cost for smaller accounts (< 1.5M kWh or < 40,000 therms/yr). "
+            "Up to 100% of audit cost covered for larger accounts via the Comprehensive "
+            "Building Assessment (CBA) — which explicitly addresses BERDO and BEUDO compliance. "
+            "Prerequisite for most Mass Save rebate pre-approvals."
+        ),
+        "eligibility": (
+            "MA commercial accounts with Eversource, National Grid, or Unitil. "
+            "Large accounts (> 1.5M kWh or > 40,000 therms/yr) access the CBA program; "
+            "smaller accounts access the Small Business Assessment."
+        ),
+        "expiration": "Program ongoing — contact your utility to schedule",
+        "stacks_with_ira": True,
+        "source": "https://www.masssave.com/business/rebates-offers-services/energy-assessments-technical-assistance",
+        "is_prerequisite": True,
+    },
     {
         "name": "Mass Save — Commercial HVAC Rebates",
         "type": "Utility rebate",
@@ -2044,6 +1970,46 @@ contractor certification, and project documentation.
 # Each entry has a priority rank (1 = apply first), conflict notes, and BERDO period relevance.
 INCENTIVE_STACK = [
     {
+        "name": "Mass Save — Energy Audit (Scoping Study / Comprehensive Building Assessment)",
+        "short": "Mass Save Audit",
+        "type": "Free technical assistance",
+        "priority": 0,
+        "apply_first_reason": (
+            "Do this before any project starts. "
+            "The audit is no-cost or fully covered, explicitly scopes BERDO compliance, "
+            "identifies which measures have the best ROI, and produces the pre-approval "
+            "documentation required for most Mass Save rebate applications. "
+            "Going straight to installation without one typically means leaving incentives on the table."
+        ),
+        "scopes": list(RETROFIT_COST_PER_SQFT.keys()),
+        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric", "District steam"],
+        # amount_psf = 0 — the audit is a free service, not a cash incentive.
+        # Excluded from the grant/credit dollar total via is_prerequisite flag.
+        "amount_psf_low":  0.0,
+        "amount_psf_high": 0.0,
+        "amount_str": (
+            "No-cost (small accounts < 1.5M kWh or < 40,000 therms/yr) or up to 100% covered "
+            "(large accounts — Comprehensive Building Assessment). Value = audit cost avoided, "
+            "typically USD 2,000–50,000 depending on building size and scope."
+        ),
+        "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
+        "expiration": "Program ongoing — contact your utility or sponsor",
+        "conflicts": [],
+        "stacks_with": ["Mass Save HVAC", "Mass Save Lighting", "Mass Save Deep Retrofit", "IRA 179D"],
+        "berdo_periods": ["2025–29", "2030–34", "2035–39"],
+        "ownership": ["For-profit", "Nonprofit / Government"],
+        "source": "https://www.masssave.com/business/rebates-offers-services/energy-assessments-technical-assistance",
+        "is_prerequisite": True,
+        "checklist": [
+            "Contact your Mass Save Sponsor (Eversource, National Grid, or Unitil) to request an assessment",
+            "Large accounts (> 1.5M kWh or > 40,000 therms/yr): request a Comprehensive Building Assessment — it explicitly covers BERDO and BEUDO compliance",
+            "Smaller accounts: request a Small Business Assessment or Scoping Study",
+            "Share your ESPM data and BERDO reports with the auditor to scope toward BERDO compliance measures",
+            "Receive a report identifying priority measures, projected savings, payback, and Mass Save incentive eligibility",
+            "Use the audit report to apply for Mass Save rebate pre-approvals before any construction starts — pre-approval is required",
+        ],
+    },
+    {
         "name": "Mass Save — Commercial HVAC Rebates",
         "short": "Mass Save HVAC",
         "type": "Utility rebate",
@@ -2555,8 +2521,14 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     for inc in matched:
         inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
 
-    total_incentive_low  = sum(i["_est_low"]  for i in matched)
-    total_incentive_high = sum(i["_est_high"] for i in matched)
+    # Financing (C-PACE) and prerequisite services (audits) are excluded from the
+    # grant/credit dollar total — they're debt or free services, not cash incentives.
+    grants_matched       = [i for i in matched if not i.get("is_financing") and not i.get("is_prerequisite")]
+    financing_matched    = [i for i in matched if i.get("is_financing")]
+    prerequisite_matched = [i for i in matched if i.get("is_prerequisite")]
+
+    total_incentive_low  = sum(i["_est_low"]  for i in grants_matched)
+    total_incentive_high = sum(i["_est_high"] for i in grants_matched)
 
     # Gross retrofit cost
     total_cost_low  = sum(RETROFIT_COST_PER_SQFT[s][0] * sqft for s in scopes_selected)
@@ -2590,7 +2562,7 @@ def render_incentive_optimizer_tab(prefill: dict = None):
 
     headline = (
         f"For this building, you qualify for up to {incentive_str} "
-        f"in incentives, reducing your estimated net retrofit cost to {net_low_display}"
+        f"in grants and tax credits, reducing your estimated net retrofit cost to {net_low_display}"
         f"{payback_str}."
     )
 
@@ -2601,8 +2573,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     # ── Summary metric cards ─────────────────────────────────────────────────
     st.subheader("Summary")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Incentive programs matched", len(matched))
-    m2.metric("Total incentives (low–high)",
+    m1.metric("Grants & credits matched", len(grants_matched))
+    m2.metric("Total grants/credits (low–high)",
               f"${total_incentive_low:,.0f} – ${total_incentive_high:,.0f}")
     m3.metric("Gross retrofit cost (low–high)",
               f"${total_cost_low:,.0f} – ${total_cost_high:,.0f}")
@@ -2615,6 +2587,30 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         "Gross cost benchmarks from RSMeans / ASHRAE / DOE BTO (2024–2026)."
     )
 
+    # ── Prerequisite callout (free audits) ────────────────────────────────────
+    if prerequisite_matched:
+        _prereq_names = ", ".join(i["short"] for i in prerequisite_matched)
+        st.success(
+            f"**Start here — {_prereq_names} matched.** "
+            "A free energy audit is the prerequisite for nearly every Mass Save rebate application. "
+            "It identifies the right measures, sizes incentives correctly, and produces the "
+            "pre-approval documentation required before construction begins. "
+            "Schedule it before committing to any specific project scope. "
+            "See Step 1 in the stacking strategy below."
+        )
+
+    # ── C-PACE financing callout ──────────────────────────────────────────────
+    if financing_matched:
+        _cpace_names = ", ".join(i["short"] for i in financing_matched)
+        st.info(
+            f"**{_cpace_names} financing also matched.** "
+            "C-PACE can cover up to 100% of your project costs — repaid through your "
+            "property tax bill over up to 20 years. It is not counted in the grant/credit "
+            "total above because it is debt financing, not a cost reduction. Combined with "
+            "grants and tax credits, C-PACE can eliminate the need for upfront capital. "
+            "See the stacking strategy below for sequencing."
+        )
+
     # ── Ranked incentive table ────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Incentives ranked by estimated value")
@@ -2624,13 +2620,22 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     rank_rows = []
     for inc in ranked:
         conflict_flag = "; ".join(inc["conflicts"]) if inc["conflicts"] else "None"
+        if inc.get("is_prerequisite"):
+            val_low  = "Free service"
+            val_high = "Schedule first — unlocks all other programs"
+        elif inc.get("is_financing"):
+            val_low  = "Financing"
+            val_high = "Up to 100% of project cost"
+        else:
+            val_low  = f"${inc['_est_low']:,.0f}"
+            val_high = f"${inc['_est_high']:,.0f}"
         rank_rows.append({
-            "Program": inc["short"],
-            "Type": inc["type"],
-            "Est. value (low)": f"${inc['_est_low']:,.0f}",
-            "Est. value (high)": f"${inc['_est_high']:,.0f}",
-            "Applies in": ", ".join(inc["berdo_periods"][:2]),
-            "Conflicts": conflict_flag,
+            "Program":           inc["short"],
+            "Type":              inc["type"],
+            "Est. value (low)":  val_low,
+            "Est. value (high)": val_high,
+            "Applies in":        ", ".join(inc["berdo_periods"][:2]),
+            "Conflicts":         conflict_flag,
         })
 
     st.dataframe(pd.DataFrame(rank_rows), use_container_width=True, hide_index=True)
@@ -3754,15 +3759,7 @@ with tab_address:
 
             st.write("**Reasons:**", top["Reasons"])
 
-            # ── Mixed-use flag ────────────────────────────────────────────────
-            if is_mixed_use_type(top.get("Property Type")):
-                st.error(
-                    "⚠️ **Mixed-use building — compliance figures below are not reliable.** "
-                    "BERDO requires a blended emissions limit for mixed-use properties, "
-                    "calculated from the area-weighted average of each space use type's limit. "
-                    "This tool cannot calculate that automatically from the reported property type. "
-                    "The Compliance Gap Analysis section below explains what to do next."
-                )
+            # ── Fuel breakdown ────────────────────────────────────────────────
             fuel_breakdown = get_fuel_breakdown(top)
             primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
             if fuel_breakdown:
