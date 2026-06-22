@@ -1211,6 +1211,184 @@ marked "Did not report" in the excluded table represent additional unknown expos
         "Approval from the BERDO Review Board is required."
     )
 
+# ---------------------------------------------------------------------------
+# Peer comparison
+# ---------------------------------------------------------------------------
+def compute_peer_stats(df: pd.DataFrame, berdo_category: str, ghg_intensity: float):
+    """
+    Compare one building's GHG intensity to all other buildings of the same
+    BERDO category in the loaded dataset.
+
+    Returns a dict of peer statistics, or None if there are fewer than 5 peers.
+    """
+    mapped = df["property_type"].apply(map_property_type)
+    peer_mask = (
+        (mapped == berdo_category)
+        & df["ghg_intensity_kgco2e_sqft"].notna()
+        & (df["ghg_intensity_kgco2e_sqft"] > 0)
+    )
+    peers = df.loc[peer_mask, "ghg_intensity_kgco2e_sqft"].astype(float)
+
+    if len(peers) < 5:
+        return None
+
+    # Percentile from the bottom: % of peers that emit LESS than this building.
+    # A high value means the building is a relatively heavy emitter.
+    pct_below = round((peers < ghg_intensity).sum() / len(peers) * 100, 1)
+
+    return {
+        "n":            len(peers),
+        "values":       peers.tolist(),
+        "p10":          round(float(peers.quantile(0.10)), 3),
+        "p25":          round(float(peers.quantile(0.25)), 3),
+        "median":       round(float(peers.median()),       3),
+        "p75":          round(float(peers.quantile(0.75)), 3),
+        "p90":          round(float(peers.quantile(0.90)), 3),
+        "mean":         round(float(peers.mean()),         3),
+        "pct_below":    pct_below,   # % of peers with lower (better) intensity
+    }
+
+
+def render_peer_comparison(
+    ghg_intensity: float,
+    berdo_category: str,
+    df_full: "pd.DataFrame",
+):
+    """
+    Render a peer-comparison section: headline, four metric cards, and a
+    histogram showing where this building sits among comparable buildings.
+    """
+    stats = compute_peer_stats(df_full, berdo_category, ghg_intensity)
+    if stats is None:
+        st.caption(
+            f"Not enough {berdo_category} buildings in this dataset to run a "
+            "peer comparison (need at least 5 with reported GHG data)."
+        )
+        return
+
+    pct   = stats["pct_below"]
+    n     = stats["n"]
+    med   = stats["median"]
+    limit = BERDO_STANDARDS.get(berdo_category, [None])[0]  # 2025 limit
+
+    # ── Headline ──────────────────────────────────────────────────────────────
+    if pct >= 75:
+        icon    = "🔴"
+        verdict = f"higher-emitting than **{pct:.0f}%** of comparable buildings"
+        urgency = "Top-quartile emitter — significant reduction needed."
+    elif pct >= 50:
+        icon    = "🟠"
+        verdict = f"higher-emitting than **{pct:.0f}%** of comparable buildings"
+        urgency = "Above the peer median."
+    elif pct >= 25:
+        icon    = "🟡"
+        verdict = f"lower-emitting than **{100 - pct:.0f}%** of comparable buildings"
+        urgency = "Below the peer median — still room to reduce."
+    else:
+        icon    = "🟢"
+        verdict = f"lower-emitting than **{100 - pct:.0f}%** of comparable buildings"
+        urgency = "Bottom quartile — among the best performers in this category."
+
+    st.markdown(
+        f"{icon} **Peer comparison — {berdo_category} buildings (n = {n:,})**  \n"
+        f"This building is {verdict}. {urgency}"
+    )
+
+    # ── Metric cards ──────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        "This building",
+        f"{ghg_intensity:.3f} kg",
+        delta=f"{ghg_intensity - med:+.3f} vs median",
+        delta_color="inverse",
+        help="GHG intensity in kg CO₂e per sqft per year.",
+    )
+    c2.metric(
+        "Peer median",
+        f"{med:.3f} kg",
+        help=f"Median GHG intensity across {n:,} {berdo_category} buildings.",
+    )
+    c3.metric(
+        "25th pct (better half)",
+        f"{stats['p25']:.3f} kg",
+        help="25% of peer buildings emit at or below this level.",
+    )
+    c4.metric(
+        "75th pct (worse quarter)",
+        f"{stats['p75']:.3f} kg",
+        help="75% of peer buildings emit at or below this level.",
+    )
+
+    # ── Distribution histogram ────────────────────────────────────────────────
+    # Cap the x-axis at p95 so a single extreme outlier doesn't compress the
+    # chart, but always include the building's own value.
+    x_max = max(stats["p90"] * 1.15, ghg_intensity * 1.08)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Histogram(
+        x=[v for v in stats["values"] if v <= x_max],
+        name=f"{berdo_category} peers",
+        marker_color="rgba(50, 102, 173, 0.55)",
+        marker_line=dict(width=0.5, color="rgba(50,102,173,0.8)"),
+        nbinsx=30,
+        hovertemplate="Range: %{x}<br>Count: %{y}<extra></extra>",
+    ))
+
+    # This building
+    fig.add_vline(
+        x=ghg_intensity,
+        line_color="#E24B4A",
+        line_width=2.5,
+        annotation_text=f"This building ({ghg_intensity:.2f})",
+        annotation_position="top right",
+        annotation_font_color="#E24B4A",
+    )
+
+    # Peer median
+    fig.add_vline(
+        x=med,
+        line_color="#27AE60",
+        line_width=1.5,
+        line_dash="dash",
+        annotation_text=f"Median ({med:.2f})",
+        annotation_position="top left",
+        annotation_font_color="#27AE60",
+    )
+
+    # BERDO 2025 limit
+    if limit:
+        fig.add_vline(
+            x=limit,
+            line_color="#E67E22",
+            line_width=1.5,
+            line_dash="dot",
+            annotation_text=f"2025 limit ({limit})",
+            annotation_position="bottom right",
+            annotation_font_color="#E67E22",
+        )
+
+    fig.update_layout(
+        xaxis_title="GHG intensity (kg CO₂e / sqft / yr)",
+        yaxis_title="Number of buildings",
+        height=220,
+        margin=dict(t=30, b=40, l=50, r=40),
+        showlegend=False,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        bargap=0.05,
+    )
+    fig.update_xaxes(range=[0, x_max], showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Distribution of reported GHG intensities for {n:,} {berdo_category} buildings "
+        f"in the dataset (buildings with zero or missing GHG data excluded). "
+        f"Orange dotted line = 2025–29 BERDO limit. "
+        "Not an official City of Boston benchmark."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Year-over-year trend chart
@@ -1500,36 +1678,6 @@ INCENTIVES = [
         "stacks_with_ira": True,
         "source": "https://www.mass.gov/green-communities-designation-grant-program",
         "ownership_restriction": ["Nonprofit / Government"],
-    },
-    {
-        "name": "PACE Massachusetts — C-PACE Project Financing",
-        "type": "Financing (C-PACE)",
-        "scopes": [
-            "Lighting (LED retrofit + controls)",
-            "HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
-            "Building envelope (windows + insulation)",
-            "Electrification — HVAC (air-source heat pump)",
-            "Electrification — HVAC (ground-source heat pump)",
-            "Electrification — water heating",
-            "Building-wide deep retrofit (all systems)",
-        ],
-        "amount_str": (
-            "Covers up to 100% of project hard and soft costs — repaid as a special "
-            "property tax assessment over up to 20 years at market rates. "
-            "This is financing, not a grant or tax credit; it does not reduce project cost "
-            "but eliminates the need for upfront capital. "
-            "Municipality must have opted in (Boston has). Lender consent required."
-        ),
-        "eligibility": (
-            "Commercial, industrial, and multifamily (5+ units) properties in opted-in "
-            "MA municipalities. A Savings-to-Investment Ratio (SIR) ≥ 1.0 is currently "
-            "required (Governor Healey's FY27 budget proposes removing this — confirm "
-            "current status at mass.gov). Administered by MassDevelopment and DOER."
-        ),
-        "expiration": "Program ongoing — no deadline; apply before construction starts",
-        "stacks_with_ira": True,
-        "source": "https://www.mass.gov/info-details/commercial-pace-property-assessed-clean-energy",
-        "is_financing": True,
     },
 ]
 
@@ -2200,60 +2348,6 @@ INCENTIVE_STACK = [
             "Execute grant agreement and comply with reporting requirements",
         ],
     },
-    {
-        "name": "PACE Massachusetts — C-PACE Project Financing",
-        "short": "C-PACE",
-        "type": "Financing (C-PACE)",
-        "priority": 1,
-        "apply_first_reason": (
-            "Arrange C-PACE before construction starts — it covers up to 100% of project "
-            "costs, replacing a construction loan. The single biggest bottleneck is "
-            "obtaining written consent from all existing mortgage holders; start that "
-            "conversation first, in parallel with Mass Save pre-approval."
-        ),
-        "scopes": [
-            "Lighting (LED retrofit + controls)",
-            "HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
-            "Building envelope (windows + insulation)",
-            "Electrification — HVAC (air-source heat pump)",
-            "Electrification — HVAC (ground-source heat pump)",
-            "Electrification — water heating",
-            "Building-wide deep retrofit (all systems)",
-        ],
-        "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric", "District steam"],
-        # amount_psf = 0 because C-PACE is financing, not a cost reduction.
-        # It is excluded from the incentive dollar total in the optimizer.
-        "amount_psf_low": 0.0,
-        "amount_psf_high": 0.0,
-        "amount_str": (
-            "Up to 100% of project hard and soft costs; repaid as a property tax "
-            "assessment over up to 20 years at market rates. CPACE lien is senior to "
-            "existing mortgages — lender consent required. Not a grant or tax credit."
-        ),
-        "eligibility": (
-            "Commercial, industrial, and multifamily (5+ units) in opted-in MA "
-            "municipalities (Boston has opted in; check massdevelopment.com for others). "
-            "Savings-to-Investment Ratio ≥ 1.0 currently required — FY27 budget proposes "
-            "removing this. Administered by MassDevelopment and DOER."
-        ),
-        "expiration": "Program ongoing — no deadline; apply before project starts",
-        "conflicts": [],
-        "stacks_with": ["Mass Save rebates", "IRA 179D", "MassDOER Grant"],
-        "berdo_periods": ["2025–29", "2030–34", "2035–39", "2040–44", "2045–49"],
-        "ownership": ["For-profit", "Nonprofit / Government"],
-        "source": "https://www.mass.gov/info-details/commercial-pace-property-assessed-clean-energy",
-        "is_financing": True,
-        "checklist": [
-            "Confirm your municipality has opted into PACE MA (Boston has; check massdevelopment.com for the full list)",
-            "Contact existing mortgage holders for written consent — required before closing; start early",
-            "Get Mass Save rebate pre-approval before project start (rebates stack with C-PACE)",
-            "Engage a MassDevelopment-approved capital provider (Greenworks/Nuveen, Counterpointe, FASTPACE, others)",
-            "Commission a technical report demonstrating Savings-to-Investment Ratio ≥ 1.0 (check if SIR requirement has been removed by FY27 budget)",
-            "Submit PACE MA application to MassDevelopment and DOER for review",
-            "Close C-PACE financing — repayment runs through the property tax bill",
-            "Note: C-PACE lien transfers with the property if sold — disclose to future buyers",
-        ],
-    },
 ]
 
 RETROFIT_SCOPES_OPT = list(RETROFIT_COST_PER_SQFT.keys())
@@ -2545,13 +2639,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     for inc in matched:
         inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
 
-    # Financing programs (C-PACE) are excluded from the grant/credit dollar total —
-    # they cover project costs through debt, not by reducing them.
-    grants_matched    = [i for i in matched if not i.get("is_financing")]
-    financing_matched = [i for i in matched if i.get("is_financing")]
-
-    total_incentive_low  = sum(i["_est_low"]  for i in grants_matched)
-    total_incentive_high = sum(i["_est_high"] for i in grants_matched)
+    total_incentive_low  = sum(i["_est_low"]  for i in matched)
+    total_incentive_high = sum(i["_est_high"] for i in matched)
 
     # Gross retrofit cost
     total_cost_low  = sum(RETROFIT_COST_PER_SQFT[s][0] * sqft for s in scopes_selected)
@@ -2596,8 +2685,8 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     # ── Summary metric cards ─────────────────────────────────────────────────
     st.subheader("Summary")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Grants & credits matched", len(grants_matched))
-    m2.metric("Total grants/credits (low–high)",
+    m1.metric("Incentive programs matched", len(matched))
+    m2.metric("Total incentives (low–high)",
               f"${total_incentive_low:,.0f} – ${total_incentive_high:,.0f}")
     m3.metric("Gross retrofit cost (low–high)",
               f"${total_cost_low:,.0f} – ${total_cost_high:,.0f}")
@@ -2610,17 +2699,6 @@ def render_incentive_optimizer_tab(prefill: dict = None):
         "Gross cost benchmarks from RSMeans / ASHRAE / DOE BTO (2024–2026)."
     )
 
-    if financing_matched:
-        cpace_names = ", ".join(i["short"] for i in financing_matched)
-        st.info(
-            f"**{cpace_names} financing also matched.** "
-            "C-PACE can cover up to 100% of your project costs — repaid through your "
-            "property tax bill over up to 20 years. It is not counted in the grant/credit "
-            "total above because it is debt financing, not a cost reduction. Combined with "
-            "grants and tax credits, C-PACE can reduce or eliminate the need for upfront "
-            "capital entirely. See the stacking strategy below for sequencing."
-        )
-
     # ── Ranked incentive table ────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Incentives ranked by estimated value")
@@ -2630,19 +2708,13 @@ def render_incentive_optimizer_tab(prefill: dict = None):
     rank_rows = []
     for inc in ranked:
         conflict_flag = "; ".join(inc["conflicts"]) if inc["conflicts"] else "None"
-        if inc.get("is_financing"):
-            val_low  = "Financing"
-            val_high = "Up to 100% of project cost"
-        else:
-            val_low  = f"${inc['_est_low']:,.0f}"
-            val_high = f"${inc['_est_high']:,.0f}"
         rank_rows.append({
-            "Program":           inc["short"],
-            "Type":              inc["type"],
-            "Est. value (low)":  val_low,
-            "Est. value (high)": val_high,
-            "Applies in":        ", ".join(inc["berdo_periods"][:2]),
-            "Conflicts":         conflict_flag,
+            "Program": inc["short"],
+            "Type": inc["type"],
+            "Est. value (low)": f"${inc['_est_low']:,.0f}",
+            "Est. value (high)": f"${inc['_est_high']:,.0f}",
+            "Applies in": ", ".join(inc["berdo_periods"][:2]),
+            "Conflicts": conflict_flag,
         })
 
     st.dataframe(pd.DataFrame(rank_rows), use_container_width=True, hide_index=True)
@@ -3800,6 +3872,17 @@ with tab_address:
 **Priority Score**
 - A screening score (0–8) used to flag buildings that may need outreach, reporting support, or retrofit planning. Higher scores indicate more urgent attention.
 """)
+
+            # ── Peer comparison ───────────────────────────────────────────────
+            _peer_ghg  = top.get("GHG Intensity (kgCO2e/sqft)")
+            _peer_type = map_property_type(top.get("Property Type"))
+            if pd.notna(_peer_ghg) and _peer_ghg > 0 and _peer_type:
+                st.markdown("---")
+                render_peer_comparison(
+                    ghg_intensity=float(_peer_ghg),
+                    berdo_category=_peer_type,
+                    df_full=df_full,
+                )
 
             st.markdown("---")
 
