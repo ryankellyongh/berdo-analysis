@@ -194,12 +194,12 @@ def render_compliance_section(
     row,
     prior_year_ghg_intensity=None,
     prior_year_label=None,
+    projected_intensities=None,
     base_year=2025,
 ):
     """
-    Renders the compliance gap chart for a single building.
-    Grid decarbonization scenario toggle is included inline —
-    no sidebar required.
+    projected_intensities: list of 6 floats (one per compliance period) from
+    project_ghg_intensities(), or None to skip the grid decarb overlay.
     """
     ghg_intensity = row.get("GHG Intensity (kgCO2e/sqft)")
     sqft = row.get("Gross Floor Area")
@@ -230,61 +230,23 @@ def render_compliance_section(
 
     gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category)
 
-    st.caption(
-        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
-        f"Floor area: **{int(sqft):,} sq ft** · "
-        f"BERDO category: **{berdo_category}**"
-    )
-
-    # ── Grid decarbonization scenario — inline toggle ─────────────────────────
-    _grid_col, _slider_col = st.columns([2, 3])
-    with _grid_col:
-        show_grid = st.checkbox(
-            "Show grid decarbonization scenario",
-            value=False,
-            key="compliance_grid_decarb",
-            help=(
-                "Projects how ISO-NE grid cleaning reduces electricity-attributed "
-                "emissions over time, using the City of Boston's official projected "
-                "grid emissions factors (BERDO Appendix B, May 2026). "
-                "Fossil fuel use is held constant."
-            ),
-        )
-    if show_grid:
-        with _slider_col:
-            elec_share_pct = st.slider(
-                "Electricity share of GHG emissions (%)",
-                min_value=0, max_value=100, value=50, step=5,
-                key="compliance_elec_share",
-                help=(
-                    "% of this building's GHG from grid electricity vs. fossil fuels. "
-                    "Check ESPM or use 50% as a starting estimate for a typical office building."
-                ),
-            )
-        elec_share = elec_share_pct / 100.0
-        projected_intensities = project_ghg_intensities(
-            ghg_intensity=float(ghg_intensity),
-            elec_share=elec_share,
-            base_year=base_year if base_year in PROJECTED_GRID_EF else 2025,
-        )
-        base_ef = PROJECTED_GRID_EF.get(base_year, PROJECTED_GRID_EF[2025])
-        st.caption(
-            f"Grid EF {base_year}: {base_ef} kg/MWh → {PROJECTED_GRID_EF[2050]} kg/MWh at 2050 "
-            f"({round((1 - PROJECTED_GRID_EF[2050] / base_ef) * 100)}% cleaner). "
-            f"Electricity share: {elec_share_pct}%."
-        )
-    else:
-        projected_intensities = None
-
     # Projected gaps (for grid decarb scenario metric cards)
     if projected_intensities is not None:
         proj_gaps = [
             calculate_compliance_gap(pi, sqft, berdo_category)
             for pi in projected_intensities
         ]
+        # proj_gaps[i] is a list of 6 period gaps for the projected intensity at period i
+        # We only need the gap for each period against its own limit, i.e. proj_gaps[i][i]
         proj_gap_for_period = [proj_gaps[i][i] for i in range(len(COMPLIANCE_PERIODS))]
     else:
         proj_gap_for_period = None
+
+    st.caption(
+        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
+        f"Floor area: **{int(sqft):,} sq ft** · "
+        f"BERDO category: **{berdo_category}**"
+    )
 
     # --- Metric cards (first 3 periods) ---
     cols = st.columns(3)
@@ -3076,7 +3038,7 @@ Actual awards depend on application outcome, project documentation, and contract
 # EMISSIONS PLANNER — Tab 5
 # ---------------------------------------------------------------------------
 
-def render_emissions_planner_tab(prefill: dict = None):
+def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None):
     """
     Tab 5 — Emissions Planner.
     Shows compliance projection table across all BERDO periods,
@@ -3153,6 +3115,62 @@ def render_emissions_planner_tab(prefill: dict = None):
         "Uses the same emissions factors BERDO applies (EPA Portfolio Manager)."
     )
 
+    # Baseline used for percentage-based (Simple mode) reductions — matches the
+    # downstream compliance baseline (reported data first, intensity × sqft fallback).
+    _baseline_ghg_raw = prefill.get("ghg_emissions_kg")
+    if _baseline_ghg_raw and _baseline_ghg_raw > 0:
+        baseline_kg_for_pct = float(_baseline_ghg_raw)
+    else:
+        baseline_kg_for_pct = ghg_intensity * sqft
+
+    # Typical share of a building's total emissions addressable by each measure type.
+    # Used to translate a "% reduction of the affected system" into a building-level
+    # emissions reduction. These are screening defaults — a real audit refines them.
+    MEASURE_TYPES = {
+        "Fuel switching — gas/oil heating → heat pump": {
+            "share": 0.55,
+            "help": "Space + water heating is typically ~40–70% of a building's emissions. Default assumes 55% addressable.",
+        },
+        "HVAC upgrade — controls, VFDs, recommissioning": {
+            "share": 0.30,
+            "help": "HVAC efficiency measures typically address ~20–40% of total emissions.",
+        },
+        "Lighting — LED + controls": {
+            "share": 0.15,
+            "help": "Lighting is typically ~10–20% of commercial building emissions.",
+        },
+        "Building envelope — insulation, windows, air sealing": {
+            "share": 0.20,
+            "help": "Envelope improvements typically cut ~10–25% of heating/cooling load.",
+        },
+        "On-site solar / renewable generation": {
+            "share": 0.25,
+            "help": "Offsets electricity emissions; impact depends on roof capacity and load.",
+        },
+        "Whole-building deep retrofit": {
+            "share": 0.80,
+            "help": "Comprehensive retrofits can address the large majority of emissions.",
+        },
+        "Other / custom": {
+            "share": 1.00,
+            "help": "Percentage applies directly to total building emissions.",
+        },
+    }
+
+    entry_mode = st.radio(
+        "Entry mode",
+        options=["Simple — measure type + % reduction", "Advanced — exact fuel quantity"],
+        index=0,
+        horizontal=True,
+        key="ep_entry_mode",
+        help=(
+            "Simple mode is for quick screening when you know the kind of project but not "
+            "exact fuel numbers. Advanced mode lets you enter precise fuel quantities "
+            "(therms, gallons, kWh) for a more accurate estimate."
+        ),
+    )
+    simple_mode = entry_mode.startswith("Simple")
+
     # Initialise project list in session state
     if "ep_projects" not in st.session_state:
         st.session_state["ep_projects"] = []
@@ -3163,13 +3181,17 @@ def render_emissions_planner_tab(prefill: dict = None):
             st.session_state["ep_projects"].append({
                 "name": "",
                 "year": 2030,
+                # Simple-mode fields
+                "measure": list(MEASURE_TYPES.keys())[0],
+                "pct": 0.0,
+                # Advanced-mode fields
                 "fuel": "Natural gas",
                 "unit": "therms",
                 "amount": 0.0,
                 "reduction_kg": 0.0,
             })
 
-    # Project entry table
+    # Advanced-mode conversion tables
     fuel_unit_options = {
         "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
         "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
@@ -3205,10 +3227,73 @@ def render_emissions_planner_tab(prefill: dict = None):
             ef = FUEL_EF_KG_PER_KBTU.get(fuel, 0.05311)
         return round(kbtu * ef, 2)
 
+    def calc_reduction_kg_pct(measure, pct):
+        """Simple mode: % reduction of the system this measure addresses."""
+        share = MEASURE_TYPES.get(measure, {}).get("share", 1.0)
+        return round(baseline_kg_for_pct * share * (pct / 100.0), 2)
+
     projects_to_remove = []
     projects = st.session_state["ep_projects"]
 
-    if projects:
+    if projects and simple_mode:
+        # ── Simple mode rows ──────────────────────────────────────────────────
+        header_cols = st.columns([3, 1.3, 3.5, 1.6, 2, 0.9])
+        header_cols[0].caption("Project name")
+        header_cols[1].caption("Year")
+        header_cols[2].caption("Measure type")
+        header_cols[3].caption("% reduction")
+        header_cols[4].caption("Emission reduction (kg CO₂e/yr)")
+        header_cols[5].caption("")
+
+        measure_list = list(MEASURE_TYPES.keys())
+        for idx, proj in enumerate(projects):
+            row = st.columns([3, 1.3, 3.5, 1.6, 2, 0.9])
+            with row[0]:
+                proj["name"] = st.text_input(
+                    "Name", value=proj.get("name", ""),
+                    key=f"ep_proj_name_{idx}", label_visibility="collapsed",
+                    placeholder="e.g. Boiler → heat pump",
+                )
+            with row[1]:
+                period_years = list(range(2025, 2051))
+                curr_yr = proj.get("year", 2030)
+                yr_idx  = period_years.index(curr_yr) if curr_yr in period_years else 5
+                proj["year"] = st.selectbox(
+                    "Year", options=period_years, index=yr_idx,
+                    key=f"ep_proj_year_{idx}", label_visibility="collapsed",
+                )
+            with row[2]:
+                curr_measure = proj.get("measure", measure_list[0])
+                m_idx = measure_list.index(curr_measure) if curr_measure in measure_list else 0
+                proj["measure"] = st.selectbox(
+                    "Measure", options=measure_list, index=m_idx,
+                    key=f"ep_proj_measure_{idx}", label_visibility="collapsed",
+                    help=MEASURE_TYPES[measure_list[m_idx]]["help"],
+                )
+            with row[3]:
+                proj["pct"] = st.number_input(
+                    "% reduction", min_value=0.0, max_value=100.0,
+                    value=float(proj.get("pct", 0.0)),
+                    step=5.0, key=f"ep_proj_pct_{idx}", label_visibility="collapsed",
+                )
+            with row[4]:
+                proj["reduction_kg"] = calc_reduction_kg_pct(proj["measure"], proj["pct"])
+                st.metric(
+                    "Reduction", f"{proj['reduction_kg']:,.0f}",
+                    label_visibility="collapsed",
+                )
+            with row[5]:
+                if st.button("✕", key=f"ep_remove_{idx}", help="Remove this project"):
+                    projects_to_remove.append(idx)
+
+        st.caption(
+            "Simple mode applies your % reduction to the share of building emissions that "
+            "measure type typically addresses (shown in each measure's tooltip). "
+            "These are screening estimates — a professional energy audit refines them."
+        )
+
+    elif projects and not simple_mode:
+        # ── Advanced mode rows ────────────────────────────────────────────────
         header_cols = st.columns([3, 1.5, 2, 1.5, 2, 1.5, 1])
         header_cols[0].caption("Project name")
         header_cols[1].caption("Year")
@@ -3226,11 +3311,7 @@ def render_emissions_planner_tab(prefill: dict = None):
                     key=f"ep_proj_name_{idx}", label_visibility="collapsed"
                 )
             with row[1]:
-                period_years = [2025, 2026, 2027, 2028, 2029,
-                                2030, 2031, 2032, 2033, 2034,
-                                2035, 2036, 2037, 2038, 2039,
-                                2040, 2041, 2042, 2043, 2044,
-                                2045, 2046, 2047, 2048, 2049, 2050]
+                period_years = list(range(2025, 2051))
                 curr_yr = proj.get("year", 2030)
                 yr_idx  = period_years.index(curr_yr) if curr_yr in period_years else 5
                 proj["year"] = st.selectbox(
@@ -3265,14 +3346,14 @@ def render_emissions_planner_tab(prefill: dict = None):
                     label_visibility="collapsed"
                 )
             with row[6]:
-                if st.button("Remove", key=f"ep_remove_{idx}"):
+                if st.button("✕", key=f"ep_remove_{idx}", help="Remove this project"):
                     projects_to_remove.append(idx)
 
     for idx in sorted(projects_to_remove, reverse=True):
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
-    # ── Grid decarbonization scenario — inline toggle ─────────────────────────
+    # ── Grid decarbonization — read from sidebar ──────────────────────────────
     st.markdown("---")
     st.subheader("Emissions Compliance Projection")
 
@@ -3280,38 +3361,25 @@ def render_emissions_planner_tab(prefill: dict = None):
         st.warning("Select a valid building type above to see the compliance projection.")
         return
 
-    _gd_col, _gd_slider = st.columns([2, 3])
-    with _gd_col:
-        show_grid_decarb = st.checkbox(
-            "Show grid decarbonization scenario",
-            value=False,
-            key="planner_grid_decarb",
-            help=(
-                "Models how ISO-NE grid cleaning reduces electricity-attributed emissions "
-                "over time (BERDO Appendix B, May 2026). Fossil fuel use is held constant."
-            ),
-        )
-    if show_grid_decarb:
-        with _gd_slider:
-            _elec_pct = st.slider(
-                "Electricity share of GHG emissions (%)",
-                min_value=0, max_value=100, value=50, step=5,
-                key="planner_elec_share",
-                help="% of this building's GHG from grid electricity. Use 50% as a starting estimate.",
-            )
-        elec_share = _elec_pct / 100.0
+    apply_grid = show_grid_decarb
+    elec_share_val = elec_share if elec_share is not None else 0.5
+
+    if apply_grid:
         base_ef = PROJECTED_GRID_EF.get(2025, 249)
         ef_2050 = PROJECTED_GRID_EF.get(2050, 150)
         st.caption(
-            f"Grid EF 2025: {base_ef} kg/MWh → {ef_2050} kg/MWh at 2050 "
+            f"Grid decarbonization is ON (sidebar). "
+            f"Electricity share: {round(elec_share_val * 100)}%. "
+            f"Base year grid EF (2025): {base_ef} kg/MWh → {ef_2050} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
-            f"Electricity share: {_elec_pct}%."
+            "Toggle in the sidebar to turn off."
         )
     else:
-        elec_share = None
-
-    apply_grid = show_grid_decarb
-    elec_share_val = elec_share if elec_share is not None else 0.5
+        st.caption(
+            "Grid decarbonization is OFF. "
+            "Enable it in the sidebar to model how ISO-NE grid cleaning reduces "
+            "electricity-attributed emissions over time."
+        )
 
     limits             = BERDO_STANDARDS[berdo_category]
     # Use the raw reported GHG emissions total when available (more accurate than
@@ -3610,11 +3678,42 @@ else:
     df_full = all_years[selected_year]
     show_yoy = False
 
-# show_grid_decarb / elec_share are no longer sidebar globals.
-# Each section (compliance chart, emissions planner) owns its own inline toggle.
-# Portfolio uses no grid scenario overlay.
-show_grid_decarb = False
-elec_share       = None
+# --- Sidebar: grid decarbonization scenario ---
+st.sidebar.header("Grid decarbonization scenario")
+show_grid_decarb = st.sidebar.checkbox(
+    "Show grid decarbonization scenario",
+    value=False,
+    key="sidebar_grid_decarb",
+    help=(
+        "Projects future GHG intensity assuming the ISO-NE grid cleans up "
+        "per the City of Boston's official projected emissions factors "
+        "(Appendix B, BERDO Emissions Factors List, May 2026). "
+        "Fossil fuel use is held constant."
+    ),
+)
+if show_grid_decarb:
+    elec_share_pct = st.sidebar.slider(
+        "Electricity share of GHG emissions (%)",
+        min_value=0,
+        max_value=100,
+        value=50,
+        step=5,
+        help=(
+            "Estimated percentage of this building's total GHG emissions "
+            "that come from grid electricity (vs. fossil fuels such as "
+            "natural gas). Check the building's energy breakdown in ESPM "
+            "or use 50% as a starting estimate for a typical office/mixed-use building."
+        ),
+    )
+    elec_share = elec_share_pct / 100.0
+    base_ef = PROJECTED_GRID_EF.get(selected_year, PROJECTED_GRID_EF[2025])
+    st.sidebar.caption(
+        f"Base year grid EF ({selected_year}): **{base_ef} kg/MWh** "
+        f"(Appendix B). Projected EF at 2050: **{PROJECTED_GRID_EF[2050]} kg/MWh** "
+        f"({round((1 - PROJECTED_GRID_EF[2050] / base_ef) * 100)}% cleaner)."
+    )
+else:
+    elec_share = None
 
 # --- Page header ---
 st.title("BERDO Building Priority & Incentive Tool")
@@ -3723,10 +3822,22 @@ with tab_address:
                 prior_ghg, prior_label = render_yoy_trend(address_input, all_years)
                 st.markdown("---")
 
+            # --- Grid decarbonization projection ---
+            projected_intensities = None
+            if show_grid_decarb and elec_share is not None:
+                ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
+                if pd.notna(ghg_val) and ghg_val > 0:
+                    projected_intensities = project_ghg_intensities(
+                        ghg_intensity=float(ghg_val),
+                        elec_share=elec_share,
+                        base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
+                    )
+
             render_compliance_section(
                 top,
                 prior_year_ghg_intensity=prior_ghg,
                 prior_year_label=prior_label,
+                projected_intensities=projected_intensities,
                 base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
             )
 
@@ -3855,4 +3966,8 @@ with tab_optimizer:
 # ---------------------------------------------------------------------------
 with tab_planner:
     planner_prefill = st.session_state.get("planner_prefill", {})
-    render_emissions_planner_tab(prefill=planner_prefill)
+    render_emissions_planner_tab(
+        prefill=planner_prefill,
+        show_grid_decarb=show_grid_decarb,
+        elec_share=elec_share,
+    )
