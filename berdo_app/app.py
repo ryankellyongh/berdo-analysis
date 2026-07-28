@@ -3742,7 +3742,7 @@ tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
 with tab_address:
     address_input = st.text_input(
         "Enter building address",
-        placeholder="Example: 1047 Commonwealth Ave"
+        placeholder="Type in building address here"
     )
 
     if address_input:
