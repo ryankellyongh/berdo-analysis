@@ -132,6 +132,21 @@ def map_property_type(raw_type):
         return None
     key = raw_type.strip().lower()
     return PROPERTY_TYPE_MAP.get(key)
+    
+def standardize_address_series(series):
+    """
+    Python equivalent of the nested Tableau REPLACE/UPPER/TRIM address standardization.
+    """
+    cleaned = (
+        series.astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(".", "", regex=False)
+        .str.replace(" STREET", " ST", regex=False)
+        .str.replace(" AVENUE", " AVE", regex=False)
+        .str.replace(" ROAD", " RD", regex=False)
+    )
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
@@ -709,11 +724,28 @@ def assign_priority(row, median_eui):
 
 
 def lookup_building_priority(df, address):
-    import re
-    address_clean = re.split(r',', address)[0].strip()
-    matches = df[
-        df["Building Address"].astype(str).str.contains(address_clean, case=False, na=False)
-    ]
+    if not address or not isinstance(address, str):
+        return None
+        
+    # Standardize the user's search input using the exact same logic
+    search_clean = address.split(',')[0].strip()
+    search_std = (
+        search_clean.upper()
+        .replace(".", "")
+        .replace(" STREET", " ST")
+        .replace(" AVENUE", " AVE")
+        .replace(" ROAD", " RD")
+    )
+    
+    if not search_std:
+        return None
+
+    # Standardize the dataframe's address column
+    df_addresses_std = standardize_address_series(df["Building Address"])
+    
+    # Filter matches where the standardized address contains the search query
+    matches = df[df_addresses_std.str.contains(search_std, case=False, na=False)]
+    
     if matches.empty:
         return None
 
@@ -723,7 +755,7 @@ def lookup_building_priority(df, address):
     for _, row in matches.iterrows():
         priority, score, reasons = assign_priority(row, median_eui)
         results.append({
-            "Building Address":            row.get("Building Address"),
+            "Building Address":             row.get("Building Address"),
             "Property Owner Name":         row.get("Property Owner Name"),
             "Property Type":               row.get("property_type"),
             "Gross Floor Area":            row.get("gross_floor_area"),
@@ -731,7 +763,6 @@ def lookup_building_priority(df, address):
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
             "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
             "Primary Fuel":                infer_primary_fuel(row),
-            # Fuel usage columns — needed for get_fuel_breakdown()
             "fuel_natural_gas_kbtu":       row.get("fuel_natural_gas_kbtu"),
             "fuel_electricity_kwh":        row.get("fuel_electricity_kwh"),
             "fuel_district_steam_kbtu":    row.get("fuel_district_steam_kbtu"),
@@ -3620,240 +3651,6 @@ Not an official City of Boston BERDO compliance determination.
 
 
 # ---------------------------------------------------------------------------
-# OUTREACH LIST — Tab 5
-# ---------------------------------------------------------------------------
-
-def render_browse_tab(df_full, median_eui):
-    """
-    Outreach List tab — filterable table of all buildings for outreach prioritization.
-    Policymakers can filter by priority level, floor area, compliance status, BERDO
-    category, and fine exposure to build targeted outreach lists and export them as CSV.
-    """
-    st.write(
-        "Browse and filter all buildings in the dataset to prioritize outreach. "
-        "Filter by priority level, floor area, compliance status, or emissions intensity "
-        "to find the buildings that need attention most — then download the list."
-    )
-
-    # ── Build enriched table ──────────────────────────────────────────────────
-    with st.spinner("Scoring all buildings…"):
-        rows = []
-        for _, row in df_full.iterrows():
-            priority, score, reasons = assign_priority(row, median_eui)
-            ghg_val   = row.get("ghg_intensity_kgco2e_sqft")
-            sqft_val  = row.get("gross_floor_area")
-            raw_type  = row.get("property_type")
-            berdo_cat = map_property_type(raw_type)
-
-            # 2025–29 annual ACP fine estimate
-            annual_fine = None
-            if (
-                pd.notna(ghg_val) and ghg_val > 0
-                and pd.notna(sqft_val) and sqft_val > 0
-                and berdo_cat in BERDO_STANDARDS
-            ):
-                limit_2025 = BERDO_STANDARDS[berdo_cat][0]
-                gap = float(ghg_val) - limit_2025
-                if gap > 0:
-                    annual_fine = round(gap * float(sqft_val) / 1000 * ACP_RATE, 0)
-
-            rows.append({
-                "Building Address":              row.get("Building Address"),
-                "Property Owner Name":           row.get("Property Owner Name"),
-                "Property Type":                 raw_type,
-                "BERDO Category":                berdo_cat if berdo_cat else "—",
-                "Gross Floor Area (sqft)":       sqft_val,
-                "Site EUI (kBtu/sqft/yr)":       row.get("site_eui"),
-                "GHG Intensity (kg/sqft/yr)":    ghg_val,
-                "Compliance Status":             row.get("compliance_status"),
-                "Priority Level":                priority,
-                "Priority Score":                score,
-                "Est. 2025–29 ACP Fine ($/yr)":  annual_fine,
-                "Reasons":                       "; ".join(reasons),
-            })
-
-    full_df  = pd.DataFrame(rows)
-    total    = len(full_df)
-
-    # ── Filters ───────────────────────────────────────────────────────────────
-    st.subheader("Filters")
-    f1, f2, f3 = st.columns(3)
-
-    with f1:
-        priority_filter = st.multiselect(
-            "Priority level",
-            options=["High", "Moderate", "Low"],
-            default=["High", "Moderate", "Low"],
-            key="browse_priority",
-        )
-        status_opts = sorted(
-            s for s in full_df["Compliance Status"].dropna().unique().tolist() if s
-        )
-        status_filter = st.multiselect(
-            "Compliance status",
-            options=status_opts,
-            default=status_opts,
-            key="browse_status",
-        )
-
-    with f2:
-        min_sqft = st.number_input(
-            "Min floor area (sq ft)",
-            min_value=0,
-            max_value=5_000_000,
-            value=0,
-            step=10_000,
-            key="browse_min_sqft",
-            help="Set to 100,000 to filter to large buildings only.",
-        )
-        berdo_cat_opts = ["All"] + sorted(
-            c for c in full_df["BERDO Category"].unique().tolist() if c and c != "—"
-        )
-        cat_filter = st.selectbox(
-            "BERDO category",
-            options=berdo_cat_opts,
-            key="browse_cat",
-        )
-
-    with f3:
-        non_reporters_only = st.checkbox(
-            "Non-reporters only",
-            value=False,
-            key="browse_non_reporters",
-            help="Show only buildings that did not submit BERDO data.",
-        )
-        has_fine_only = st.checkbox(
-            "Has estimated fine exposure",
-            value=False,
-            key="browse_has_fine",
-            help="Show only buildings with a projected 2025–29 ACP fine above zero.",
-        )
-        large_only = st.checkbox(
-            "Over 100,000 sq ft only",
-            value=False,
-            key="browse_large",
-            help="Shortcut for buildings above the 100k sq ft large-building threshold.",
-        )
-        sort_by = st.selectbox(
-            "Sort by",
-            options=[
-                "Priority Score (high → low)",
-                "Gross Floor Area (large → small)",
-                "GHG Intensity (high → low)",
-                "Est. Fine (high → low)",
-                "Building Address (A → Z)",
-            ],
-            key="browse_sort",
-        )
-
-    # ── Apply filters ─────────────────────────────────────────────────────────
-    filtered = full_df.copy()
-
-    if priority_filter:
-        filtered = filtered[filtered["Priority Level"].isin(priority_filter)]
-    if status_filter:
-        filtered = filtered[filtered["Compliance Status"].isin(status_filter)]
-
-    sqft_numeric = pd.to_numeric(filtered["Gross Floor Area (sqft)"], errors="coerce")
-    if min_sqft > 0:
-        filtered = filtered[sqft_numeric.fillna(0) >= min_sqft]
-    if large_only:
-        filtered = filtered[sqft_numeric.fillna(0) >= 100_000]
-    if cat_filter != "All":
-        filtered = filtered[filtered["BERDO Category"] == cat_filter]
-    if non_reporters_only:
-        filtered = filtered[filtered["Compliance Status"] == "not submitted"]
-    if has_fine_only:
-        filtered = filtered[filtered["Est. 2025–29 ACP Fine ($/yr)"].notna()]
-
-    # Sort
-    sort_map = {
-        "Priority Score (high → low)":       ("Priority Score",                    False),
-        "Gross Floor Area (large → small)":  ("Gross Floor Area (sqft)",           False),
-        "GHG Intensity (high → low)":        ("GHG Intensity (kg/sqft/yr)",        False),
-        "Est. Fine (high → low)":            ("Est. 2025–29 ACP Fine ($/yr)",      False),
-        "Building Address (A → Z)":          ("Building Address",                  True),
-    }
-    sort_col, sort_asc = sort_map[sort_by]
-    try:
-        filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last")
-    except Exception:
-        pass
-    filtered = filtered.reset_index(drop=True)
-
-    # ── Summary metrics ───────────────────────────────────────────────────────
-    n_filtered = len(filtered)
-    n_high     = (filtered["Priority Level"] == "High").sum()
-    n_not_sub  = (filtered["Compliance Status"] == "not submitted").sum()
-    total_fine = pd.to_numeric(
-        filtered["Est. 2025–29 ACP Fine ($/yr)"], errors="coerce"
-    ).sum(skipna=True)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Buildings shown", f"{n_filtered:,}", delta=f"of {total:,} total")
-    m2.metric("High priority",   f"{n_high:,}")
-    m3.metric("Non-reporters",   f"{n_not_sub:,}")
-    m4.metric("Est. total fine exposure", f"${total_fine:,.0f}/yr")
-
-    st.caption(
-        "Est. fine = annual ACP at $234/metric ton CO₂e over the 2025–29 BERDO limit "
-        "(calculated only for buildings with reported GHG data and a mapped BERDO category). "
-        "Not an official City of Boston compliance determination."
-    )
-
-    if n_filtered == 0:
-        st.info("No buildings match the current filters — try relaxing the criteria above.")
-        return
-
-    st.markdown("---")
-
-    # ── Table ─────────────────────────────────────────────────────────────────
-    display_cols = [
-        "Building Address", "Property Owner Name", "Property Type",
-        "Gross Floor Area (sqft)", "Site EUI (kBtu/sqft/yr)",
-        "GHG Intensity (kg/sqft/yr)", "Compliance Status",
-        "Priority Level", "Priority Score",
-        "Est. 2025–29 ACP Fine ($/yr)", "Reasons",
-    ]
-    display_df = filtered[display_cols].copy()
-
-    display_df["Gross Floor Area (sqft)"] = (
-        pd.to_numeric(display_df["Gross Floor Area (sqft)"], errors="coerce")
-        .apply(lambda x: f"{int(x):,}" if pd.notna(x) else "")
-    )
-    display_df["GHG Intensity (kg/sqft/yr)"] = (
-        pd.to_numeric(display_df["GHG Intensity (kg/sqft/yr)"], errors="coerce")
-        .round(3)
-    )
-    display_df["Site EUI (kBtu/sqft/yr)"] = (
-        pd.to_numeric(display_df["Site EUI (kBtu/sqft/yr)"], errors="coerce")
-        .round(1)
-    )
-    display_df["Est. 2025–29 ACP Fine ($/yr)"] = (
-        pd.to_numeric(display_df["Est. 2025–29 ACP Fine ($/yr)"], errors="coerce")
-        .apply(lambda x: f"${int(x):,}" if pd.notna(x) else "—")
-    )
-
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=520)
-
-    # ── CSV download ──────────────────────────────────────────────────────────
-    csv_df    = filtered[display_cols].copy()
-    csv_bytes = csv_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label=f"⬇ Download filtered list ({n_filtered:,} buildings) as CSV",
-        data=csv_bytes,
-        file_name="berdo_outreach_list.csv",
-        mime="text/csv",
-        key="browse_download",
-    )
-
-    st.caption(
-        "Download includes all filtered rows and columns shown above. "
-        "Use this to drive outreach, prioritize site visits, or track follow-up in a separate system."
-    )
-
-
-# ---------------------------------------------------------------------------
 # App layout
 # ---------------------------------------------------------------------------
 all_years = load_all_years()
@@ -3934,8 +3731,8 @@ else:
         "It is not an official City of Boston BERDO compliance determination."
     )
 
-tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner, tab_browse = st.tabs([
-    "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner", "Outreach List"
+tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
+    "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
 ])
 
 # ---------------------------------------------------------------------------
@@ -4162,10 +3959,3 @@ with tab_planner:
         show_grid_decarb=show_grid_decarb,
         elec_share=elec_share,
     )
-
-# ---------------------------------------------------------------------------
-# Tab 5 — Outreach List (dataset browser)
-# ---------------------------------------------------------------------------
-with tab_browse:
-    median_eui_browse = df_full["site_eui"].median()
-    render_browse_tab(df_full, median_eui_browse)
