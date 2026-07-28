@@ -135,10 +135,13 @@ def map_property_type(raw_type):
     
 def standardize_address_series(series):
     """
-    Python equivalent of the nested Tableau REPLACE/UPPER/TRIM address standardization.
+    This section addresses standardization.
+    IT also strips out full address details (like city, state, zip) after a comma.
     """
+    extracted = series.astype(str).str.split(",").str[0]
+    
     cleaned = (
-        series.astype(str)
+        extracted
         .str.strip()
         .str.upper()
         .str.replace(".", "", regex=False)
@@ -722,13 +725,12 @@ def assign_priority(row, median_eui):
 
     return priority, score, reasons
 
-
 def lookup_building_priority(df, address):
     if not address or not isinstance(address, str):
         return None
         
-    # Standardize the user's search input using the exact same logic
-    search_clean = address.split(',')[0].strip()
+    # Isolate the street component if a full address with commas is entered
+    search_clean = address.split(",")[0].strip()
     search_std = (
         search_clean.upper()
         .replace(".", "")
@@ -740,7 +742,7 @@ def lookup_building_priority(df, address):
     if not search_std:
         return None
 
-    # Standardize the dataframe's address column
+    # Standardize the dataframe's address column using your updated series function
     df_addresses_std = standardize_address_series(df["Building Address"])
     
     # Filter matches where the standardized address contains the search query
@@ -781,7 +783,6 @@ def lookup_building_priority(df, address):
         })
 
     return pd.DataFrame(results)
-
 
 # ---------------------------------------------------------------------------
 # Owner portfolio lookup
