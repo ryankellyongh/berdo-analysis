@@ -3551,17 +3551,17 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         )
         
         if has_projects:
-        total_reduction_mt = period_reductions_kg[0] / 1000
-        gap_mt = max(total_emissions_kg - limits[0] * sqft, 0) / 1000
-        if gap_mt > 0:
-            pct = total_reduction_mt / gap_mt * 100
-            st.caption(
-                f"Your projects reduce ~{total_reduction_mt:,.0f} MT/yr — about {pct:.1f}% of the "
-                f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
-                + ("Nowhere near enough to affect compliance." if pct < 5 else
-                   "Still short of compliance." if pct < 100 else
-                   "Enough to reach compliance this period.")
-            )
+            total_reduction_mt = period_reductions_kg[0] / 1000
+            gap_mt = max(total_emissions_kg - limits[0] * sqft, 0) / 1000
+            if gap_mt > 0:
+                pct = total_reduction_mt / gap_mt * 100
+                st.caption(
+                    f"Your projects reduce ~{total_reduction_mt:,.0f} MT/yr — about {pct:.1f}% of the "
+                    f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
+                    + ("Nowhere near enough to affect compliance." if pct < 5 else
+                       "Still short of compliance." if pct < 100 else
+                       "Enough to reach compliance this period.")
+                )
 
     compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
 
