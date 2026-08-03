@@ -3530,10 +3530,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         )
         col_idx += 1
     if has_grid:
-        savings_g = baseline_fines_cumul - grid_fines_cumul
+        current_grid_fine = max(grid_emissions_kg[0] - limits[0] * sqft, 0) / 1000 * ACP_RATE
+        savings_g = current_annual_fine - current_grid_fine
         s_cols[col_idx].metric(
-            "Cumulative ACP — grid decarb only",
-            f"${grid_fines_cumul:,.0f}",
+            "Annual ACP — grid decarb (2025–29)",
+            f"${current_grid_fine:,.0f}",
             delta=f"-${savings_g:,.0f} vs baseline" if savings_g > 0 else "No change",
         )
         col_idx += 1
