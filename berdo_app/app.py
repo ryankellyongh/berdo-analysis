@@ -3520,22 +3520,26 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         f"${current_annual_fine:,.0f}",
         delta="at current emissions, this period's cap",
     )
+    s_cols[0].metric(
+        "Cumulative ACP 2025–2050 — no action",
+        f"${baseline_fines_cumul:,.0f}",
+        delta="worst case: emissions flat, no retrofit",
+    )
     col_idx = 1
     if has_projects:
         savings = baseline_fines_cumul - proj_fines_cumul
         s_cols[col_idx].metric(
             "Cumulative ACP — with projects",
             f"${proj_fines_cumul:,.0f}",
-            delta=f"-${savings:,.0f} vs baseline" if savings > 0 else "No change",
+            delta=f"-${savings:,.0f} vs no action" if savings > 0 else "No change",
         )
         col_idx += 1
     if has_grid:
-        current_grid_fine = max(grid_emissions_kg[0] - limits[0] * sqft, 0) / 1000 * ACP_RATE
-        savings_g = current_annual_fine - current_grid_fine
+        savings_g = baseline_fines_cumul - grid_fines_cumul
         s_cols[col_idx].metric(
-            "Annual ACP — grid decarb (2025–29)",
-            f"${current_grid_fine:,.0f}",
-            delta=f"-${savings_g:,.0f} vs baseline" if savings_g > 0 else "No change",
+            "Cumulative ACP — grid decarb only",
+            f"${grid_fines_cumul:,.0f}",
+            delta=f"-${savings_g:,.0f} vs no action" if savings_g > 0 else "No change",
         )
         col_idx += 1
     if has_projects and has_grid:
@@ -3543,8 +3547,23 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         s_cols[col_idx].metric(
             "Cumulative ACP — grid + projects",
             f"${combined_fines_cumul:,.0f}",
-            delta=f"-${savings_c:,.0f} vs baseline" if savings_c > 0 else "No change",
+            delta=f"-${savings_c:,.0f} vs no action" if savings_c > 0 else "No change",
         )
+        
+        if has_projects:
+        total_reduction_mt = period_reductions_kg[0] / 1000
+        gap_mt = max(total_emissions_kg - limits[0] * sqft, 0) / 1000
+        if gap_mt > 0:
+            pct = total_reduction_mt / gap_mt * 100
+            st.caption(
+                f"Your projects reduce ~{total_reduction_mt:,.0f} MT/yr — about {pct:.1f}% of the "
+                f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
+                + ("Nowhere near enough to affect compliance." if pct < 5 else
+                   "Still short of compliance." if pct < 100 else
+                   "Enough to reach compliance this period.")
+            )
+
+    compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
 
     compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
     compliant_periods_proj      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(total_emissions_kg - period_reductions_kg[i], 0) <= limits[i] * sqft) if has_projects else None
