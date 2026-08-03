@@ -8,7 +8,7 @@ from pathlib import Path
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="BERDO Priority & Incentive Tool",
+    page_title="BERDO Building Priority & Incentive Tool",
     layout="wide"
 )
 
@@ -746,7 +746,7 @@ def lookup_building_priority(df, address):
     df_addresses_std = standardize_address_series(df["Building Address"])
     
     # Filter matches where the standardized address contains the search query
-    matches = df[df_addresses_std.str.contains(search_std, case=False, na=False)]
+    matches = df[df_addresses_std.str.startswith(search_std, na=False)]
     
     if matches.empty:
         return None
@@ -873,7 +873,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         if missing_ghg or missing_sqft:
             status = str(row.get("Compliance Status", "")).strip().lower()
             if status == "state":
-                reason = "State-owned property — exempt from BERDO reporting"
+                reason = "Reported under state status — verify BERDO treatment before excluding"
             elif missing_ghg and missing_sqft:
                 if status == "not submitted":
                     reason = "Did not report — no GHG data or floor area submitted"
@@ -1210,11 +1210,11 @@ marked "Did not report" in the excluded table represent additional unknown expos
             1 for r in excluded_rows if "did not report" in r["Exclusion Reason"].lower()
         )
         state_exempt = sum(
-            1 for r in excluded_rows if "state-owned" in r["Exclusion Reason"].lower()
+            1 for r in excluded_rows if "state status" in r["Exclusion Reason"].lower()
         )
         label_parts = [f"Excluded buildings ({skipped})"]
         if state_exempt:
-            label_parts.append(f"{state_exempt} state-exempt")
+            label_parts.append(f"{state_exempt} state status")
         if not_reported:
             label_parts.append(f"{not_reported} did not report")
         expander_label = " — ".join(label_parts)
@@ -1223,7 +1223,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
         with st.expander(expander_label, expanded=auto_expand):
             st.caption(
                 "These buildings are not included in the portfolio calculation. "
-                "**State-owned** properties are exempt from BERDO and excluded by default. "
+                "**State status** buildings are listed separately — verify their BERDO treatment before excluding. "
                 "**Did not report** means no energy data was submitted to the City of Boston — "
                 "their emissions are unknown and not reflected above. "
                 "**Pending revisions** means data was submitted but flagged for corrections."
@@ -1260,16 +1260,17 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
         return None, None  # Nothing to compare
 
     import re
-    address_clean = re.split(r',', address)[0].strip()
-
+    search_std = (
+        re.split(r',', address)[0].strip().upper()
+        .replace(".", "").replace(" STREET", " ST")
+        .replace(" AVENUE", " AVE").replace(" ROAD", " RD")
+    )
     records = []
     for yr in years_sorted:
         df = all_years[yr]
-        matches = df[
-            df["Building Address"].astype(str).str.contains(
-                address_clean, case=False, na=False
-            )
-        ]
+        df_std = standardize_address_series(df["Building Address"])
+        matches = df[df_std.str.startswith(search_std, na=False)]
+        
         if matches.empty:
             continue
         row = matches.iloc[0]
@@ -1478,7 +1479,7 @@ INCENTIVES = [
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
-        "amount_str": "Up to USD 5.81/sqft (2025, prevailing wage and apprenticeship); USD 0.58–1.16/sqft (partial). Construction must BEGIN by June 30, 2026.",
+        "amount_str": "CLOSED for new projects — construction had to begin by June 30, 2026 (OBBBA, P.L. 119-21). Up to USD 5.81/sqft if it did.",
         "eligibility": "For-profit building owners; nonprofits/govts can transfer deduction to designer",
         "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
         "stacks_with_ira": True,
@@ -2942,8 +2943,6 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     elif berdo_category and berdo_category in BERDO_STANDARDS:
         # Cost of paying the fine across each compliance period
         fine_5yr  = annual_fine * 5
-        fine_10yr = annual_fine * 10
-        fine_25yr = annual_fine * 25  # all 5 periods through 2050
 
         # Future period fines — limits tighten each period
         limits = BERDO_STANDARDS[berdo_category]
@@ -2969,8 +2968,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             "The comparison below uses cumulative fines through 2050, not just the current period."
         )
 
-        cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_25yr
-        cum_fine_10yr = sum(r["5yr_fine"] for r in period_fines[:2]) if len(period_fines) >= 2 else fine_10yr
+        cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_5yr
+        cum_fine_10yr = sum(r["5yr_fine"] for r in period_fines[:2]) if len(period_fines) >= 2 else fine_5yr
 
         d1, d2, d3 = st.columns(3)
         d1.metric(
@@ -3271,14 +3270,14 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         "Diesel": 138.0, "Kerosene": 135.0,
     }
 
-    def calc_reduction_kg(fuel, unit, amount):
+    def calc_reduction_kg(fuel, unit, amount, year=2025):
         if unit == "gallons":
             kbtu_factor = gallon_kbtu.get(fuel, 138.0)
         else:
             kbtu_factor = unit_to_kbtu.get(unit, 1.0)
         kbtu = amount * kbtu_factor
         if fuel == "Electricity":
-            ef = PROJECTED_GRID_EF.get(2025, 249) / 1000 / 3.412  # kg/kBtu
+            ef = PROJECTED_GRID_EF.get(year, PROJECTED_GRID_EF[2025]) / 1000 / 3.412  # kg/kBtu
         else:
             ef = FUEL_EF_KG_PER_KBTU.get(fuel, 0.05311)
         return round(kbtu * ef, 2)
@@ -3337,7 +3336,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                     key=f"ep_proj_unit_{idx}", label_visibility="collapsed"
                 )
             with row[5]:
-                proj["reduction_kg"] = calc_reduction_kg(proj["fuel"], proj["unit"], proj["amount"])
+                proj["reduction_kg"] = calc_reduction_kg(proj["fuel"], proj["unit"], proj["amount"], proj["year"])
                 st.metric(
                     "Reduction", f"{proj['reduction_kg']:,.1f}",
                     label_visibility="collapsed"
@@ -3577,7 +3576,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     ))
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS, y=baseline_mt,
-        name="Baseline (no changes)",
+        name="Worst case — no action",
         mode="lines",
         line=dict(color="#E24B4A", width=2, dash="dash"),
     ))
@@ -3628,7 +3627,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 **How emissions are projected**
 
 The baseline uses your building's current reported GHG intensity (kg CO₂e/sqft/yr) 
-multiplied by floor area, held flat across all periods. This is a conservative assumption — 
+multiplied by floor area, held flat across all periods — a worst-case assumption, not a forecast —
 grid decarbonization would reduce electricity-attributed emissions over time independently of 
 any retrofit.
 
