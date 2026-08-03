@@ -3514,10 +3514,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
     s_cols = st.columns(max(num_cols, 2))
 
+    current_annual_fine = max(total_emissions_kg - limits[0] * sqft, 0) / 1000 * ACP_RATE
     s_cols[0].metric(
-        "Cumulative ACP — baseline",
-        f"${baseline_fines_cumul:,.0f}",
-        delta="through 2050, no changes",
+        "Annual ACP — current period (2025–29)",
+        f"${current_annual_fine:,.0f}",
+        delta="at current emissions, this period's cap",
     )
     col_idx = 1
     if has_projects:
