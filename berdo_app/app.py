@@ -15,7 +15,7 @@ st.set_page_config(
 #BERDO 2.0 emissions standards
 #Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021)
 #Units: kg CO2e / sq ft / year
-#Periods: 2025-29, 2030-34, 2035-39, 2040-44, 2045-49, 2050
+#Periods: 2025-29, 2030-34, 2035-39, 2040-44, 2045-49, 2050+
 
 BERDO_STANDARDS = {
     "Assembly":                [7.8,  4.6,  3.3,  2.1, 1.1, 0.0],
@@ -403,24 +403,33 @@ def render_compliance_section(
     #Fine exposure summary
     non_compliant_periods = [g for g in gaps if not g["compliant"]]
     if non_compliant_periods:
-        total_5yr_fine = sum(g["annual_fine_usd"] * 5 for g in non_compliant_periods)
+        finite     = [g for g in non_compliant_periods if g["period"] != "2050+"]
+        indefinite = next((g for g in non_compliant_periods if g["period"] == "2050+"), None)
+        total_5yr_fine = sum(g["annual_fine_usd"] * 5 for g in finite)
         msg = (
             f"**Conservative scenario:** if no emissions reductions are made, this building "
             f"faces an estimated USD {total_5yr_fine:,.0f} in cumulative ACP payments across "
-            f"{len(non_compliant_periods)} non-compliant period(s) "
+            f"{len(finite)} five-year non-compliant period(s) through 2050 "
             f"(annual fine × 5 years per period)."
         )
+        if indefinite:
+            msg += (
+                f" From 2050 onward, an additional estimated USD "
+                f"{indefinite['annual_fine_usd']:,.0f}/year applies indefinitely if the "
+                f"building remains non-compliant."
+            )
         if projected_intensities is not None:
             proj_non_compliant = [
                 proj_gap_for_period[i]
                 for i in range(len(COMPLIANCE_PERIODS))
                 if not proj_gap_for_period[i]["compliant"]
             ]
-            total_proj_fine = sum(g["annual_fine_usd"] * 5 for g in proj_non_compliant)
+            proj_finite = [g for g in proj_non_compliant if g["period"] != "2050+"]
+            total_proj_fine = sum(g["annual_fine_usd"] * 5 for g in proj_finite)
             if proj_non_compliant:
                 msg += (
                     f"\n\n**Grid decarbonization scenario:** estimated USD {total_proj_fine:,.0f} "
-                    f"across {len(proj_non_compliant)} non-compliant period(s)."
+                    f"across {len(proj_finite)} five-year non-compliant period(s) through 2050."
                 )
             else:
                 msg += "\n\n**Grid decarbonization scenario:** building achieves compliance in all periods from grid cleaning alone."
@@ -944,9 +953,19 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         for i in range(len(COMPLIANCE_PERIODS))
         if portfolio_intensity > blended_limits[i]
     ]
+    finite_non_compliant = [
+        (i, lim) for i, lim in non_compliant_periods if COMPLIANCE_PERIODS[i] != "2050+"
+    ]
+    indefinite_limit = next(
+        (lim for i, lim in non_compliant_periods if COMPLIANCE_PERIODS[i] == "2050+"), None
+    )
     total_5yr = sum(
         round(max(portfolio_intensity - lim, 0) * total_sqft / 1000, 1) * ACP_RATE * 5
-        for _, lim in non_compliant_periods
+        for _, lim in finite_non_compliant
+    )
+    indefinite_annual_fine = (
+        round(max(portfolio_intensity - indefinite_limit, 0) * total_sqft / 1000, 1) * ACP_RATE
+        if indefinite_limit is not None else 0.0
     )
 
     #Plain-English summary
@@ -2871,7 +2890,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         grid_emissions_kg = [total_emissions_kg] * len(COMPLIANCE_PERIODS)
 
     #Period mapping
-    period_start_years = [2025, 2030, 2035, 2040, 2045, 2050]
+    period_start_years = [2025, 2030, 2035, 2040, 2045, 2050+]
 
     def period_for_year(y):
         for i in range(len(period_start_years) - 1, -1, -1):
