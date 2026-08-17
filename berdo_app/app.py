@@ -977,12 +977,19 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
             f"{'all periods' if not non_compliant_periods else f'the {COMPLIANCE_PERIODS[non_compliant_periods[0][0]]} period'}."
         )
     else:
-        st.error(
+        error_msg = (
             f"This portfolio is **non-compliant** in the current 2025–2029 period. "
             f"At current emissions, it faces an estimated USD {current_fine:,.0f}/year in ACP fines "
             f"and USD {total_5yr:,.0f} in cumulative payments across "
-            f"{len(non_compliant_periods)} non-compliant period(s) if no reductions are made."
+            f"{len(finite_non_compliant)} five-year non-compliant period(s) through 2050 "
+            f"if no reductions are made."
         )
+        if indefinite_annual_fine > 0:
+            error_msg += (
+                f" From 2050 onward, an additional estimated USD "
+                f"{indefinite_annual_fine:,.0f}/year applies indefinitely."
+            )
+        st.error(error_msg)
 
     #Summary header metrics
     c1, c2, c3, c4 = st.columns(4)
