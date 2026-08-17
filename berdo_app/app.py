@@ -2458,7 +2458,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 })
 
         #Decision matrix
-        st.markdown("####Cost comparison. Retrofit now vs. pay escalating fines")
+        st.markdown("Cost comparison. Retrofit now vs. pay escalating fines")
         st.caption(
             "BERDO fines grow every five years as the emissions limit tightens. "
             "The comparison below uses cumulative fines through 2050, not just the current period."
@@ -2469,7 +2469,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
         d1, d2, d3 = st.columns(3)
         d1.metric(
-            "Fines — current period only (5 yrs)",
+            "Fines: current period only (5 yrs)",
             _fmt_dollars(fine_5yr),
             delta="Grows each period as limits tighten",
         )
@@ -2485,7 +2485,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         )
 
         #Plain-English recommendation
-        st.markdown("####Recommendation")
+        st.markdown("Recommendation")
 
         #Key insight: fines escalate, so compare retrofit against cumulative fines
         #not just one period. Also compute crossover period.
@@ -2550,7 +2550,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
         #Period-by-period fine escalation table
         if period_fines:
-            st.markdown("####Fine escalation by period")
+            st.markdown("Fine escalation by period")
             st.caption(
                 "Each period the BERDO limit drops. If your building's emissions stay flat, "
                 "the gap — and the fine — grows. The right column shows when cumulative "
