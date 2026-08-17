@@ -2988,9 +2988,12 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     #Summary metrics
     def _cumulative_fine(emissions_by_period):
+        #"2050+" has no end date, so it can't be annualized ×5 like the
+        #five-year periods. Sum only the finite periods.
         return sum(
             max(emissions_by_period[i] - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
             for i in range(len(COMPLIANCE_PERIODS))
+            if COMPLIANCE_PERIODS[i] != "2050+"
         )
 
     baseline_fines_cumul = _cumulative_fine([total_emissions_kg] * len(COMPLIANCE_PERIODS))
