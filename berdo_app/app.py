@@ -2890,7 +2890,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         grid_emissions_kg = [total_emissions_kg] * len(COMPLIANCE_PERIODS)
 
     #Period mapping
-    period_start_years = [2025, 2030, 2035, 2040, 2045, 2050+]
+    period_start_years = [2025, 2030, 2035, 2040, 2045, 2050]
 
     def period_for_year(y):
         for i in range(len(period_start_years) - 1, -1, -1):
