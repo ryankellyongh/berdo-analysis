@@ -51,7 +51,7 @@ PROJECTED_GRID_EF = {
 }
 
 #Representative year for each compliance period (midpoint, or period start for 2050)
-PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050+]
+PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 
 
 #Mapping from Energy Star Portfolio Manager property types → BERDO categories
