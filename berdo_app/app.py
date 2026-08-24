@@ -2205,7 +2205,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     m4.metric("Estimated net cost (low–high)",
               f"${net_low:,.0f} – ${net_high:,.0f}")
 
-        st.caption(
+    st.caption(
         "Incentive estimates are $/sqft proxies based on program benchmarks — "
         "actual awards depend on application, project scope, and program availability. "
         "Tax **deductions** are shown at after-tax cash value (21% corporate rate), not face value. "
