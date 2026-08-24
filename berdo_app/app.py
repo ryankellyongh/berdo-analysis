@@ -76,9 +76,28 @@ def effective_grid_ef(year: int) -> float:
     clamped = min(max(year, _EF_MIN_YR), _EF_MAX_YR)
     return PROJECTED_GRID_EF[clamped] * (1.0 - rps_class_i(clamped))
 
-
-
-
+def rec_pathway(gap_kg, elec_emissions_kg, year, rec_price):
+    """
+    Cost of closing a compliance gap with MA Class I RECs instead of ACP.
+    RECs offset electricity emissions only; any fossil residual still pays ACP.
+    Returns a dict, or None if there is no gap.
+    """
+    if gap_kg <= 0:
+        return None
+    ef = PROJECTED_GRID_EF[min(max(year, _EF_MIN_YR), _EF_MAX_YR)]
+    abatable_kg = min(gap_kg, max(elec_emissions_kg, 0.0))
+    recs        = abatable_kg / ef
+    residual_kg = gap_kg - abatable_kg
+    residual_acp = residual_kg / 1000 * ACP_RATE
+    return {
+        "recs_needed":   recs,
+        "rec_cost":      recs * rec_price,
+        "residual_acp":  residual_acp,
+        "total_cost":    recs * rec_price + residual_acp,
+        "acp_only":      gap_kg / 1000 * ACP_RATE,
+        "breakeven_price": ACP_RATE * ef / 1000,
+        "fully_covered": residual_kg <= 0,
+    }
 
 #Representative year for each compliance period (midpoint, or period start for 2050)
 PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
@@ -1528,6 +1547,12 @@ DISTRICT_STEAM_EF = {
     "MATEP District Steam":                  0.06220,
 }
 
+#MA Class I REC pathway (BERDO Renewable Energy Quick Guide; City REC Connector Program).
+#Retiring 1 MA Class I REC covers 1 MWh of otherwise-unmatched grid electricity,
+#avoiding PROJECTED_GRID_EF[year] kg CO2e. RECs offset ELECTRICITY emissions only.
+REC_CONNECTOR_DEADLINE = "October 31, 2026"   #for 2025 emissions compliance
+REC_DEFAULT_PRICE      = 40.0                 #USD/REC — verify at berdo.greenenergyconsumers.org
+
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
 FUEL_UNIT_TO_KBTU = {
     "therms":   100.0,      #natural gas
@@ -2518,7 +2543,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     #Retrofit vs. compliance decision
     st.markdown("---")
-    st.subheader("Retrofit vs. pay the fine")
+    st.subheader("Three paths: retrofit, RECs, or pay the ACP")
     st.caption(
         "Sometimes paying the ACP fine is cheaper than retrofitting — at least in the near term. "
         "This section compares both paths so you can make an informed decision."
@@ -2576,6 +2601,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             "Retrofit — net cost (low estimate)",
             "Fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low),
             delta="One-time outlay, fines avoided permanently",
+        )
+
+        #REC pathway — the third option
+        st.markdown("#### Option 3: buy MA Class I RECs")
+        ...
         )
 
         #Plain-English recommendation
