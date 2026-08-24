@@ -1632,6 +1632,8 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.58,
         "amount_psf_high": 5.81,
+        "cash_value_factor": 0.21,   #deduction, not credit — worth marginal rate × amount
+        "closed_to_new_projects": True,
         "amount_str": "Up to USD 5.81/sqft (2025, prevailing wage and apprenticeship); USD 0.58–1.16/sqft (partial)",
         "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
         "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
@@ -1662,9 +1664,10 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 5.00,
+        "closed_to_new_projects": True,
         "amount_str": "USD 500–USD 2,500/unit (Energy Star); USD 1,000–USD 5,000/unit (Zero Energy Ready)",
         "eligibility": "Multifamily residential; new construction and substantial rehab",
-        "expiration": "Through 2032",
+        "expiration": "Terminated for homes acquired after June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm eligibility with a tax advisor.",
         "conflicts": [],
         "stacks_with": ["Mass Save rebates", "IRA 179D"],
         "berdo_periods": ["2025–29", "2030–34"],
@@ -1771,6 +1774,8 @@ OWNERSHIP_TYPES_OPT = ["For-profit", "Nonprofit / Government", "Not sure"]
 
 def _opt_incentive_applies(inc, scopes, fuel, ownership, berdo_category):
     """Return True if this incentive matches the user's inputs."""
+    if inc.get("closed_to_new_projects"):
+        return False
     if not any(s in inc["scopes"] for s in scopes):
         return False
     if fuel not in inc["fuels"]:
@@ -1783,14 +1788,17 @@ def _opt_incentive_applies(inc, scopes, fuel, ownership, berdo_category):
             return False
     return True
 
-
 def _estimate_incentive_value(inc, sqft):
-    """Return (low, high) dollar estimate for an incentive."""
+    """
+    Return (low, high) dollar estimate for an incentive.
+    Deductions are converted to after-tax cash value via cash_value_factor;
+    credits and rebates default to 1.0 (dollar-for-dollar).
+    """
+    f = inc.get("cash_value_factor", 1.0)
     return (
-        round(inc["amount_psf_low"] * sqft, 0),
-        round(inc["amount_psf_high"] * sqft, 0),
+        round(inc["amount_psf_low"]  * sqft * f, 0),
+        round(inc["amount_psf_high"] * sqft * f, 0),
     )
-
 
 def render_retrofit_optimizer_tab(prefill: dict = None):
     """
@@ -2127,6 +2135,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     matched = [
         inc for inc in INCENTIVE_STACK
         if _opt_incentive_applies(inc, scopes_selected, fuel, ownership, berdo_category)
+        if inc.get("closed_to_new_projects"):
+        return False
     ]
 
     if not matched:
@@ -2197,9 +2207,12 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     m4.metric("Estimated net cost (low–high)",
               f"${net_low:,.0f} – ${net_high:,.0f}")
 
-    st.caption(
+        st.caption(
         "Incentive estimates are $/sqft proxies based on program benchmarks — "
         "actual awards depend on application, project scope, and program availability. "
+        "Tax **deductions** are shown at after-tax cash value (21% corporate rate), not face value. "
+        "Programs closed to new projects — IRA 179D and 45L, both terminated for work beginning "
+        "after June 30, 2026 — are excluded from these totals. "
         "Gross cost benchmarks from RSMeans / ASHRAE / DOE BTO (2024–2026)."
     )
 
@@ -2699,7 +2712,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 - Mass Save commercial rebates: masssave.com (amounts reset each January)
 - IRA Section 179D: IRS Notice 2023-29, as amended; inflation-indexed annually
 - IRA Section 48C: IRS Rev. Proc. 2023-27; competitive allocation rounds
-- IRA Section 45L: IRS Notice 2023-65; applies through 2032
+- IRA Section 45L: IRS Notice 2023-65; terminated for homes acquired after June 30, 2026 (P.L. 119-21)
+- IRA Section 179D: terminated for property whose construction begins after June 30, 2026 (P.L. 119-21)
 - MassDOER / MassCEC: masscec.com and mass.gov/doer (program-dependent)
 - Green Communities: mass.gov/green-communities (annual grant rounds)
 
