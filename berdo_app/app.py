@@ -2543,12 +2543,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     #Retrofit vs. compliance decision
     st.markdown("---")
-    st.subheader("Three paths: retrofit, RECs, or pay the ACP")
     st.caption(
-        "Sometimes paying the ACP fine is cheaper than retrofitting — at least in the near term. "
-        "This section compares both paths so you can make an informed decision."
+    "Three ways to close a BERDO gap: retrofit the building, retire MA Class I RECs "
+     "to offset electricity emissions, or pay the Alternative Compliance Payment. "
+     "This section compares all three so you can make an informed decision."
     )
-
     if not annual_fine or annual_fine == 0:
         st.info(
             "Look up your building in the Address Lookup tab or enter your annual fine above "
@@ -2605,10 +2604,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
         #REC pathway — the third option
         st.markdown("#### Option 3: buy MA Class I RECs")
-        ...
-        )
 
-        #Plain-English recommendation
+        #Recommendation
         st.markdown("Recommendation")
 
         #Key insight: fines escalate, so compare retrofit against cumulative fines
