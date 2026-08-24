@@ -404,6 +404,8 @@ def render_compliance_section(
             overlaying="y",
             side="right",
             showgrid=False,
+            rangemode="tozero",
+            range=[0, max(fines) * 1.1] if max(fines) > 0 else None,
         ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         height=400,
@@ -1246,7 +1248,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
     st.markdown("---")
 
     #Per-building surplus/deficit table (sorted by 2025 gap, worst first) ---
-    st.markdown("####Per-Building Surplus / Deficit")
+    st.markdown("#### Per-Building Surplus / Deficit")
     st.caption(
         "Sorted by largest deficit first. "
         "Buildings with a surplus (negative gap) can offset those with a deficit at the portfolio level."
@@ -1513,6 +1515,17 @@ FUEL_EF_KG_PER_KBTU = {
     "Kerosene":         0.07769,
     "District steam":   0.06640,   #Default District Steam; named systems differ — see below
     "Electricity":      None,      #use effective_grid_ef() — Appendix B × (1 − RPS Class I)
+}
+
+#District energy system factors, kg CO₂e/kBtu.
+#BERDO publishes per-operator factors; the default applies only when the system
+#is unknown. Source: BERDO Emissions Factors List, May 5, 2026.
+DISTRICT_STEAM_EF = {
+    "Default (unknown system)":              0.06640,
+    "Vicinity District Steam (Boston)":      0.05810,
+    "Vicinity District Steam (Longfellow)":  0.05110,
+    "Vicinity District e-steam":             0.0,
+    "MATEP District Steam":                  0.06220,
 }
 
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
@@ -3064,11 +3077,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         fines_rows.append(frow)
 
     #Table 1: Emissions
-    st.markdown("####Projected emissions vs. BERDO limit (kg CO₂e/yr)")
+    st.markdown("#### Projected emissions vs. BERDO limit (kg CO₂e/yr)")
     st.dataframe(pd.DataFrame(emissions_rows), use_container_width=True, hide_index=True)
 
     #Table 2: ACP fines
-    st.markdown("####Estimated ACP fine — annual, per period")
+    st.markdown("#### Estimated ACP fine — annual, per period")
     st.caption("Alternative Compliance Payment at $234/metric ton CO₂e over limit.")
     st.dataframe(pd.DataFrame(fines_rows), use_container_width=True, hide_index=True)
 
