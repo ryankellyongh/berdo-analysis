@@ -50,7 +50,8 @@ PROJECTED_GRID_EF = {
     2047: 163, 2048: 159, 2049: 155, 2050: 150,
 }
 
-# MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix D.
+# MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
+# Verified against BERDO Emissions Factors List, last updated May 5, 2026.
 # BERDO electricity formula: G = U × (1 − R) × E
 # Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
 RPS_CLASS_I = {
@@ -1500,15 +1501,18 @@ BOSTON_LABOR_MULTIPLIER = 1.25
 #Units: kg CO₂e per kBtu of site energy consumed
 
 FUEL_EF_KG_PER_KBTU = {
-    "Natural gas":      0.05311,   #5.311 kg CO₂e/therm ÷ 100 kBtu/therm
+    #BERDO Emissions Factors List, 2025 factors (kg CO₂e/mmBtu ÷ 1000).
+    #Verified against the City of Boston PDF, last updated May 5, 2026.
+    "Natural gas":      0.05311,
+    "Propane":          0.06425,
+    "Fuel oil #1":      0.07350,
     "Fuel oil #2":      0.07421,   #distillate / home heating oil
     "Fuel oil #4":      0.07529,
-    "Fuel oil #5/#6":   0.07529,   #residual
-    "Propane":          0.06154,
+    "Fuel oil #5/#6":   0.07535,   #residual
     "Diesel":           0.07421,
-    "Kerosene":         0.07219,
-    "District steam":   0.06571,   #default; custom factors may apply
-    "Electricity":      None,      #use PROJECTED_GRID_EF (kg CO₂e/MWh)
+    "Kerosene":         0.07769,
+    "District steam":   0.06640,   #Default District Steam; named systems differ — see below
+    "Electricity":      None,      #use effective_grid_ef() — Appendix B × (1 − RPS Class I)
 }
 
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
@@ -1989,7 +1993,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     with proj_cols[0]:
         proj_fuel = st.selectbox(
             "Fuel type being reduced",
-            options=["Natural gas", "Fuel oil #2", "Fuel oil #4", "Fuel oil #5/#6",
+            options=["Natural gas", Fuel oil #1, "Fuel oil #2", "Fuel oil #4", "Fuel oil #5/#6",
                      "Propane", "Diesel", "Kerosene", "Electricity", "District steam"],
             key="proj_fuel_type",
             help="Select the fuel your retrofit will reduce or eliminate.",
@@ -1997,6 +2001,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     with proj_cols[1]:
         unit_options = {
             "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
+            "Fuel oil #1":     ["gallons", "kBtu", "MMBtu"],
             "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
             "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
             "Fuel oil #5/#6": ["gallons", "kBtu", "MMBtu"],
@@ -2033,6 +2038,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         #Override gallon factor by fuel type
         if proj_unit == "gallons":
             gal_factor = {
+                "Fuel oil #1": 135.0,
                 "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
                 "Fuel oil #5/#6": 150.0, "Propane": 92.0,
                 "Diesel": 138.0, "Kerosene": 135.0,
@@ -2806,6 +2812,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     #Project entry table
     fuel_unit_options = {
         "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
+        "Fuel oil #1":    ["gallons", "kBtu", "MMBtu"],
         "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
         "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
         "Fuel oil #5/#6": ["gallons", "kBtu", "MMBtu"],
@@ -2822,6 +2829,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         "gallons": 138.0,  #overridden per fuel below
     }
     gallon_kbtu = {
+        "Fuel oil #1": 135.0,  
         "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
         "Fuel oil #5/#6": 150.0, "Propane": 92.0,
         "Diesel": 138.0, "Kerosene": 135.0,
