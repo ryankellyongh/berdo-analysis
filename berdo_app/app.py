@@ -50,6 +50,35 @@ PROJECTED_GRID_EF = {
     2047: 163, 2048: 159, 2049: 155, 2050: 150,
 }
 
+# MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix D.
+# BERDO electricity formula: G = U × (1 − R) × E
+# Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
+RPS_CLASS_I = {
+    2022: 0.20, 2023: 0.22, 2024: 0.24, 2025: 0.27, 2026: 0.30,
+    2027: 0.33, 2028: 0.36, 2029: 0.39, 2030: 0.40,
+}
+for _y in range(2031, 2051):
+    RPS_CLASS_I[_y] = round(0.40 + 0.01 * (_y - 2030), 2)
+
+_EF_MIN_YR, _EF_MAX_YR = min(PROJECTED_GRID_EF), max(PROJECTED_GRID_EF)
+
+def rps_class_i(year: int) -> float:
+    """RPS Class I fraction for a year, clamped to the published schedule."""
+    return RPS_CLASS_I.get(min(max(year, _EF_MIN_YR), _EF_MAX_YR), 0.0)
+
+
+def effective_grid_ef(year: int) -> float:
+    """
+    BERDO-effective grid EF in kg CO2e/MWh, after the RPS Class I offset.
+    This — not the raw Appendix B value — is what BERDO bills electricity at.
+    """
+    clamped = min(max(year, _EF_MIN_YR), _EF_MAX_YR)
+    return PROJECTED_GRID_EF[clamped] * (1.0 - rps_class_i(clamped))
+
+
+
+
+
 #Representative year for each compliance period (midpoint, or period start for 2050)
 PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 
@@ -124,6 +153,23 @@ PROPERTY_TYPE_MAP = {
     "mixed use property": "Office",
 }
 
+def project_ghg_intensities(ghg_intensity, elec_share, base_year):
+    """
+    Electricity component scales by the ratio of BERDO-effective grid EFs
+    (Appendix B factor × (1 − RPS Class I)); fossil component held constant.
+    """
+    base_ef = effective_grid_ef(base_year)
+    if base_ef <= 0:
+        return [ghg_intensity] * len(COMPLIANCE_PERIODS)
+
+    elec_intensity   = ghg_intensity * elec_share
+    fossil_intensity = ghg_intensity * (1.0 - elec_share)
+
+    projected = []
+    for yr in PERIOD_REPRESENTATIVE_YEARS:
+        future_elec = elec_intensity * (effective_grid_ef(yr) / base_ef)
+        projected.append(round(fossil_intensity + future_elec, 3))
+    return projected
 
 def map_property_type(raw_type):
     if pd.isna(raw_type) or not isinstance(raw_type, str):
@@ -148,34 +194,6 @@ def standardize_address_series(series):
         .str.replace(" ROAD", " RD", regex=False)
     )
     return cleaned
-
-
-#Grid decarbonization projection
-
-def project_ghg_intensities(ghg_intensity, elec_share, base_year):
-    """
-    Project GHG intensity for each compliance period assuming:
-      - Electricity component shrinks as the grid decarbonizes
-        (using Appendix B projected grid EFs)
-      - Fossil fuel component stays constant (no operational changes)
-
-    Returns a list of 6 projected intensities, one per COMPLIANCE_PERIODS entry.
-    Falls back to the base_year EF if base_year is not in PROJECTED_GRID_EF.
-    """
-    base_ef = PROJECTED_GRID_EF.get(base_year, PROJECTED_GRID_EF[2025])
-    if base_ef == 0:
-        return [ghg_intensity] * len(COMPLIANCE_PERIODS)
-
-    elec_intensity   = ghg_intensity * elec_share
-    fossil_intensity = ghg_intensity * (1.0 - elec_share)
-
-    projected = []
-    for yr in PERIOD_REPRESENTATIVE_YEARS:
-        future_ef = PROJECTED_GRID_EF.get(yr, base_ef)
-        future_elec = elec_intensity * (future_ef / base_ef)
-        projected.append(round(fossil_intensity + future_elec, 3))
-    return projected
-
 
 #Compliance gap calculation
 
@@ -435,7 +453,7 @@ def render_compliance_section(
         st.info(msg)
 
     #Caption
-    base_ef = PROJECTED_GRID_EF.get(base_year, PROJECTED_GRID_EF[2025])
+    base_ef = effective_grid_ef(base_year)
     caption = (
         "ACP = Alternative Compliance Payment at $234/metric ton CO₂e over limit. "
         "**Conservative line:** current GHG intensity held flat — no operational changes, "
@@ -1119,7 +1137,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     if elec_share is not None:
         projected = project_ghg_intensities(
             portfolio_intensity, elec_share,
-            selected_year if selected_year in PROJECTED_GRID_EF else 2025,
+            selected_year,
         )
         fig.add_trace(go.Scatter(
             x=COMPLIANCE_PERIODS,
@@ -2025,12 +2043,13 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
         #Calculate emissions reduction
         if proj_fuel == "Electricity":
-            #Use 2025 grid EF (kg CO₂e/MWh → per kBtu)
-            grid_ef_kwh = PROJECTED_GRID_EF.get(2025, 249) / 1000  #kg/kWh
-            ef = grid_ef_kwh / 3.412  #kg/kBtu
+            #BERDO-effective grid EF (Appendix B × (1 − RPS Class I)), kg/MWh → kg/kBtu.
+            #This section answers "does it close the 2025–29 gap?", so use that
+            #period's representative year to match the limit being compared against.
+            ef = effective_grid_ef(PERIOD_REPRESENTATIVE_YEARS[0]) / 1000 / 3.412
         else:
-            ef = FUEL_EF_KG_PER_KBTU.get(proj_fuel, 0.05311)
-
+            ef = FUEL_EF_KG_PER_KBTU[proj_fuel]
+        
         proj_emission_reduction_kg  = proj_kbtu * ef           #kg CO₂e/yr
         proj_emission_reduction_mt  = proj_emission_reduction_kg / 1000  #metric tons
         proj_intensity_reduction    = proj_emission_reduction_kg / sqft  #kg/sqft/yr
@@ -2815,9 +2834,9 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             kbtu_factor = unit_to_kbtu.get(unit, 1.0)
         kbtu = amount * kbtu_factor
         if fuel == "Electricity":
-            ef = PROJECTED_GRID_EF.get(year, PROJECTED_GRID_EF[2025]) / 1000 / 3.412  #kg/kBtu
+            ef = effective_grid_ef(year) / 1000 / 3.412  #kg/kBtu
         else:
-            ef = FUEL_EF_KG_PER_KBTU.get(fuel, 0.05311)
+            ef = FUEL_EF_KG_PER_KBTU[fuel]  
         return round(kbtu * ef, 2)
 
     projects_to_remove = []
@@ -2900,8 +2919,8 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     elec_share_val = elec_share if elec_share is not None else 0.5
 
     if apply_grid:
-        base_ef = PROJECTED_GRID_EF.get(2025, 249)
-        ef_2050 = PROJECTED_GRID_EF.get(2050, 150)
+        base_ef = effective_grid_ef(2025)
+        ef_2050 = effective_grid_ef(2050)
         st.caption(
             f"Grid decarbonization is ON (sidebar). "
             f"Electricity share: {round(elec_share_val * 100)}%. "
@@ -3262,11 +3281,12 @@ if show_grid_decarb:
         ),
     )
     elec_share = elec_share_pct / 100.0
-    base_ef = PROJECTED_GRID_EF.get(selected_year, PROJECTED_GRID_EF[2025])
+    base_ef = effective_grid_ef(selected_year)
+    ef_2050 = effective_grid_ef(2050)
     st.sidebar.caption(
-        f"Base year grid EF ({selected_year}): **{base_ef} kg/MWh** "
-        f"(Appendix B). Projected EF at 2050: **{PROJECTED_GRID_EF[2050]} kg/MWh** "
-        f"({round((1 - PROJECTED_GRID_EF[2050] / base_ef) * 100)}% cleaner)."
+        f"Base year grid EF ({selected_year}): **{base_ef:.0f} kg/MWh** "
+        f"(Appendix B × RPS Class I). Projected EF at 2050: **{ef_2050:.0f} kg/MWh** "
+        f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner)."
     )
 else:
     elec_share = None
@@ -3399,7 +3419,7 @@ with tab_address:
                     projected_intensities = project_ghg_intensities(
                         ghg_intensity=float(ghg_val),
                         elec_share=elec_share,
-                        base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
+                        base_year=selected_year,
                     )
 
             render_compliance_section(
