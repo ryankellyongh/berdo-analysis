@@ -2606,7 +2606,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         #REC pathway — the third option
         st.markdown("#### Option 3: buy MA Class I RECs")
         st.caption(
-            "BERDO lets you retire MA Class I RECs to offset electricity emissions. "
+            "BERDO lets you retire MA Class I RECs to offset electricity emissions.")
 
         #Recommendation
         st.markdown("Recommendation")
