@@ -2607,10 +2607,67 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             delta="One-time outlay, fines avoided permanently",
         )
 
-        #REC pathway — the third option
+                #REC pathway — the third option
         st.markdown("#### Option 3: buy MA Class I RECs")
         st.caption(
-            "BERDO lets you retire MA Class I RECs to offset electricity emissions.")
+            "BERDO lets you retire MA Class I RECs to offset electricity emissions. "
+            "One REC covers 1 MWh and avoids the full grid emissions factor for that year. "
+            "RECs cannot offset fossil fuel emissions."
+        )
+        rc1, rc2 = st.columns([1, 3])
+        with rc1:
+            rec_price = st.number_input(
+                "REC price (USD/REC)", min_value=0.0, max_value=200.0,
+                value=REC_DEFAULT_PRICE, step=5.0, key="opt_rec_price",
+                help="Check current pricing at berdo.greenenergyconsumers.org. Prices move.",
+            )
+        _rec_gap_kg  = max(prefill_ghg_val - limits[0], 0) * sqft if prefill_ghg_val else 0
+        _rec_elec_kg = (prefill_ghg_val or 0) * sqft * (elec_share if elec_share is not None else 0.5)
+        rec = rec_pathway(_rec_gap_kg, _rec_elec_kg, 2025, rec_price)
+        if rec:
+            with rc2:
+                r1, r2, r3 = st.columns(3)
+                r1.metric("MA Class I RECs needed", f"{rec['recs_needed']:,.0f}/yr")
+                r2.metric("Annual REC cost", _fmt_dollars(rec["rec_cost"]))
+                r3.metric("vs. paying the ACP",
+                          _fmt_dollars(abs(rec["acp_only"] - rec["total_cost"])),
+                          delta="cheaper per year" if rec["total_cost"] < rec["acp_only"]
+                          else "more expensive per year",
+                          delta_color="off")
+            if rec["total_cost"] < rec["acp_only"]:
+                st.success(
+                    f"**RECs are cheaper than the ACP at this price.** "
+                    f"{_fmt_dollars(rec['total_cost'])}/yr vs {_fmt_dollars(rec['acp_only'])}/yr in ACP, "
+                    f"saving {_fmt_dollars(rec['acp_only'] - rec['total_cost'])}/yr. "
+                    f"Break-even is **{rec['breakeven_price']:.2f} USD/REC** at the 2025 grid factor. "
+                    f"RECs buy time, not compliance: they must be repurchased every year, and the "
+                    f"break-even falls to {ACP_RATE * PROJECTED_GRID_EF[2050] / 1000:.2f} USD/REC by 2050 "
+                    f"as the grid cleans up and each REC avoids less CO2e."
+                )
+            else:
+                st.info(
+                    f"**At {rec_price:.0f} USD/REC, paying the ACP is cheaper.** "
+                    f"RECs would cost {_fmt_dollars(rec['total_cost'])}/yr vs "
+                    f"{_fmt_dollars(rec['acp_only'])}/yr in ACP. "
+                    f"Break-even is {rec['breakeven_price']:.2f} USD/REC."
+                )
+            if not rec["fully_covered"]:
+                st.warning(
+                    f"RECs offset electricity emissions only. "
+                    f"{_fmt_dollars(rec['residual_acp'])}/yr in ACP would remain on the "
+                    f"fossil-fuel portion of this building's gap."
+                )
+            st.caption(
+                f"Assumes {(elec_share if elec_share is not None else 0.5):.0%} of this building's "
+                f"emissions come from electricity (set in the sidebar). "
+                f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
+                "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
+                "independent broker. RECs must be MA Class I from non-emitting sources: solar, wind, "
+                "small hydro, geothermal. Biomass and landfill gas do not qualify. BERDO's REC rules "
+                "are under active revision; confirm before relying on this."
+            )
+        else:
+            rec = None
 
         #Recommendation
         st.markdown("Recommendation")
