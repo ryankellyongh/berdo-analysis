@@ -1777,7 +1777,8 @@ def _opt_incentive_applies(inc, scopes, fuel, ownership, berdo_category):
     if inc.get("closed_to_new_projects"):
         return False
     if not any(s in inc["scopes"] for s in scopes):
-        return False    if fuel not in inc["fuels"]:
+        return False
+    if fuel not in inc["fuels"]:
         return False
     if ownership != "Not sure":
         if ownership not in inc["ownership"]:
@@ -1786,7 +1787,7 @@ def _opt_incentive_applies(inc, scopes, fuel, ownership, berdo_category):
         if berdo_category not in inc["berdo_types"]:
             return False
     return True
-
+    
 def _estimate_incentive_value(inc, sqft):
     """
     Return (low, high) dollar estimate for an incentive.
