@@ -1993,7 +1993,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     with proj_cols[0]:
         proj_fuel = st.selectbox(
             "Fuel type being reduced",
-            options=["Natural gas", Fuel oil #1, "Fuel oil #2", "Fuel oil #4", "Fuel oil #5/#6",
+            options=["Natural gas", "Fuel oil #1", "Fuel oil #2", "Fuel oil #4", "Fuel oil #5/#6",
                      "Propane", "Diesel", "Kerosene", "Electricity", "District steam"],
             key="proj_fuel_type",
             help="Select the fuel your retrofit will reduce or eliminate.",
