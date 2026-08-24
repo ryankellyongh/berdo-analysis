@@ -1777,8 +1777,7 @@ def _opt_incentive_applies(inc, scopes, fuel, ownership, berdo_category):
     if inc.get("closed_to_new_projects"):
         return False
     if not any(s in inc["scopes"] for s in scopes):
-        return False
-    if fuel not in inc["fuels"]:
+        return False    if fuel not in inc["fuels"]:
         return False
     if ownership != "Not sure":
         if ownership not in inc["ownership"]:
@@ -2135,8 +2134,6 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     matched = [
         inc for inc in INCENTIVE_STACK
         if _opt_incentive_applies(inc, scopes_selected, fuel, ownership, berdo_category)
-        if inc.get("closed_to_new_projects"):
-        return False
     ]
 
     if not matched:
