@@ -462,7 +462,7 @@ def render_compliance_section(
     if projected_intensities is not None:
         caption += (
             f"**Grid decarbonization line:** electricity component scaled by ISO-NE projected "
-            f"grid EFs (Appendix B, base year {base_year} = {base_ef} kg/MWh); "
+            f"grid EFs (Appendix B, {base_ef:.0f}"
             "fossil fuel use held constant. "
         )
     caption += (
@@ -2924,7 +2924,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.caption(
             f"Grid decarbonization is ON (sidebar). "
             f"Electricity share: {round(elec_share_val * 100)}%. "
-            f"Base year grid EF (2025): {base_ef} kg/MWh → {ef_2050} kg/MWh at 2050 "
+            f"Base year grid EF (2025): {base_ef:.0f} → {ef_2050:.0f}"
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
             "Toggle in the sidebar to turn off."
         )
@@ -3427,7 +3427,7 @@ with tab_address:
                 prior_year_ghg_intensity=prior_ghg,
                 prior_year_label=prior_label,
                 projected_intensities=projected_intensities,
-                base_year=selected_year if selected_year in PROJECTED_GRID_EF else 2025,
+                base_year=selected_year,
             )
 
             #Store prefill data for Incentive Optimizer tab
