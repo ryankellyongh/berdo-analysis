@@ -495,7 +495,7 @@ def render_compliance_section(
     st.caption(caption)
 
     with st.expander("About this tool"):
-        st.markdown("""
+        st.markdown(r"""
         
 **What is BERDO?**
 
@@ -792,6 +792,9 @@ def evaluate_building(row):
     acp_2025 = 0.0
     if not scoreable:
         berdo_status = "Unknown — data incomplete"
+    elif pd.isna(row.get("compliance_year")):
+        berdo_status = "Coverage year not reported"
+        notes.append("First compliance year missing — cannot determine whether an emissions limit applies")
     elif not subject_now:
         berdo_status = "Not yet covered"
         notes.append("Not subject to a BERDO emissions limit until 2030")
@@ -1729,6 +1732,7 @@ INCENTIVE_STACK = [
         "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown"],
+        "closed_to_new_projects": True,   #manufacturing-facility allocation; $10B fully allocated 2024
         "amount_psf_low": 0.60,
         "amount_psf_high": 3.00,
         "amount_str": "6% base (30% with prevailing wage and apprenticeship); capped per project",
@@ -1786,8 +1790,8 @@ INCENTIVE_STACK = [
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
-        "amount_psf_low": 0.20,
-        "amount_psf_high": 2.00,
+        "amount_psf_low": 0.0,
+        "amount_psf_high": 0.0,   #per-municipality formula grant — no $/sqft proxy is meaningful
         "amount_str": "Up to USD 1.6M/municipality; formula-based on population",
         "eligibility": "MA municipalities with Green Community designation",
         "expiration": "Annual grant rounds; check DOER for current cycle",
@@ -2237,11 +2241,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Incentive programs matched", len(matched))
     m2.metric("Total incentives (low–high)",
-              f"${total_incentive_low:,.0f} – ${total_incentive_high:,.0f}")
+              f"USD {total_incentive_low:,.0f} – {total_incentive_high:,.0f}")
     m3.metric("Gross retrofit cost (low–high)",
-              f"${total_cost_low:,.0f} – ${total_cost_high:,.0f}")
+              f"USD {total_cost_low:,.0f} – {total_cost_high:,.0f}")
     m4.metric("Estimated net cost (low–high)",
-              f"${net_low:,.0f} – ${net_high:,.0f}")
+              f"USD {net_low:,.0f} – {net_high:,.0f}")
 
     st.caption(
         "Incentive estimates are $/sqft proxies based on program benchmarks — "
@@ -2284,7 +2288,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     for i, inc in enumerate(steps, 1):
         with st.expander(
             f"**{i}. {inc['name']}** — {inc['type']} "
-            f"(est. ${inc['_est_low']:,.0f} – ${inc['_est_high']:,.0f})",
+            f"(est. USD {inc['_est_low']:,.0f} – {inc['_est_high']:,.0f})",
             expanded=(i <= 2),
         ):
             col_a, col_b = st.columns([2, 1])
@@ -2355,8 +2359,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 key="opt_energy_savings_psf",
                 help=(
                     "Typical range for Boston commercial buildings: "
-                    "$0.50–$1.50/sqft/yr for HVAC upgrades; "
-                    "$1.00–$2.50/sqft/yr for deep retrofits. "
+                    "USD 0.50–1.50/sqft/yr for HVAC upgrades; "
+                    "USD 1.00–2.50/sqft/yr for deep retrofits. "
                     "Set to 0 to see fine avoidance only."
                 ),
             )
@@ -3267,7 +3271,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("About this projection"):
-        st.markdown("""
+        st.markdown(r"""
 **How emissions are projected**
 
 The baseline uses your building's current reported GHG intensity (kg CO₂e/sqft/yr) 
@@ -3440,7 +3444,7 @@ with tab_address:
                 )
                 
             with st.expander("What do these fields mean?"):
-                st.markdown("""
+                st.markdown(r"""
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
 - **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). Note: the 2026 reporting deadline was extended to August 15, 2026. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
