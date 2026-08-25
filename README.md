@@ -70,7 +70,7 @@ Each building receives **two independent flags** rather than one blended score, 
 | Incomplete data | Submitted, but a required field is missing or unmappable |
 | Not submitted | No data reported; accruing daily reporting fines |
 
-**BERDO Status** — the building's actual GHG intensity against *its own sector limit*, not a dataset average, so an energy-intensive hospital isn't penalized for using more energy than a warehouse.
+**BERDO Status** the building's actual GHG intensity against *its own sector limit*, not a dataset average, so an energy-intensive hospital isn't penalized for using more energy than a warehouse.
 
 | Value | Meaning |
 |---|---|
@@ -100,7 +100,7 @@ Electric Grid Emissions = Electricity consumed × (100% − RPS Class I) × Proj
 
 Both terms are implemented against primary source: the 29-year Appendix B projected grid factor schedule and the Appendix C RPS Class I minimum requirement schedule, verified against the City's May 5, 2026 publication.
 
-**The RPS Class I term is frequently omitted in secondary summaries of BERDO.** Including it matters: the Massachusetts RPS Class I minimum rises from 27% in 2025 to 60% by 2050, which stacks a second decarbonization curve on top of the declining grid factor. Omitting it overstates projected 2050 electricity-attributed emissions by roughly 80% — and correspondingly overstates long-run fine exposure.
+**The RPS Class I term is frequently omitted in secondary summaries of BERDO.** Including it matters: the Massachusetts RPS Class I minimum rises from 27% in 2025 to 60% by 2050, which stacks a second decarbonization curve on top of the declining grid factor. Omitting it overstates projected 2050 electricity-attributed emissions by roughly 80% and correspondingly overstates long-run fine exposure.
 
 Fossil fuel and district energy factors come from the same document's 2025 emissions factors table. District steam is published per operator, ranging from 0 kg/mmBtu (Vicinity e-steam) to 66.4 (default), so a single default is a known simplification.
 
@@ -108,7 +108,7 @@ Fossil fuel and district energy factors come from the same document's 2025 emiss
 
 Cost ranges are order-of-magnitude benchmarks from RSMeans, ASHRAE, and DOE BTO, adjusted by a 1.25× Boston labor multiplier (RSMeans City Cost Index) and narrowed by whether an ASHRAE Level 2 audit has been completed.
 
-Incentive estimates are $/sq ft proxies. Tax **deductions** are shown at after-tax cash value rather than face value — IRA 179D at $5.81/sq ft is worth roughly $1.22/sq ft to a taxpayer at the 21% corporate rate, and treating it as cash overstates available funding roughly fourfold. Programs terminated by the One Big Beautiful Bill Act (P.L. 119-21) for work beginning after June 30, 2026 — IRA 179D and 45L — are flagged and excluded from totals.
+Incentive estimates are $/sq ft proxies. Tax **deductions** are shown at after-tax cash value rather than face value, IRA 179D at $5.81/sq ft is worth roughly $1.22/sq ft to a taxpayer at the 21% corporate rate, and treating it as cash overstates available funding roughly fourfold. Programs terminated by the One Big Beautiful Bill Act (P.L. 119-21) for work beginning after June 30, 2026, IRA 179D and 45L are flagged and excluded from totals.
 
 ### Key deadlines encoded
 
@@ -120,7 +120,7 @@ Incentive estimates are $/sq ft proxies. Tax **deductions** are shown at after-t
 
 ## Key takeaway
 
-BERDO compliance is not only an energy performance challenge. It is also a data visibility, reporting capacity, and ownership coordination issue. The buildings most in need of support are not limited to those with high Site EUI — they include buildings missing basic reporting information, especially property type and energy use data. Treating missing data as an early warning signal, rather than a data quality problem, is what distinguishes a triage tool from a compliance tracker.
+BERDO compliance is not only an energy performance challenge. It is also a data visibility, reporting capacity, and ownership coordination issue. The buildings most in need of support are not limited to those with high Site EUI, they include buildings missing basic reporting information, especially property type and energy use data. Treating missing data as an early warning signal, rather than a data quality problem, is what distinguishes a triage tool from a compliance tracker.
 
 ---
 
