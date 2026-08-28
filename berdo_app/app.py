@@ -1660,7 +1660,7 @@ DISTRICT_STEAM_EF = {
 #Retiring 1 MA Class I REC covers 1 MWh of otherwise-unmatched grid electricity,
 #avoiding PROJECTED_GRID_EF[year] kg CO2e. RECs offset ELECTRICITY emissions only.
 REC_CONNECTOR_DEADLINE = "October 31, 2026"   #for 2025 emissions compliance
-REC_DEFAULT_PRICE      = 40.0                 #USD/REC — verify at berdo.greenenergyconsumers.org
+REC_DEFAULT_PRICE  = 40.0                 #USD/REC — verify at berdo.greenenergyconsumers.org
 
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
 FUEL_UNIT_TO_KBTU = {
@@ -1778,10 +1778,10 @@ INCENTIVE_STACK = [
                    "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.58,
-        "amount_psf_high": 5.81,
+        "amount_psf_high": 5.94,
         "cash_value_factor": 0.21,   #deduction, not credit — worth marginal rate × amount
         "closed_to_new_projects": True,
-        "amount_str": "Up to USD 5.81/sqft (2025, prevailing wage and apprenticeship); USD 0.58–1.16/sqft (partial)",
+        "amount_str": "Up to USD 5.94/sqft (2026, prevailing wage and apprenticeship, Rev. Proc. 2025-32); USD 0.59–1.19/sqft base",
         "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
         "expiration": "Only available for construction that began on or before June 30, 2026 (One Big Beautiful Bill Act, P.L. 119-21). Confirm with a tax advisor if your project started before that date.",
         "conflicts": [],
@@ -1843,14 +1843,14 @@ INCENTIVE_STACK = [
         "amount_psf_high": 3.00,
         "amount_str": "6% base (30% with prevailing wage and apprenticeship); capped per project",
         "eligibility": "Competitive allocation; manufacturing/industrial sites prioritized",
-        "expiration": "Allocations ongoing; check IRS portal",
+        "expiration": "Closed. The full USD 10B was allocated across two rounds (USD 4B May 2024, USD 6B January 2025). OBBBA sec. 70515 (P.L. 119-21) caps allocations at USD 10B, so no further rounds are expected.",
         "conflicts": ["IRA 48E", "Other IRA investment credits on same property"],
         "stacks_with": ["Mass Save rebates"],
         "berdo_periods": ["2025–29", "2030–34"],
         "ownership": ["For-profit"],
         "source": "https://www.irs.gov/credits-deductions/businesses/advanced-energy-project-credit",
         "checklist": [
-            "Check IRS portal for open allocation rounds",
+            "No open allocation rounds — the USD 10B cap is fully allocated. Listed for reference only.",
             "Prepare project application (technology description, cost, job creation)",
             "Submit application during open window — allocations are competitive",
             "If awarded, begin construction within required timeframe",
@@ -1898,8 +1898,8 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.0,
         "amount_psf_high": 0.0,   #per-municipality formula grant — no $/sqft proxy is meaningful
-        "amount_str": "Up to USD 1.6M/municipality; formula-based on population",
-        "eligibility": "MA municipalities with Green Community designation",
+        "amount_str": "Typically USD 100,000–250,000/municipality per competitive round; DOER makes up to USD 20M available statewide annually",
+        "eligibility": "Municipally owned buildings in MA communities with Green Community designation. Not available to private nonprofits.",
         "expiration": "Annual grant rounds; check DOER for current cycle",
         "conflicts": [],
         "stacks_with": ["MassDOER Grant", "Mass Save rebates"],
@@ -2918,8 +2918,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         st.markdown("""
 **Incentive data sources (verified June 2026)**
 - Mass Save commercial rebates: masssave.com (amounts reset each January)
-- IRA Section 179D: IRS Notice 2023-29, as amended; inflation-indexed annually
-- IRA Section 48C: IRS Rev. Proc. 2023-27; competitive allocation rounds
+- IRA Section 179D: inflation-adjusted amounts per Rev. Proc. 2024-40 (2025) and Rev. Proc. 2025-32 (2026)
+- IRA Section 48C: IRS Notice 2023-18 and Notice 2023-44; allocation rounds closed
 - IRA Section 45L: IRS Notice 2023-65; terminated for homes acquired after June 30, 2026 (P.L. 119-21)
 - IRA Section 179D: terminated for property whose construction begins after June 30, 2026 (P.L. 119-21)
 - MassDOER / MassCEC: masscec.com and mass.gov/doer (program-dependent)
