@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
@@ -41,13 +42,19 @@ ACP_RATE = 234  #USD per metric ton CO2e over the limit
 #Source: BERDO Emissions Factors List, Appendix B (updated May 5, 2026)
 #Units: kg CO2e / MWh
 
+MWH_PER_MMBTU = 3.412
+
+APPENDIX_B_KG_PER_MMBTU = {
+    2022: 79.2, 2023: 77.1, 2024: 75.0, 2025: 72.9, 2026: 70.8,
+    2027: 68.7, 2028: 66.6, 2029: 64.6, 2030: 62.5, 2031: 60.4,
+    2032: 58.3, 2033: 56.2, 2034: 54.2, 2035: 52.1, 2036: 50.0,
+    2037: 47.9, 2038: 45.8, 2039: 43.7, 2040: 41.7, 2041: 39.6,
+    2042: 37.5, 2043: 35.4, 2044: 33.3, 2045: 31.2, 2046: 29.2,
+    2047: 27.1, 2048: 25.0, 2049: 22.9, 2050: 20.8,
+}
+
 PROJECTED_GRID_EF = {
-    2022: 270, 2023: 263, 2024: 256, 2025: 249, 2026: 242,
-    2027: 265, 2028: 265, 2029: 264, 2030: 259, 2031: 254,
-    2032: 249, 2033: 243, 2034: 237, 2035: 231, 2036: 224,
-    2037: 217, 2038: 211, 2039: 204, 2040: 198, 2041: 192,
-    2042: 187, 2043: 182, 2044: 177, 2045: 173, 2046: 168,
-    2047: 163, 2048: 159, 2049: 155, 2050: 150,
+    yr: round(kg * MWH_PER_MMBTU) for yr, kg in APPENDIX_B_KG_PER_MMBTU.items()
 }
 
 # MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
@@ -61,11 +68,11 @@ RPS_CLASS_I = {
 for _y in range(2031, 2051):
     RPS_CLASS_I[_y] = round(0.40 + 0.01 * (_y - 2030), 2)
 
-_EF_MIN_YR, _EF_MAX_YR = min(PROJECTED_GRID_EF), max(PROJECTED_GRID_EF)
+_EF_MIN_YR,  _EF_MAX_YR  = min(PROJECTED_GRID_EF), max(PROJECTED_GRID_EF)
+_RPS_MIN_YR, _RPS_MAX_YR = min(RPS_CLASS_I),       max(RPS_CLASS_I)
 
 def rps_class_i(year: int) -> float:
-    """RPS Class I fraction for a year, clamped to the published schedule."""
-    return RPS_CLASS_I.get(min(max(year, _EF_MIN_YR), _EF_MAX_YR), 0.0)
+    return RPS_CLASS_I.get(min(max(year, _RPS_MIN_YR), _RPS_MAX_YR), 0.0)
 
 
 def effective_grid_ef(year: int) -> float:
@@ -106,72 +113,150 @@ PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 #Mapping from Energy Star Portfolio Manager property types → BERDO categories
 
 PROPERTY_TYPE_MAP = {
-    "office": "Office",
-    "financial office": "Office",
-    "courthouse": "Office",
-    "government office": "Office",
-    "multifamily housing": "Multifamily Housing",
-    "residential": "Multifamily Housing",
-    "senior living community": "Multifamily Housing",
-    "affordable housing": "Multifamily Housing",
-    "residence hall / dormitory": "Multifamily Housing",
-    "residence hall/dormitory": "Multifamily Housing",
-    "retail store": "Retail",
-    "strip mall": "Retail",
-    "enclosed mall": "Retail",
-    "retail": "Retail",
-    "supermarket/grocery store": "Food Sales & Service",
-    "wholesale club/supercenter": "Retail",
-    "hotel": "Lodging",
-    "lodging/residential": "Lodging",
-    "motel or inn": "Lodging",
-    "hospital (general medical & surgical)": "Healthcare",
-    "medical office": "Healthcare",
+
+    # Assembly (2025-29 limit: 7.8)
+    "aquarium":                             "Assembly",
+    "convention center":                    "Assembly",
+    "fitness center/health club/gym":       "Assembly",
+    "heated swimming pool":                 "Assembly",
+    "indoor arena":                         "Assembly",
+    "ice/curling rink":                     "Assembly",
+    "museum":                               "Assembly",
+    "movie theater":                        "Assembly",
+    "other - entertainment/public assembly":"Assembly",
+    "other - recreation":                   "Assembly",
+    "other - stadium":                      "Assembly",
+    "performing arts":                      "Assembly",
+    "race track":                               "Assembly",
+    "social/meeting hall":                  "Assembly",
+    "stadium (open)":                       "Assembly",
+    "stadium (closed)":                     "Assembly",
+    "swimming pool":                        "Assembly",
+    "worship facility":                     "Assembly",
+
+    #College/University (10.2)
+    "college/university":                   "College/University",
+
+    #Education (3.9)
+    "adult education":                      "Education",
+    "k-12 school":                          "Education",
+    "other - education":                    "Education",
+    "pre-school/daycare":                   "Education",
+    "vocational school":                    "Education",
+
+    #Food Sales & Service (17.4)
+    "bar/nightclub":                        "Food Sales & Service",
+    "fast food restaurant":                 "Food Sales & Service",
+    "food sales":                           "Food Sales & Service",
+    "food service":                         "Food Sales & Service",
+    "other - restaurant/bar":               "Food Sales & Service",
+    "restaurant":                           "Food Sales & Service",
+    "supermarket/grocery store":            "Food Sales & Service",
+
+    #Healthcare (15.4)
+    "ambulatory surgical center":           "Healthcare",
+    "hospital (general medical & surgical)":"Healthcare",
+    "medical office":                       "Healthcare",
+    "other - specialty hospital":           "Healthcare",
     "outpatient rehabilitation/physical therapy": "Healthcare",
-    "urgent care/clinic/other outpatient": "Healthcare",
-    "ambulatory surgical center": "Healthcare",
-    "nursing home": "Healthcare",
-    "health center/public health clinic": "Healthcare",
-    "k-12 school": "Education",
-    "pre-school/daycare": "Education",
-    "adult education": "Education",
-    "vocational school": "Education",
-    "college/university": "College/University",
-    "college / university": "College/University",
-    "food service": "Food Sales & Service",
-    "restaurant or bar": "Food Sales & Service",
-    "fast food restaurant": "Food Sales & Service",
-    "convenience store without gas station": "Food Sales & Service",
-    "convenience store with gas station": "Food Sales & Service",
-    "bar/nightclub": "Food Sales & Service",
-    "worship facility": "Assembly",
-    "museum": "Assembly",
-    "performing arts": "Assembly",
-    "sports arena": "Assembly",
-    "fitness center/health club/gym": "Assembly",
-    "recreation": "Assembly",
-    "social/meeting hall": "Assembly",
-    "entertainment/public assembly": "Assembly",
-    "library": "Assembly",
-    "movie theater": "Assembly",
-    "convention center": "Assembly",
-    "indoor arena": "Assembly",
+    "urgent care/clinic/other outpatient":  "Healthcare",
+    "veterinary office":                    "Healthcare",
+
+    #Lodging (5.8)
+    "barracks":                             "Lodging",
+    "hotel":                                "Lodging",
+    "other - lodging/residential":          "Lodging",
+    "residence hall/dormitory":             "Lodging",
+    "residential care facility":            "Lodging",
+    "senior care community":                "Lodging",
+    "senior living community":              "Lodging",
+    "single family home":                   "Lodging",
+
+    #Manufacturing/Industrial (23.9)
+    "manufacturing/industrial plant":       "Manufacturing/Industrial",
+
+    #Multifamily Housing (4.1)
+    "multifamily housing":                  "Multifamily Housing",
+
+    #Office (5.3)
+    "financial office":                     "Office",
+    "office":                               "Office",
+
+    #Retail (7.1)
+    "automobile dealership":           "Retail",
+    "bank branch":                          "Retail",
+    "enclosed mall":                        "Retail",
+    "lifestyle center":                       "Retail",
+    "other - mall":                            "Retail",
+    "retail store":                              "Retail",
+    "strip mall":                                 "Retail",
+    "wholesale club/supercenter":    "Retail",
+
+    #Services (7.5)
+    "convenience store without gas station":"Services",
+    "courthouse":                           "Services",
+    "energy/power station":                 "Services",
+    "fire station":                         "Services",
+    "library":                              "Services",
+    "other - public services":              "Services",
+    "other - services":                     "Services",
+    "other - utility":                      "Services",
     "personal services (health/beauty, dry cleaning, etc.)": "Services",
-    "salon": "Services",
-    "bank branch": "Services",
-    "repair services": "Services",
-    "laboratory": "Technology/Science",
-    "data center": "Technology/Science",
-    "research and development": "Technology/Science",
-    "manufacturing/industrial plant": "Manufacturing/Industrial",
-    "distribution center": "Manufacturing/Industrial",
-    "non-refrigerated warehouse": "Storage",
-    "refrigerated warehouse": "Storage",
-    "self-storage facility": "Storage",
-    "warehouse and storage": "Storage",
-    "parking": "Services",
-    "mixed use property": "Office",
+    "police station":                       "Services",
+    "repair services (vehicle, shoe, locksmith, etc.)":      "Services",
+
+    #Storage (5.4)
+    "distribution center":                  "Storage",
+    "non-refrigerated warehouse":           "Storage",
+    "parking":                              "Storage",
+    "refrigerated warehouse":               "Storage",
+    "self-storage facility":                "Storage",
+
+    #Technology/Science (19.2)
+    "data center":                          "Technology/Science",
+    "laboratory":                           "Technology/Science",
+    "other - technology/science":           "Technology/Science",
 }
+
+
+#Spelling variants seen in BERDO CSV exports and older ESPM versions.
+#These resolve to the same BERDO Building Use as their canonical ESPM type.
+PROPERTY_TYPE_ALIASES = {
+    "college / university":         "College/University",
+    "residence hall / dormitory":   "Lodging",
+    "manufacturing/industrial":     "Manufacturing/Industrial",
+    "nursing home":                 "Lodging",   # legacy name for Residential Care Facility
+    "prison/incarceration":         "Services",  # not in Appendix A; closest listed analogue
+}
+PROPERTY_TYPE_MAP.update(PROPERTY_TYPE_ALIASES)
+
+#DELIBERATELY UNMAPPED — do not add these.
+#
+#  "mixed use property"  BERDO 7-2.2(i)(i) requires a BLENDED emissions standard
+#                        for buildings with more than one primary use. Mapping it
+#                        to a single category (the old code used Office, 5.3) makes
+#                        up a limit the ordinance does not assign. Returning None
+#                        routes the building to "data incomplete" so a human picks
+#                        the blended standard.
+#
+#  "convenience store with gas station"  Appendix A lists only the WITHOUT-gas
+#                        variant. Do not assume the with-gas version follows it.
+#
+#Add a category here only after confirming it in Appendix A.
+
+
+def _normalize(raw: str) -> str:
+    """
+    Lowercase, collapse whitespace, and normalize punctuation spacing so that
+    'Residence Hall / Dormitory', 'Residence Hall/Dormitory', and
+    'residence  hall/dormitory' all resolve to the same key.
+    """
+    s = raw.strip().lower()
+    s = re.sub(r"\s+", " ", s)          # collapse runs of whitespace
+    s = re.sub(r"\s*/\s*", "/", s)      # ' / ' -> '/'
+    s = re.sub(r"\s*-\s*", " - ", s)    # normalize the ESPM 'Other - X' dash
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 def project_ghg_intensities(ghg_intensity, elec_share, base_year):
     """
@@ -192,10 +277,19 @@ def project_ghg_intensities(ghg_intensity, elec_share, base_year):
     return projected
 
 def map_property_type(raw_type):
-    if pd.isna(raw_type) or not isinstance(raw_type, str):
+    """
+    Return the BERDO Building Use for an ESPM property type, or None if the
+    type is not in Appendix A. None is a meaningful result: it means a human
+    needs to classify the building, not that the building is exempt.
+    """
+    if raw_type is None or not isinstance(raw_type, str):
         return None
-    key = raw_type.strip().lower()
-    return PROPERTY_TYPE_MAP.get(key)
+    key = _normalize(raw_type)
+    hit = PROPERTY_TYPE_MAP.get(key)
+    if hit:
+        return hit
+    #Retry without the normalized dash spacing, for keys stored tightly.
+    return PROPERTY_TYPE_MAP.get(key.replace(" - ", "-"))
     
 def standardize_address_series(series):
     """
@@ -1056,13 +1150,25 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         if indefinite_limit is not None else 0.0
     )
 
-    #Plain-English summary
+        #Plain-English summary
     if current_compliant:
+        #Off-by-one guard: non_compliant_periods[0] is the first period the
+        #portfolio FAILS, so it stays compliant through the period BEFORE it.
+        if not non_compliant_periods:
+            horizon_str = "all periods through 2050"
+        else:
+            first_fail_idx = non_compliant_periods[0][0]
+            if first_fail_idx == 0:
+                horizon_str = "the current period only"
+            else:
+                horizon_str = (
+                    f"the {COMPLIANCE_PERIODS[first_fail_idx - 1]} period, "
+                    f"then exceeds the {COMPLIANCE_PERIODS[first_fail_idx]} limit"
+                )
         st.success(
             f"This portfolio is **compliant** in the current 2025–2029 period under the "
             f"blended emissions standard of {current_limit:.3f} kg CO₂e/sf/yr. "
-            f"If emissions remain unchanged, it stays compliant through "
-            f"{'all periods' if not non_compliant_periods else f'the {COMPLIANCE_PERIODS[non_compliant_periods[0][0]]} period'}."
+            f"If emissions remain unchanged, it stays compliant through {horizon_str}."
         )
     else:
         error_msg = (
@@ -1078,7 +1184,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
                 f"{indefinite_annual_fine:,.0f}/year applies indefinitely."
             )
         st.error(error_msg)
-
+       
     #Summary header metrics
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Buildings in portfolio", usable_buildings)
@@ -3042,6 +3148,8 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     apply_grid = show_grid_decarb
     elec_share_val = elec_share if elec_share is not None else 0.5
 
+    limits = BERDO_STANDARDS[berdo_category]
+
     if apply_grid:
         base_ef = effective_grid_ef(2025)
         ef_2050 = effective_grid_ef(2050)
@@ -3058,25 +3166,25 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             "Enable it in the sidebar to model how ISO-NE grid cleaning reduces "
             "electricity-attributed emissions over time."
         )
-
-    limits             = BERDO_STANDARDS[berdo_category]
-    #Use the raw reported GHG emissions total when available (more accurate than
-    #Intensity × sqft which suffers from rounding). Fall back to intensity × sqft.
+        
+    limits = BERDO_STANDARDS[berdo_category]
     ghg_emissions_raw = prefill.get("ghg_emissions_kg")
     if ghg_emissions_raw and ghg_emissions_raw > 0:
         total_emissions_kg = float(ghg_emissions_raw)
+        baseline_intensity = total_emissions_kg / sqft
         st.caption(
             f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr** (from reported BERDO data). "
-            f"Derived intensity: {total_emissions_kg / sqft:.3f} kg CO₂e/sqft/yr."
+            f"Derived intensity: {baseline_intensity:.3f} kg CO₂e/sqft/yr — "
+            f"used for every scenario below, including grid decarbonization."
         )
     else:
-        total_emissions_kg = ghg_intensity * sqft
+        baseline_intensity = ghg_intensity
+        total_emissions_kg = baseline_intensity * sqft
 
     #Grid decarbonization, project intensities per period
-    
     if apply_grid:
         projected_intensities = project_ghg_intensities(
-            ghg_intensity=ghg_intensity,
+            ghg_intensity=baseline_intensity,
             elec_share=elec_share_val,
             base_year=2025,
         )
