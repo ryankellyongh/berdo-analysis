@@ -4,7 +4,6 @@ import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 
-
 #Page config
 
 st.set_page_config(
@@ -112,8 +111,9 @@ PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 
 #Mapping from Energy Star Portfolio Manager property types → BERDO categories
 
-PROPERTY_TYPE_MAP = {
+#Mapping from Energy Star Portfolio Manager property types → BERDO categories
 
+PROPERTY_TYPE_MAP = {
     # Assembly (2025-29 limit: 7.8)
     "aquarium":                             "Assembly",
     "convention center":                    "Assembly",
@@ -127,12 +127,19 @@ PROPERTY_TYPE_MAP = {
     "other - recreation":                   "Assembly",
     "other - stadium":                      "Assembly",
     "performing arts":                      "Assembly",
-    "race track":                               "Assembly",
+    "race track":                           "Assembly",
     "social/meeting hall":                  "Assembly",
     "stadium (open)":                       "Assembly",
     "stadium (closed)":                     "Assembly",
     "swimming pool":                        "Assembly",
     "worship facility":                     "Assembly",
+    "bowling alley":                        "Assembly",
+    "casino":                               "Assembly",
+    "roller rink":                          "Assembly",
+    "zoo":                                  "Assembly",
+    "boat marinas":                         "Assembly",
+    "movie production studios":             "Assembly",
+    "tv/radio broadcast studios":           "Assembly",
 
     #College/University (10.2)
     "college/university":                   "College/University",
@@ -161,19 +168,22 @@ PROPERTY_TYPE_MAP = {
     "outpatient rehabilitation/physical therapy": "Healthcare",
     "urgent care/clinic/other outpatient":  "Healthcare",
     "veterinary office":                    "Healthcare",
+    "residential care facility":            "Healthcare",
+    "senior care community":                "Healthcare",
+    "senior living community":              "Healthcare",
+    "nursing home":                         "Healthcare", # legacy name
 
     #Lodging (5.8)
     "barracks":                             "Lodging",
     "hotel":                                "Lodging",
     "other - lodging/residential":          "Lodging",
     "residence hall/dormitory":             "Lodging",
-    "residential care facility":            "Lodging",
-    "senior care community":                "Lodging",
-    "senior living community":              "Lodging",
     "single family home":                   "Lodging",
+    "prison/incarceration":                 "Lodging", 
 
     #Manufacturing/Industrial (23.9)
     "manufacturing/industrial plant":       "Manufacturing/Industrial",
+    "hydroponic, greenhouse and other growing facilities": "Manufacturing/Industrial",
 
     #Multifamily Housing (4.1)
     "multifamily housing":                  "Multifamily Housing",
@@ -183,14 +193,14 @@ PROPERTY_TYPE_MAP = {
     "office":                               "Office",
 
     #Retail (7.1)
-    "automobile dealership":           "Retail",
+    "automobile dealership":                "Retail",
     "bank branch":                          "Retail",
     "enclosed mall":                        "Retail",
-    "lifestyle center":                       "Retail",
-    "other - mall":                            "Retail",
-    "retail store":                              "Retail",
-    "strip mall":                                 "Retail",
-    "wholesale club/supercenter":    "Retail",
+    "lifestyle center":                     "Retail",
+    "other - mall":                         "Retail",
+    "retail store":                         "Retail",
+    "strip mall":                           "Retail",
+    "wholesale club/supercenter":           "Retail",
 
     #Services (7.5)
     "convenience store without gas station":"Services",
@@ -204,6 +214,10 @@ PROPERTY_TYPE_MAP = {
     "personal services (health/beauty, dry cleaning, etc.)": "Services",
     "police station":                       "Services",
     "repair services (vehicle, shoe, locksmith, etc.)":      "Services",
+    "drinking water treatment & distribution": "Services",
+    "mailing center/post office":           "Services",
+    "transportation terminal/station":      "Services",
+    "wastewater treatment plant":           "Services",
 
     #Storage (5.4)
     "distribution center":                  "Storage",
@@ -218,31 +232,12 @@ PROPERTY_TYPE_MAP = {
     "other - technology/science":           "Technology/Science",
 }
 
-
-#Spelling variants seen in BERDO CSV exports and older ESPM versions.
-#These resolve to the same BERDO Building Use as their canonical ESPM type.
 PROPERTY_TYPE_ALIASES = {
     "college / university":         "College/University",
     "residence hall / dormitory":   "Lodging",
     "manufacturing/industrial":     "Manufacturing/Industrial",
-    "nursing home":                 "Lodging",   # legacy name for Residential Care Facility
-    "prison/incarceration":         "Services",  # not in Appendix A; closest listed analogue
 }
 PROPERTY_TYPE_MAP.update(PROPERTY_TYPE_ALIASES)
-
-#DELIBERATELY UNMAPPED — do not add these.
-#
-#  "mixed use property"  BERDO 7-2.2(i)(i) requires a BLENDED emissions standard
-#                        for buildings with more than one primary use. Mapping it
-#                        to a single category (the old code used Office, 5.3) makes
-#                        up a limit the ordinance does not assign. Returning None
-#                        routes the building to "data incomplete" so a human picks
-#                        the blended standard.
-#
-#  "convenience store with gas station"  Appendix A lists only the WITHOUT-gas
-#                        variant. Do not assume the with-gas version follows it.
-#
-#Add a category here only after confirming it in Appendix A.
 
 
 def _normalize(raw: str) -> str:
@@ -252,9 +247,9 @@ def _normalize(raw: str) -> str:
     'residence  hall/dormitory' all resolve to the same key.
     """
     s = raw.strip().lower()
-    s = re.sub(r"\s+", " ", s)          # collapse runs of whitespace
-    s = re.sub(r"\s*/\s*", "/", s)      # ' / ' -> '/'
-    s = re.sub(r"\s*-\s*", " - ", s)    # normalize the ESPM 'Other - X' dash
+    s = re.sub(r"\s+", " ", s)          #collapse runs of whitespace
+    s = re.sub(r"\s*/\s*", "/", s)      #' / ' -> '/'
+    s = re.sub(r"\s*-\s*", " - ", s)    #normalize the ESPM 'Other - X' dash
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -780,6 +775,18 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
     for col in fuel_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            
+            #Deductions block for _load_single_csv
+    
+    #Zero-out negative electricity net metering (prevents negative roll-over)
+    if "fuel_electricity_kwh" in df.columns:
+        df["fuel_electricity_kwh"] = df["fuel_electricity_kwh"].clip(lower=0)
+        
+    #Subtract excluded EV emissions (requires 'ev_charging_kwh' column mapped)
+    if "ev_charging_kwh" in df.columns:
+        df["ev_charging_kwh"] = pd.to_numeric(df["ev_charging_kwh"], errors="coerce").fillna(0)
+        ev_deduction_kg = df["ev_charging_kwh"] * (effective_grid_ef(2025) / 1000) # Assumes 2025 base EF
+        df["ghg_emissions"] = (df["ghg_emissions"] - ev_deduction_kg).clip(lower=0)
 
     valid = (
         df["ghg_emissions"].notna() &
