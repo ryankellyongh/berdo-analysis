@@ -7,7 +7,7 @@ from pathlib import Path
 #Page config
 
 st.set_page_config(
-    page_title="BERDO Compliance Planner",
+    page_title="BERDO Priority Screening Tool",
     layout="wide"
 )
 
