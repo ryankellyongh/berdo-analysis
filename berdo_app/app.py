@@ -77,7 +77,7 @@ def rps_class_i(year: int) -> float:
 def effective_grid_ef(year: int) -> float:
     """
     BERDO-effective grid EF in kg CO2e/MWh, after the RPS Class I offset.
-    This — not the raw Appendix B value — is what BERDO bills electricity at.
+    This, not the raw Appendix B value, is what BERDO bills electricity at.
     """
     clamped = min(max(year, _EF_MIN_YR), _EF_MAX_YR)
     return PROJECTED_GRID_EF[clamped] * (1.0 - rps_class_i(clamped))
@@ -279,7 +279,7 @@ def building_elec_share(total_kg, elec_kg):
     Share of a building's reported GHG emissions that comes from grid electricity:
     City-reported electricity emissions ÷ reported total emissions.
 
-    Returns (share, note). share is None when it can't be determined — e.g. the
+    Returns (share, note). share is None when it can't be determined, e.g. the
     2023 dataset has no fuel-level emissions. note explains any adjustment.
     """
     total = pd.to_numeric(total_kg, errors="coerce")
@@ -290,11 +290,11 @@ def building_elec_share(total_kg, elec_kg):
         return 0.0, (
             "Reported electricity emissions are negative, likely from on-site "
             "generation exported to the grid. Electricity share set to 0% for the "
-            "grid scenario — verify."
+            "grid scenario. Verify."
         )
     share = elec / total
     if share > 1:
-        return 1.0, "Electricity emissions exceed the reported total; share capped at 100% — verify."
+        return 1.0, "Electricity emissions exceed the reported total; share capped at 100%. Verify."
     return round(float(share), 3), None
 
 
@@ -449,7 +449,7 @@ def building_limits(property_type, all_property_types=None, exclude_parking=True
         if unmapped > 0:
             notes.append(
                 f"{unmapped:,.0f} sq ft of listed uses could not be mapped to a BERDO "
-                "category (e.g. 'Other') and is left out of the blend estimate — verify"
+                "category (e.g. 'Other') and is left out of the blend estimate. Verify"
             )
         return {"limits": default_limits, "label": largest_cat,
                 "category": largest_cat, "basis": "blended", "blended": blended,
@@ -542,7 +542,7 @@ def render_compliance_pathways(ctx: dict):
 
     ctx keys (all optional): over_now, fails_later, blend_available, blend_fixes,
     owner_building_count, elec_share, owner_name.
-    Nothing here is an eligibility determination — it points owners to options.
+    Nothing here is an eligibility determination; it points owners to options.
     """
     over_now    = ctx.get("over_now", False)
     fails_later = ctx.get("fails_later", False)
@@ -556,7 +556,7 @@ def render_compliance_pathways(ctx: dict):
         {
             "group": "Ways to comply",
             "name": "Reduce emissions",
-            "what": "Improve efficiency and move away from fossil fuels — the only "
+            "what": "Improve efficiency and move away from fossil fuels. This is the only "
                     "option that lowers emissions permanently.",
             "approval": "None",
             "deadline": "Ongoing; plan around equipment replacement cycles",
@@ -614,11 +614,11 @@ def render_compliance_pathways(ctx: dict):
             "what": "An owner groups their BERDO buildings and complies with one "
                     "portfolio-wide blended standard. All buildings must have the same owner.",
             "approval": "BERDO Review Board",
-            "deadline": f"September 1 each year — next: {_fmt_deadline('portfolio_ics')}",
+            "deadline": f"September 1 each year. Next: {_fmt_deadline('portfolio_ics')}",
             "links": [("Apply (application portal)", "apply_portal"),
                       ("Portfolio blended standard template", "portfolio_template")],
             "why": _why(
-                f"this owner name appears on {n_owned} buildings in the dataset — see the "
+                f"this owner name appears on {n_owned} buildings in the dataset. See the "
                 "Owner Portfolio tab. Owner names in public data can be inconsistent; verify.",
                 strong=n_owned > 1 and over_now) if n_owned > 1 else
                 _why("only one building found under this owner name in the dataset."),
@@ -630,11 +630,11 @@ def render_compliance_pathways(ctx: dict):
                     "year and follow a custom timeline: 50% reduction by 2030 and net zero "
                     "by 2050 from that baseline.",
             "approval": "BERDO Review Board",
-            "deadline": f"September 1 each year — next: {_fmt_deadline('portfolio_ics')}",
+            "deadline": f"September 1 each year. Next: {_fmt_deadline('portfolio_ics')}",
             "links": [("Apply (application portal)", "apply_portal"),
                       ("ICS eligibility template", "ics_template")],
             "why": _why("may help if the building has already cut emissions since an earlier "
-                        "baseline year. Public data can't show this — check your own records."),
+                        "baseline year. Public data can't show this; check your own records."),
         },
         {
             "group": "Flexibility measures",
@@ -643,8 +643,8 @@ def render_compliance_pathways(ctx: dict):
                     "an alternative timeline and/or more flexible targets. Under-resourced "
                     "owners can use a streamlined short-term application.",
             "approval": "BERDO Review Board",
-            "deadline": (f"Short-term: October 1 — next: {_fmt_deadline('short_term_hcp')}. "
-                         f"Long-term: July 1 — next: {_fmt_deadline('long_term_hcp')}"),
+            "deadline": (f"Short-term: October 1. Next: {_fmt_deadline('short_term_hcp')}. "
+                         f"Long-term: July 1. Next: {_fmt_deadline('long_term_hcp')}"),
             "links": [("Guidance & FAQ", "hcp_guide"),
                       ("Streamlined option for under-resourced owners", "hcp_streamlined")],
             "why": _why("public data can't show financial or technical hardship; review the "
@@ -652,12 +652,12 @@ def render_compliance_pathways(ctx: dict):
         },
     ]
 
-    title = "BERDO compliance pathways" + (" — options for a building over its limit" if over_now else "")
+    title = "BERDO compliance pathways" + (": options for a building over its limit" if over_now else "")
     with st.expander(title, expanded=over_now):
         st.caption(
             "BERDO offers several ways to comply. This list explains each option and why it "
-            "may or may not fit this building. It is not an eligibility determination — "
-            "confirm details and deadlines on the City's pages."
+            "may or may not fit this building. It is not an eligibility determination. "
+            "Confirm details and deadlines on the City's pages."
         )
         current_group = None
         for p in pathways:
@@ -666,7 +666,7 @@ def render_compliance_pathways(ctx: dict):
                 st.markdown(f"#### {current_group}")
             links = " · ".join(f"[{label}]({BERDO_LINKS[key]})" for label, key in p["links"])
             st.markdown(
-                f"**{p['name']}** — {p['what']}  \n"
+                f"**{p['name']}:** {p['what']}  \n"
                 f"Approval: {p['approval']} · Deadline: {p['deadline']}  \n"
                 f"{p['why']}  \n"
                 f"{links}"
@@ -714,7 +714,7 @@ def render_use_mix_editor(top):
                  "Sq ft": reported_gfa}]
 
     is_mixed = bl["basis"] != "largest_use"
-    title = "Building uses and emissions limit" + (" — mixed-use" if is_mixed else "")
+    title = "Building uses and emissions limit" + (" (mixed-use)" if is_mixed else "")
 
     with st.expander(title, expanded=is_mixed):
         if bl["basis"] == "blended":
@@ -722,7 +722,7 @@ def render_use_mix_editor(top):
                 "This building reports more than one use. By default, BERDO applies the "
                 "limit for the largest primary use. Owners may instead adopt a Blended "
                 "Emissions Standard weighted by the floor area of each primary use. "
-                "The table is pre-filled from the reported data — correct it if needed."
+                "The table is pre-filled from the reported data. Correct it if needed."
             )
         elif bl["basis"] == "multi_no_gfa":
             st.warning(
@@ -785,14 +785,14 @@ def render_use_mix_editor(top):
             st.dataframe(
                 pd.DataFrame({
                     "Period": COMPLIANCE_PERIODS,
-                    f"Default — {bl['label'] or 'largest use'}": default,
+                    f"Default ({bl['label'] or 'largest use'})": default,
                     "Blended (if adopted)": limits,
                 }),
                 hide_index=True, use_container_width=True,
             )
             st.caption(
                 "Blended estimate calculated by this tool. BERDO counts primary uses "
-                "only — confirm which uses qualify with the City's "
+                "only. Confirm which uses qualify with the City's "
                 f"[building-level blended standard template]({BERDO_LINKS['blended_template']}). "
                 "Not an official City of Boston determination."
             )
@@ -830,14 +830,14 @@ def render_compliance_section(
 
     if pd.isna(ghg_intensity) or ghg_intensity == 0:
         st.warning(
-            "GHG intensity is missing or zero for this building — "
-            "cannot calculate compliance gap. Check that GHG emissions "
+            "GHG intensity is missing or zero for this building, "
+            "so the compliance gap can't be calculated. Check that GHG emissions "
             "and floor area are reported in the dataset."
         )
         return
 
     if pd.isna(sqft) or sqft <= 0:
-        st.warning("Floor area is missing — cannot calculate fine exposure.")
+        st.warning("Floor area is missing, so fine exposure can't be calculated.")
         return
 
     if berdo_category is None and limits is None:
@@ -958,7 +958,7 @@ def render_compliance_section(
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS,
         y=fines,
-        name="Annual ACP fine — conservative (USD)",
+        name="Annual ACP fine, conservative (USD)",
         mode="lines+markers",
         yaxis="y2",
         line=dict(color="#BA7517", width=1.5, dash="dot"),
@@ -974,7 +974,7 @@ def render_compliance_section(
         fig.add_trace(go.Scatter(
             x=COMPLIANCE_PERIODS,
             y=proj_fines,
-            name="Annual ACP fine — grid scenario (USD)",
+            name="Annual ACP fine, grid scenario (USD)",
             mode="lines+markers",
             yaxis="y2",
             line=dict(color="#27AE60", width=1.5, dash="dot"),
@@ -1047,7 +1047,7 @@ def render_compliance_section(
     base_ef = effective_grid_ef(base_year)
     caption = (
         "ACP = Alternative Compliance Payment at $234/metric ton CO₂e over limit. "
-        "**Conservative line:** current GHG intensity held flat — no operational changes, "
+        "**Conservative line:** current GHG intensity held flat, no operational changes, "
         "no grid improvement. "
     )
     if projected_intensities is not None:
@@ -1078,15 +1078,15 @@ compliance in 2030.
 
 Each building gets two independent flags rather than a single blended score, because a
 building that didn't report needs a different intervention than one that reported and
-is over its limit — outreach versus retrofit capital.
+is over its limit: outreach versus retrofit capital.
 
 **Data Status** reflects reporting completeness: whether data was submitted at all, and
 whether property type, floor area, and GHG intensity are present and mappable to a BERDO
 category. Buildings marked "not submitted" face daily reporting fines and are the most
 urgent outreach targets.
 
-**BERDO Status** compares the building's actual GHG intensity against its own sector limit —
-not against a dataset average — so an energy-intensive hospital isn't penalized for using
+**BERDO Status** compares the building's actual GHG intensity against its own sector limit,
+not against a dataset average, so an energy-intensive hospital isn't penalized for using
 more energy than a warehouse. It shows whether the building is over the current 2025–29
 limit, will fail the 2030–34 limit at current emissions, or is compliant further out.
 Smaller covered buildings show "Not yet covered" until their 2030 compliance year.
@@ -1357,10 +1357,10 @@ def evaluate_building(row):
         and sqft > 0
     )
 
-    #Flag 1 — data status
+    #Flag 1: data status
     if row["compliance_status"] == "not submitted":
         data_status = "Not submitted"
-        notes.append("Did not report — accruing daily reporting fines")
+        notes.append("Did not report: accruing daily reporting fines")
     elif not scoreable:
         data_status = "Incomplete data"
         if limits is None:
@@ -1372,7 +1372,7 @@ def evaluate_building(row):
     else:
         data_status = "Reported"
 
-    #Flag 2 — BERDO compliance status
+    #Flag 2: BERDO compliance status
     subject_now = (
         pd.notna(row.get("compliance_year"))
         and int(row["compliance_year"]) <= 2025
@@ -1380,10 +1380,10 @@ def evaluate_building(row):
 
     acp_2025 = 0.0
     if not scoreable:
-        berdo_status = "Unknown — data incomplete"
+        berdo_status = "Unknown (data incomplete)"
     elif pd.isna(row.get("compliance_year")):
         berdo_status = "Coverage year not reported"
-        notes.append("First compliance year missing — cannot determine whether an emissions limit applies")
+        notes.append("First compliance year missing, so it's unclear whether an emissions limit applies")
     elif not subject_now:
         berdo_status = "Not yet covered"
         notes.append("Not subject to a BERDO emissions limit until 2030")
@@ -1397,7 +1397,7 @@ def evaluate_building(row):
                 if _bg and _bg[0]["compliant"]:
                     notes.append(
                         "Would meet the 2025–29 limit if the owner adopts a Blended "
-                        "Emissions Standard — see compliance pathways"
+                        "Emissions Standard (see compliance pathways)"
                     )
             notes.append(
                 f"Exceeds 2025–29 limit by {gaps[0]['gap']:.2f} kg/sf/yr "
@@ -1412,7 +1412,7 @@ def evaluate_building(row):
             berdo_status = "Compliant through 2039+"
 
     if pd.notna(sqft) and sqft >= 100_000:
-        notes.append("Over 100,000 sq ft — longer retrofit lead time")
+        notes.append("Over 100,000 sq ft: longer retrofit lead time")
 
     return data_status, berdo_status, acp_2025, notes
 
@@ -1570,19 +1570,19 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         if missing_ghg or missing_sqft:
             status = str(row.get("Compliance Status", "")).strip().lower()
             if status == "state":
-                reason = "Reported under state status — verify BERDO treatment before excluding"
+                reason = "Reported under state status. Verify BERDO treatment before excluding"
             elif missing_ghg and missing_sqft:
                 if status == "not submitted":
-                    reason = "Did not report — no GHG data or floor area submitted"
+                    reason = "Did not report: no GHG data or floor area submitted"
                 elif status == "pending revisions":
-                    reason = "Pending revisions — GHG data and floor area incomplete"
+                    reason = "Pending revisions: GHG data and floor area incomplete"
                 else:
                     reason = "Missing GHG emissions and floor area"
             elif missing_ghg:
                 if status == "not submitted":
-                    reason = "Did not report — no GHG data submitted"
+                    reason = "Did not report: no GHG data submitted"
                 elif status == "pending revisions":
-                    reason = "Pending revisions — GHG data incomplete"
+                    reason = "Pending revisions: GHG data incomplete"
                 else:
                     reason = "Missing GHG emissions data"
             else:
@@ -1624,7 +1624,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     blended_limits = calculate_blended_standard(valid)
     if blended_limits is None:
         st.error(
-            "Could not calculate a blended standard — check that property types "
+            "Could not calculate a blended standard. Check that property types "
             "are mapped for all buildings in the portfolio."
         )
         return
@@ -1712,8 +1712,8 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         addresses = ", ".join(zero_emission["Building Address"].astype(str).tolist())
         st.warning(
             f"Possible vacant building(s) detected: **{addresses}**. "
-            "BERDO Building Portfolios cannot include vacant buildings — "
-            "verify before submitting a portfolio application."
+            "BERDO Building Portfolios cannot include vacant buildings. "
+            "Verify before submitting a portfolio application."
         )
 
     st.markdown("---")
@@ -1815,7 +1815,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS,
         y=portfolio_fines,
-        name="Annual ACP fine — portfolio (USD)",
+        name="Annual ACP fine, portfolio (USD)",
         mode="lines+markers",
         yaxis="y2",
         line=dict(color="#BA7517", width=1.5, dash="dot"),
@@ -1862,7 +1862,7 @@ application with the BERDO Review Board. Applications are due **September 1** ea
 (next: {_fmt_deadline('portfolio_ics')}); see the City's deadline table for which reporting year applies.
 
 **For policymakers:** This portfolio is currently compliant. Monitor whether high-emitting
-buildings within the portfolio are being offset by efficient ones — the per-building table below
+buildings within the portfolio are being offset by efficient ones; the per-building table below
 shows individual gaps.
 """)
         else:
@@ -1891,7 +1891,7 @@ estimated USD {current_fine:,.0f}/year in ACP payments. To come into compliance:
   largest individual gap is **{worst_addr}** ({worst_gap_tons:,.0f} excess metric tons in 2025–29).
   Reducing emissions there has the greatest impact on the portfolio total.
 - **Resolve missing data for excluded buildings.** If any of your buildings didn't report,
-  their emissions are not counted here — your actual exposure may be higher.
+  their emissions are not counted here, so your actual exposure may be higher.
 - **File a portfolio application by September 1** (next: {_fmt_deadline('portfolio_ics')})
   to use the blended compliance pathway. Without it, each building is assessed individually.
 
@@ -1967,15 +1967,15 @@ marked "Did not report" in the excluded table represent additional unknown expos
             label_parts.append(f"{state_exempt} state status")
         if not_reported:
             label_parts.append(f"{not_reported} did not report")
-        expander_label = " — ".join(label_parts)
+        expander_label = " · ".join(label_parts)
 
         auto_expand = (skipped / total_buildings) > 0.3
         with st.expander(expander_label, expanded=auto_expand):
             st.caption(
                 "These buildings are not included in the portfolio calculation. "
-                "**State status** buildings are listed separately — verify their BERDO treatment before excluding. "
-                "**Did not report** means no energy data was submitted to the City of Boston — "
-                "their emissions are unknown and not reflected above. "
+                "**State status** buildings are listed separately. Verify their BERDO treatment before excluding. "
+                "**Did not report** means no energy data was submitted to the City of Boston, "
+                "so their emissions are unknown and not reflected above. "
                 "**Pending revisions** means data was submitted but flagged for corrections."
             )
             st.dataframe(
@@ -2121,7 +2121,7 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
 
     if 2022 in [r["year"] for r in records] and trend_df.loc[trend_df["year"] == 2022, "ghg_intensity"].isna().all():
         st.caption(
-            "2022 GHG intensity is not shown — the City of Boston did not publish "
+            "2022 GHG intensity is not shown because the City of Boston did not publish "
             "GHG emissions totals in that year's dataset."
         )
 
@@ -2132,7 +2132,7 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
 
 #RETROFIT COST BENCHMARKS
 #Source: ASHRAE, RSMeans, NBI New Construction Cost Study, DOE BTO
-#Units: national baseline USD per sq ft (low, high) — Boston multiplier applied separately
+#Units: national baseline USD per sq ft (low, high), Boston multiplier applied separately
 #Last verified: June 2026
 
 RETROFIT_COST_PER_SQFT = {
@@ -2141,9 +2141,9 @@ RETROFIT_COST_PER_SQFT = {
     "HVAC (tune-up, controls, VFDs)":                   (3.0,   8.0,   "Controls upgrades, VFDs on pumps/fans, recommissioning"),
     "HVAC (full system replacement)":                   (15.0,  35.0,  "Chiller, AHU, or boiler replacement"),
     "Building envelope (windows + insulation)":         (8.0,   20.0,  "Window replacement, roof/wall insulation"),
-    "Electrification — HVAC (air-source heat pump)":    (10.0,  22.0,  "Air-source heat pump — lower cost, suitable for most commercial buildings"),
-    "Electrification — HVAC (ground-source heat pump)": (20.0,  45.0,  "Ground-source (geothermal) — higher efficiency, significantly higher upfront cost"),
-    "Electrification — water heating":                  (2.0,   6.0,   "Heat pump water heaters replacing gas"),
+    "Electrification: HVAC (air-source heat pump)":    (10.0,  22.0,  "Air-source heat pump: lower cost, suitable for most commercial buildings"),
+    "Electrification: HVAC (ground-source heat pump)": (20.0,  45.0,  "Ground-source (geothermal): higher efficiency, significantly higher upfront cost"),
+    "Electrification: water heating":                  (2.0,   6.0,   "Heat pump water heaters replacing gas"),
     "Building-wide deep retrofit (all systems)":        (40.0,  100.0, "Comprehensive envelope + MEP overhaul"),
 }
 
@@ -2167,8 +2167,8 @@ FUEL_EF_KG_PER_KBTU = {
     "Fuel oil #5/#6":   0.07535,   #residual
     "Diesel":           0.07421,
     "Kerosene":         0.07769,
-    "District steam":   0.06640,   #Default District Steam; named systems differ — see below
-    "Electricity":      None,      #use effective_grid_ef() — Appendix B × (1 − RPS Class I)
+    "District steam":   0.06640,   #Default District Steam; named systems differ, see below
+    "Electricity":      None,      #use effective_grid_ef(): Appendix B × (1 − RPS Class I)
 }
 
 #District energy system factors, kg CO₂e/kBtu.
@@ -2235,7 +2235,7 @@ def _fmt_deadline(key):
 #Retiring 1 MA Class I REC covers 1 MWh of otherwise-unmatched grid electricity,
 #avoiding PROJECTED_GRID_EF[year] kg CO2e. RECs offset ELECTRICITY emissions only.
 REC_CONNECTOR_DEADLINE = "October 31, 2026"   #for 2025 emissions compliance
-REC_DEFAULT_PRICE  = 40.0                 #USD/REC — verify at berdo.greenenergyconsumers.org
+REC_DEFAULT_PRICE  = 40.0                 #USD/REC. Verify at berdo.greenenergyconsumers.org
 
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
 FUEL_UNIT_TO_KBTU = {
@@ -2264,13 +2264,13 @@ def _fmt_dollars(val):
 #Each entry has a priority rank (1 = apply first), conflict notes, and BERDO period relevance.
 INCENTIVE_STACK = [
     {
-        "name": "Mass Save — Commercial HVAC Rebates",
+        "name": "Mass Save: Commercial HVAC Rebates",
         "short": "Mass Save HVAC",
         "type": "Utility rebate",
         "priority": 1,
-        "apply_first_reason": "Utility rebates are taxable income and reduce your 179D basis — claim after filing taxes, but negotiate before project start.",
+        "apply_first_reason": "Utility rebates are taxable income and reduce your 179D basis. Claim after filing taxes, but negotiate before project start.",
         "scopes": ["HVAC (tune-up, controls, VFDs)", "HVAC (full system replacement)",
-                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)"],
+                   "Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 2.00,
@@ -2284,18 +2284,18 @@ INCENTIVE_STACK = [
         "source": "https://www.masssave.com/saving/business-rebates",
         "checklist": [
             "Contact your utility (Eversource / National Grid / Unitil) before project start",
-            "Get pre-approval from Mass Save — required before installation",
+            "Get pre-approval from Mass Save (required before installation)",
             "Select a Mass Save Trade Ally contractor",
             "Complete installation and submit documentation",
             "Receive rebate check (typically 6–8 weeks post-completion)",
         ],
     },
     {
-        "name": "Mass Save — Lighting Rebates",
+        "name": "Mass Save: Lighting Rebates",
         "short": "Mass Save Lighting",
         "type": "Utility rebate",
         "priority": 1,
-        "apply_first_reason": "Pre-approval required before installation — start here.",
+        "apply_first_reason": "Pre-approval required before installation: start here.",
         "scopes": ["Lighting (LED retrofit + controls)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.10,
@@ -2316,11 +2316,11 @@ INCENTIVE_STACK = [
         ],
     },
     {
-        "name": "Mass Save — Deep Energy Retrofit",
+        "name": "Mass Save: Deep Energy Retrofit",
         "short": "Mass Save Deep Retrofit",
         "type": "Utility rebate",
         "priority": 1,
-        "apply_first_reason": "Requires energy model and pre-approval — begin 3–6 months before construction.",
+        "apply_first_reason": "Requires energy model and pre-approval. Begin 3–6 months before construction.",
         "scopes": ["Building-wide deep retrofit (all systems)",
                    "Building envelope (windows + insulation)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
@@ -2347,14 +2347,14 @@ INCENTIVE_STACK = [
         "short": "IRA 179D",
         "type": "Federal tax deduction",
         "priority": 2,
-        "apply_first_reason": "Claim after utility rebates are received — rebates reduce your depreciable basis, which affects 179D calculation.",
+        "apply_first_reason": "Claim after utility rebates are received. Rebates reduce your depreciable basis, which affects 179D calculation.",
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
-                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
+                   "Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.58,
         "amount_psf_high": 5.94,
-        "cash_value_factor": 0.21,   #deduction, not credit — worth marginal rate × amount
+        "cash_value_factor": 0.21,   #deduction, not credit: worth marginal rate × amount
         "closed_to_new_projects": True,
         "amount_str": "Up to USD 5.94/sqft (2026, prevailing wage and apprenticeship, Rev. Proc. 2025-32); USD 0.59–1.19/sqft base",
         "eligibility": "For-profit owners; nonprofits/govts transfer deduction to designer",
@@ -2367,7 +2367,7 @@ INCENTIVE_STACK = [
         "ownership_transfer_note": "Nonprofits and government owners can allocate the deduction to the project designer/engineer.",
         "source": "https://www.energy.gov/eere/buildings/179d-commercial-buildings-energy-efficiency-tax-deduction",
         "checklist": [
-            "179D only applies to construction that began on or before June 30, 2026 — confirm your project start date with a tax advisor",
+            "179D only applies to construction that began on or before June 30, 2026. Confirm your project start date with a tax advisor",
             "Engage a qualified third-party certifier (licensed engineer or contractor)",
             "Commission a 179D energy model demonstrating qualifying energy savings",
             "Ensure prevailing wage + apprenticeship compliance for the enhanced rate",
@@ -2380,8 +2380,8 @@ INCENTIVE_STACK = [
         "short": "IRA 45L",
         "type": "Federal tax credit",
         "priority": 2,
-        "apply_first_reason": "Claim alongside 179D — these stack. Document unit-level improvements during construction.",
-        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)",
+        "apply_first_reason": "Claim alongside 179D: these stack. Document unit-level improvements during construction.",
+        "scopes": ["Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
@@ -2409,8 +2409,8 @@ INCENTIVE_STACK = [
         "short": "IRA 48C",
         "type": "Federal tax credit",
         "priority": 3,
-        "apply_first_reason": "Competitive allocation — apply early via IRS portal. May conflict with other IRA investment credits.",
-        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
+        "apply_first_reason": "Competitive allocation: apply early via IRS portal. May conflict with other IRA investment credits.",
+        "scopes": ["Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)", "Electrification: water heating",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown"],
         "closed_to_new_projects": True,   #manufacturing-facility allocation; $10B fully allocated 2024
@@ -2425,9 +2425,9 @@ INCENTIVE_STACK = [
         "ownership": ["For-profit"],
         "source": "https://www.irs.gov/credits-deductions/businesses/advanced-energy-project-credit",
         "checklist": [
-            "No open allocation rounds — the USD 10B cap is fully allocated. Listed for reference only.",
+            "No open allocation rounds: the USD 10B cap is fully allocated. Listed for reference only.",
             "Prepare project application (technology description, cost, job creation)",
-            "Submit application during open window — allocations are competitive",
+            "Submit application during open window (allocations are competitive)",
             "If awarded, begin construction within required timeframe",
             "Comply with prevailing wage + apprenticeship for 30% rate",
             "Claim credit on federal return (Form 3468)",
@@ -2438,8 +2438,8 @@ INCENTIVE_STACK = [
         "short": "MassDOER Grant",
         "type": "State grant",
         "priority": 1,
-        "apply_first_reason": "Grant funds must be committed before construction — apply during open rounds.",
-        "scopes": ["Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)", "Electrification — water heating",
+        "apply_first_reason": "Grant funds must be committed before construction. Apply during open rounds.",
+        "scopes": ["Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)", "Electrification: water heating",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.20,
@@ -2465,14 +2465,14 @@ INCENTIVE_STACK = [
         "short": "Green Communities",
         "type": "State grant",
         "priority": 1,
-        "apply_first_reason": "Annual grant cycle — apply in the current round.",
+        "apply_first_reason": "Annual grant cycle: apply in the current round.",
         "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
-                   "Electrification — HVAC (air-source heat pump)", "Electrification — HVAC (ground-source heat pump)",
+                   "Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.0,
-        "amount_psf_high": 0.0,   #per-municipality formula grant — no $/sqft proxy is meaningful
+        "amount_psf_high": 0.0,   #per-municipality formula grant: no $/sqft proxy is meaningful
         "amount_str": "Typically USD 100,000–250,000/municipality per competitive round; DOER makes up to USD 20M available statewide annually",
         "eligibility": "Municipally owned buildings in MA communities with Green Community designation. Not available to private nonprofits.",
         "expiration": "Annual grant rounds; check DOER for current cycle",
@@ -2525,7 +2525,7 @@ def _estimate_incentive_value(inc, sqft):
 
 def render_retrofit_optimizer_tab(prefill: dict = None):
     """
-    Tab 3 — Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer).
+    Tab 3: Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer).
     Collects building inputs once, then shows condition-adjusted cost estimates,
     matched incentives ranked by value, stacking order, and payback.
     Pre-fills from address lookup session state where available.
@@ -2534,7 +2534,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         prefill = {}
 
     st.write(
-        "Estimate retrofit costs and find the right incentives — in one place. "
+        "Estimate retrofit costs and find the right incentives in one place. "
         "Enter your building details and the scopes you're considering to see "
         "condition-adjusted cost ranges, matched funding programs, stacking order, and payback."
     )
@@ -2547,7 +2547,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     
     #Inject prefill into session state when a new address lookup arrives.
     #We detect a "fresh" prefill by comparing the prefill address to the
-    #last address we injected — if different, overwrite widget state.
+    #last address we injected: if different, overwrite widget state.
     
     prefill_addr_key = prefill.get("address", "")
     last_injected    = st.session_state.get("opt_last_injected_addr", "")
@@ -2556,7 +2556,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         if prefill.get("sqft"):
             st.session_state["opt_sqft"] = int(prefill["sqft"])
         if prefill.get("berdo_category"):
-            type_options_init = ["— select —"] + sorted(BERDO_STANDARDS.keys())
+            type_options_init = ["Select a type"] + sorted(BERDO_STANDARDS.keys())
             if prefill["berdo_category"] in type_options_init:
                 st.session_state["opt_btype"] = prefill["berdo_category"]
         if prefill.get("primary_fuel"):
@@ -2585,8 +2585,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         )
 
     with col2:
-        type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
-        prefill_cat  = st.session_state.get("opt_btype", "— select —")
+        type_options = ["Select a type"] + sorted(BERDO_STANDARDS.keys())
+        prefill_cat  = st.session_state.get("opt_btype", "Select a type")
         default_idx  = type_options.index(prefill_cat) if prefill_cat in type_options else 0
         selected_type = st.selectbox(
             "Building type (BERDO category)",
@@ -2594,7 +2594,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             help="Pre-filled from Address Lookup if available.",
             key="opt_btype",
         )
-        berdo_category = selected_type if selected_type != "— select —" else None
+        berdo_category = selected_type if selected_type != "Select a type" else None
 
         fuel = st.selectbox(
             "Primary heating fuel",
@@ -2644,22 +2644,22 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     prior_audit = st.radio(
         "Has an energy audit or feasibility study been completed?",
-        options=["Yes — ASHRAE Level 2 or equivalent", "No — rough estimate only"],
+        options=["Yes, ASHRAE Level 2 or equivalent", "No, rough estimate only"],
         index=1,
         key="opt_cond_audit",
         help=(
             "An audit replaces range assumptions with building-specific data. "
-            "Without one, unknowns tend to push costs toward the upper half of the range — "
+            "Without one, unknowns tend to push costs toward the upper half of the range, "
             "so this estimate defaults to the mid-range as a conservative starting point."
         ),
     )
     has_audit = "ASHRAE" in prior_audit
     if has_audit:
         position        = 0.20
-        condition_label = "Audit complete — estimate toward low end"
+        condition_label = "Audit complete: estimate toward low end"
     else:
         position        = 0.55
-        condition_label = "No audit — mid-range estimate (actual scope may run higher)"
+        condition_label = "No audit: mid-range estimate (actual scope may run higher)"
 
     apply_boston = st.checkbox(
         "Apply Boston labor cost multiplier (1.25x)",
@@ -2695,7 +2695,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     _badge = "Low" if has_audit else "Mid"
     st.caption(
-        f"{_badge} **{condition_label}** — Adjusted estimate: "
+        f"{_badge} **{condition_label}**. Adjusted estimate: "
         f"**{_fmt_dollars(total_cost_adjusted)}** "
         f"(between low {_fmt_dollars(total_cost_low)} and high {_fmt_dollars(total_cost_high)})"
     )
@@ -2714,7 +2714,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     #Planned project, emissions reduction calculator
     st.markdown("---")
-    st.subheader("Planned project — will it close the compliance gap?")
+    st.subheader("Planned project: will it close the compliance gap?")
     st.caption(
         "Enter your planned energy reduction to see whether it brings your building "
         "into compliance. Uses the same emissions factors BERDO applies."
@@ -2863,7 +2863,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     if not matched:
         st.info(
             "No incentives matched your inputs. "
-            "Try adjusting ownership type, fuel, or scope — "
+            "Try adjusting ownership type, fuel, or scope, "
             "or check masssave.com and masscec.com directly."
         )
         return
@@ -2901,7 +2901,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         if headline_payback_raw <= 50:
             payback_str = f", with an estimated {round(headline_payback_raw, 1)}-year payback including energy savings"
         else:
-            payback_str = " — energy savings are the primary return driver for a building this size"
+            payback_str = ". Energy savings are the primary return driver for a building this size"
     elif prefill_fine_val > 0 and net_low == 0:
         payback_str = ", with the retrofit fully covered by incentives"
     else:
@@ -2929,11 +2929,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
               f"USD {net_low:,.0f} – {net_high:,.0f}")
 
     st.caption(
-        "Incentive estimates are $/sqft proxies based on program benchmarks — "
-        "actual awards depend on application, project scope, and program availability. "
+        "Incentive estimates are $/sqft proxies based on program benchmarks. "
+        "Actual awards depend on application, project scope, and program availability. "
         "Tax **deductions** are shown at after-tax cash value (21% corporate rate), not face value. "
-        "Programs closed to new projects — IRA 179D and 45L, both terminated for work beginning "
-        "after June 30, 2026 — are excluded from these totals. "
+        "Programs closed to new projects (IRA 179D and 45L, both terminated for work beginning "
+        "after June 30, 2026) are excluded from these totals. "
         "Gross cost benchmarks from RSMeans / ASHRAE / DOE BTO (2024–2026)."
     )
 
@@ -2959,7 +2959,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     #Stacking strategy
     st.markdown("---")
-    st.subheader("Stacking strategy — apply in this order")
+    st.subheader("Stacking strategy: apply in this order")
     st.caption(
         "Order matters. Utility rebates reduce your tax basis; "
         "some IRA credits conflict with each other. Follow this sequence."
@@ -2968,7 +2968,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     steps = sorted(matched, key=lambda x: x["priority"])
     for i, inc in enumerate(steps, 1):
         with st.expander(
-            f"**{i}. {inc['name']}** — {inc['type']} "
+            f"**{i}. {inc['name']}**: {inc['type']} "
             f"(est. USD {inc['_est_low']:,.0f} – {inc['_est_high']:,.0f})",
             expanded=(i <= 2),
         ):
@@ -3000,7 +3000,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     st.caption("Complete these steps for each matched program.")
 
     for inc in steps:
-        with st.expander(f"**{inc['name']}** — checklist", expanded=False):
+        with st.expander(f"**{inc['name']}** checklist", expanded=False):
             for step in inc["checklist"]:
                 st.checkbox(step, key=f"chk_{inc['short']}_{step[:20]}")
             st.markdown(f"[Source / apply →]({inc['source']})")
@@ -3014,7 +3014,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     if annual_fine is None:
         st.caption(
             "Look up your building in the Address Lookup tab to pre-fill your "
-            "estimated annual BERDO fine — or enter it manually below."
+            "estimated annual BERDO fine, or enter it manually below."
         )
         annual_fine_input = st.number_input(
             "Estimated annual BERDO fine ($/yr)",
@@ -3028,7 +3028,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
         #Energy savings input 
         st.caption(
-            "Energy cost savings from a retrofit are typically the largest financial return — "
+            "Energy cost savings from a retrofit are typically the largest financial return, "
             "often larger than fine avoidance alone. Enter an estimate below to include them."
         )
         energy_cols = st.columns([1, 1, 2])
@@ -3064,7 +3064,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         #Combined annual benefit
         total_annual_benefit = annual_fine + energy_savings_annual
 
-        #Payback metrics — cap at 50 years; beyond that fine avoidance is the wrong frame
+        #Payback metrics: cap at 50 years; beyond that fine avoidance is the wrong frame
         PAYBACK_CAP = 50
 
         payback_low_fine_only  = round(net_low  / annual_fine, 1) if net_low  > 0 else 0.0
@@ -3083,22 +3083,22 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
         pb_cols = st.columns(4)
         pb_cols[0].metric(
-            "Payback — fine only (low)",
+            "Payback: fine only (low)",
             _fmt_payback(payback_low_fine_only),
         )
         pb_cols[1].metric(
-            "Payback — fine only (high)",
+            "Payback: fine only (high)",
             _fmt_payback(payback_high_fine_only),
         )
         pb_cols[2].metric(
-            "Payback — fine + energy (low)",
+            "Payback: fine + energy (low)",
             _fmt_payback(payback_low_combined),
             delta=f"{round(payback_low_fine_only - payback_low_combined, 1)} yrs faster"
                   if 0 < payback_low_fine_only <= PAYBACK_CAP and payback_low_combined <= PAYBACK_CAP and payback_low_fine_only > payback_low_combined
                   else None,
         )
         pb_cols[3].metric(
-            "Payback — fine + energy (high)",
+            "Payback: fine + energy (high)",
             _fmt_payback(payback_high_combined),
             delta=f"{round(payback_high_fine_only - payback_high_combined, 1)} yrs faster"
                   if 0 < payback_high_fine_only <= PAYBACK_CAP and payback_high_combined <= PAYBACK_CAP and payback_high_fine_only > payback_high_combined
@@ -3108,7 +3108,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         if fine_only_impractical:
             st.warning(
                 f"For a building this size ({sqft:,} sqft), BERDO fines alone do not justify "
-                "the retrofit cost. This is normal for large commercial buildings — "
+                "the retrofit cost. This is normal for large commercial buildings: "
                 "the financial case rests on **energy cost savings** and **asset value**, not fine avoidance. "
                 f"At {energy_savings_psf:.2f}/sqft/yr in energy savings, the combined payback is "
                 f"**{_fmt_payback(payback_low_combined)}** at the low estimate."
@@ -3137,12 +3137,12 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             ))
             fig.add_trace(go.Scatter(
                 x=years, y=cumulative_low_fine,
-                name="Low cost — fine avoidance only",
+                name="Low cost, fine avoidance only",
                 mode="lines", line=dict(color="#3266ad", width=1.5, dash="dash"),
             ))
             fig.add_trace(go.Scatter(
                 x=years, y=cumulative_high_fine,
-                name="High cost — fine avoidance only",
+                name="High cost, fine avoidance only",
                 mode="lines", line=dict(color="#9B59B6", width=1.5, dash="dash"),
             ))
         else:
@@ -3184,7 +3184,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         )
         st.caption(
             energy_note +
-            "Not an investment projection. Energy savings are estimates — actual savings "
+            "Not an investment projection. Energy savings are estimates; actual savings "
             "depend on building operations, utility rates, and project scope. "
             "Consult a licensed energy auditor for project-specific figures."
         )
@@ -3193,8 +3193,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         best_payback = payback_low_combined if energy_savings_psf > 0 else payback_low_fine_only
         if best_payback == 0:
             st.success(
-                "At the low net cost estimate, the retrofit is fully covered by incentives — "
-                "any energy savings and fine avoidance are pure return from day one."
+                "At the low net cost estimate, the retrofit is fully covered by incentives, "
+                "so any energy savings and fine avoidance are pure return from day one."
             )
         elif best_payback <= 7:
             st.success(
@@ -3211,7 +3211,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         elif best_payback <= PAYBACK_CAP:
             st.info(
                 f"Longer payback: best-case is **{best_payback} years**. "
-                "Consider whether a phased retrofit — higher-ROI measures first — "
+                "Consider whether a phased retrofit, with higher-ROI measures first, "
                 "improves the near-term economics."
             )
         else:
@@ -3219,7 +3219,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             energy_annual_str = _fmt_dollars(energy_savings_annual).replace("$", "USD ")
             st.info(
                 "For a building this size, the primary financial drivers are **energy cost savings** "
-                f"({energy_annual_str}/yr at current assumptions) and **asset value protection** — "
+                f"({energy_annual_str}/yr at current assumptions) and **asset value protection**, "
                 "not fine avoidance alone. Consider: lender and investor ESG requirements, "
                 "tenant retention in a market increasingly sensitive to building performance, "
                 "and the cost trajectory of fines as BERDO limits tighten toward 2050. "
@@ -3244,7 +3244,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         #Cost of paying the fine across each compliance period
         fine_5yr  = annual_fine * 5
 
-        #Future period fines — limits tighten each period
+        #Future period fines: limits tighten each period
         limits = limits_for_category(berdo_category, prefill)
         prefill_ghg_val = prefill.get("ghg_intensity")
 
@@ -3278,17 +3278,17 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             delta="Grows each period as limits tighten",
         )
         d2.metric(
-            "Fines — cumulative through 2050",
+            "Fines: cumulative through 2050",
             _fmt_dollars(cumulative_fine_all),
             delta="If no retrofit is ever made",
         )
         d3.metric(
-            "Retrofit — net cost (low estimate)",
+            "Retrofit: net cost (low estimate)",
             "Fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low),
             delta="One-time outlay, fines avoided permanently",
         )
 
-                #REC pathway — the third option
+                #REC pathway: the third option
         st.markdown("#### Option 3: buy MA Class I RECs")
         st.caption(
             "BERDO lets you retire MA Class I RECs to offset electricity emissions. "
@@ -3372,7 +3372,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         if net_low == 0 or net_low <= fine_5yr:
             #Retrofit cost is zero or cheaper than even one period of fines
             st.success(
-                f"**Retrofit now — clear financial case.** The net retrofit cost "
+                f"**Retrofit now: clear financial case.** The net retrofit cost "
                 f"({net_low_str}) is less than or equal to one period of BERDO fines "
                 f"({fine_5yr_str} for 2025–29 alone). "
                 "And fines only grow from here. Each period the limit tightens and the "
@@ -3381,23 +3381,23 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         elif net_low <= cum_fine_10yr:
             #Retrofit pays back within 2 periods (10 years) of escalating fines
             st.success(
-                f"**Retrofit soon — strong case once fines escalate.** "
+                f"**Retrofit soon: strong case once fines escalate.** "
                 f"The net retrofit cost ({net_low_str}) is less than cumulative fines "
                 f"over the first two periods ({cum_10yr_str} through 2030–34). "
-                f"Fines increase each period as the BERDO limit tightens — "
-                "waiting means paying more before you eventually retrofit anyway."
+                f"Fines increase each period as the BERDO limit tightens, "
+                "so waiting means paying more before you eventually retrofit anyway."
             )
         elif net_low <= cumulative_fine_all:
-            #Retrofit is cheaper than total lifetime fines — crossover at some period
+            #Retrofit is cheaper than total lifetime fines, crossover at some period
             st.warning(
-                f"**Consider phasing — fines will exceed retrofit cost by {crossover_period or 'a future period'}.** "
+                f"**Consider phasing: fines will exceed retrofit cost by {crossover_period or 'a future period'}.** "
                 f"Paying the fine costs less upfront ({fine_5yr_str} for 2025–29) "
                 f"vs. retrofitting now ({net_low_str}). "
                 f"However, BERDO limits tighten every 5 years. Your annual fine grows "
                 f"each period as the gap between your building's emissions and the limit widens. "
                 f"Cumulative fines reach {cum_str} through 2050 if nothing is done. "
-                "A phased approach — lower-cost measures now, deeper retrofit before the next "
-                "period tightens — may be the most cost-effective path."
+                "A phased approach (lower-cost measures now, deeper retrofit before the next "
+                "period tightens) may be the most cost-effective path."
             )
         else:
             #Even cumulative fines are less than net retrofit cost
@@ -3410,7 +3410,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 f"the high net retrofit cost ({net_high_str}). "
                 f"However, this excludes energy savings "
                 f"(typically {low_sav_str}–{high_sav_str}/yr), asset value protection, "
-                "and lender/investor ESG requirements — which for large buildings often "
+                "and lender/investor ESG requirements, which for large buildings often "
                 "dwarf the fine exposure. Run the numbers with your energy consultant "
                 "before ruling out the retrofit."
             )
@@ -3420,7 +3420,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             st.markdown("Fine escalation by period")
             st.caption(
                 "Each period the BERDO limit drops. If your building's emissions stay flat, "
-                "the gap — and the fine — grows. The right column shows when cumulative "
+                "the gap, and the fine, grows. The right column shows when cumulative "
                 "fines exceed the low net retrofit cost."
             )
 
@@ -3484,9 +3484,9 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     #Disclaimer
     st.markdown("---")
     st.warning(
-        "**Screening tool only — not professional financial or tax advice.** "
+        "**Screening tool only. Not professional financial or tax advice.** "
         "Incentive amounts are benchmarks verified June 2026; they change annually. "
-        "IRA credit stacking rules are complex — consult a tax advisor for your specific situation. "
+        "IRA credit stacking rules are complex; consult a tax advisor for your specific situation. "
         "Do not use these figures for contracts, loan applications, or compliance filings."
     )
 
@@ -3502,9 +3502,9 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 - Green Communities: mass.gov/green-communities (annual grant rounds)
 
 **Stacking methodology**
-Utility rebates (Mass Save) are taxable income and reduce your 179D depreciable basis —
+Utility rebates (Mass Save) are taxable income and reduce your 179D depreciable basis, so
 claim them before calculating your 179D deduction. IRA 48C may conflict with other IRA
-investment credits applied to the same property — verify with a tax advisor. All other
+investment credits applied to the same property. Verify with a tax advisor. All other
 matched programs stack cleanly for most commercial scenarios.
 
 **Dollar estimates**
@@ -3512,12 +3512,12 @@ Incentive values are estimated using $/sqft proxies derived from published progr
 Actual awards depend on application outcome, project documentation, and contractor certification.
 """)
 
-#EMISSIONS PLANNER — Tab 5
+#EMISSIONS PLANNER, Tab 5
 
 def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None,
                                  use_reported_share: bool = True):
     """
-    Tab 5 — Emissions Planner.
+    Tab 5: Emissions Planner.
     Shows compliance projection table across all BERDO periods,
     allows users to enter planned emission reduction projects,
     and recalculates compliance and ACP fines with and without projects.
@@ -3556,15 +3556,15 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             help="Pre-filled from Address Lookup if available.",
         )
     with col2:
-        type_options = ["— select —"] + sorted(BERDO_STANDARDS.keys())
-        prefill_cat  = st.session_state.get("ep_btype", "— select —")
+        type_options = ["Select a type"] + sorted(BERDO_STANDARDS.keys())
+        prefill_cat  = st.session_state.get("ep_btype", "Select a type")
         default_idx  = type_options.index(prefill_cat) if prefill_cat in type_options else 0
         selected_type = st.selectbox(
             "Building type (BERDO category)",
             options=type_options, index=default_idx, key="ep_btype",
             help="Pre-filled from Address Lookup if available.",
         )
-        berdo_category = selected_type if selected_type != "— select —" else None
+        berdo_category = selected_type if selected_type != "Select a type" else None
     with col3:
         ghg_intensity = st.number_input(
             "Current GHG intensity (kg CO₂e/sqft/yr)",
@@ -3756,7 +3756,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         baseline_intensity = total_emissions_kg / sqft
         st.caption(
             f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr** (from reported BERDO data). "
-            f"Derived intensity: {baseline_intensity:.3f} kg CO₂e/sqft/yr — "
+            f"Derived intensity: {baseline_intensity:.3f} kg CO₂e/sqft/yr, "
             f"used for every scenario below, including grid decarbonization."
         )
     else:
@@ -3833,7 +3833,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             "Status":         _ou(gap_baseline),
         }
         if has_projects:
-            erow["Reductions"]       = _fmt_kg(period_reductions_kg[i]) if period_reductions_kg[i] > 0 else "—"
+            erow["Reductions"]       = _fmt_kg(period_reductions_kg[i]) if period_reductions_kg[i] > 0 else "0"
             erow["After projects"]   = _fmt_kg(proj_kg)
             erow["Status (projects)"] = _ou(gap_proj)
         if has_grid:
@@ -3847,14 +3847,14 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         #Fines table row
         frow = {
             "Period":             period,
-            "ACP — baseline":     _fmt_fine(fine_baseline),
+            "ACP (baseline)":     _fmt_fine(fine_baseline),
         }
         if has_projects:
-            frow["ACP — with projects"]  = _fmt_fine(fine_proj)
+            frow["ACP (with projects)"]  = _fmt_fine(fine_proj)
         if has_grid:
-            frow["ACP — grid decarb"]    = _fmt_fine(fine_grid)
+            frow["ACP (grid decarb)"]    = _fmt_fine(fine_grid)
         if has_projects and has_grid:
-            frow["ACP — grid + projects"] = _fmt_fine(fine_combined)
+            frow["ACP (grid + projects)"] = _fmt_fine(fine_combined)
         fines_rows.append(frow)
 
     #Table 1: Emissions
@@ -3862,7 +3862,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     st.dataframe(pd.DataFrame(emissions_rows), use_container_width=True, hide_index=True)
 
     #Table 2: ACP fines
-    st.markdown("#### Estimated ACP fine — annual, per period")
+    st.markdown("#### Estimated ACP fine: annual, per period")
     st.caption("Alternative Compliance Payment at $234/metric ton CO₂e over limit.")
     st.dataframe(pd.DataFrame(fines_rows), use_container_width=True, hide_index=True)
 
@@ -3892,12 +3892,12 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     current_annual_fine = max(total_emissions_kg - limits[0] * sqft, 0) / 1000 * ACP_RATE
     s_cols[0].metric(
-        "Annual ACP — current period (2025–29)",
+        "Annual ACP: current period (2025–29)",
         f"${current_annual_fine:,.0f}",
         delta="at current emissions, this period's cap",
     )
     s_cols[0].metric(
-        "Cumulative ACP 2025–2050 — no action",
+        "Cumulative ACP 2025–2050: no action",
         f"${baseline_fines_cumul:,.0f}",
         delta="worst case: emissions flat, no retrofit",
     )
@@ -3905,7 +3905,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     if has_projects:
         savings = baseline_fines_cumul - proj_fines_cumul
         s_cols[col_idx].metric(
-            "Cumulative ACP — with projects",
+            "Cumulative ACP: with projects",
             f"${proj_fines_cumul:,.0f}",
             delta=f"-${savings:,.0f} vs no action" if savings > 0 else "No change",
         )
@@ -3913,7 +3913,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     if has_grid:
         savings_g = baseline_fines_cumul - grid_fines_cumul
         s_cols[col_idx].metric(
-            "Cumulative ACP — grid decarb only",
+            "Cumulative ACP: grid decarb only",
             f"${grid_fines_cumul:,.0f}",
             delta=f"-${savings_g:,.0f} vs no action" if savings_g > 0 else "No change",
         )
@@ -3921,7 +3921,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     if has_projects and has_grid:
         savings_c = baseline_fines_cumul - combined_fines_cumul
         s_cols[col_idx].metric(
-            "Cumulative ACP — grid + projects",
+            "Cumulative ACP: grid + projects",
             f"${combined_fines_cumul:,.0f}",
             delta=f"-${savings_c:,.0f} vs no action" if savings_c > 0 else "No change",
         )
@@ -3932,7 +3932,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             if gap_mt > 0:
                 pct = total_reduction_mt / gap_mt * 100
                 st.caption(
-                    f"Your projects reduce ~{total_reduction_mt:,.0f} MT/yr — about {pct:.1f}% of the "
+                    f"Your projects reduce ~{total_reduction_mt:,.0f} MT/yr, about {pct:.1f}% of the "
                     f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
                     + ("Nowhere near enough to affect compliance." if pct < 5 else
                        "Still short of compliance." if pct < 100 else
@@ -3971,7 +3971,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     ))
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS, y=baseline_mt,
-        name="Worst case — no action",
+        name="Worst case (no action)",
         mode="lines",
         line=dict(color="#E24B4A", width=2, dash="dash"),
     ))
@@ -4022,8 +4022,8 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 **How emissions are projected**
 
 The baseline uses your building's current reported GHG intensity (kg CO₂e/sqft/yr) 
-multiplied by floor area, held flat across all periods — a worst-case assumption, not a forecast —
-grid decarbonization would reduce electricity-attributed emissions over time independently of 
+multiplied by floor area, held flat across all periods (a worst-case assumption, not a forecast). 
+Grid decarbonization would reduce electricity-attributed emissions over time independently of 
 any retrofit.
 
 **How project reductions work**
@@ -4140,7 +4140,7 @@ tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
     "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
 ])
 
-#Tab 1 — single address lookup (unchanged behaviour)
+#Tab 1: single address lookup (unchanged behaviour)
 
 with tab_address:
     address_input = st.text_input(
@@ -4224,7 +4224,7 @@ with tab_address:
 
 **Data Status**
 - **Reported**: energy and emissions data submitted and complete enough to evaluate.
-- **Incomplete data**: submitted, but property type, floor area, or GHG data is missing or unmappable — compliance can't be calculated.
+- **Incomplete data**: submitted, but property type, floor area, or GHG data is missing or unmappable, so compliance can't be calculated.
 - **Not submitted**: no data reported. Accruing daily reporting fines.
 
 **BERDO Status**
@@ -4232,7 +4232,7 @@ with tab_address:
 - **Fails 2030–34**: compliant now, but over the next limit at current emissions.
 - **Compliant through 2034** / **2039+**: how far the current trajectory holds.
 - **Not yet covered**: smaller covered building, not subject to an emissions limit until 2030.
-- **Unknown — data incomplete**: compliance can't be determined from what was reported.
+- **Unknown (data incomplete)**: compliance can't be determined from what was reported.
 
 **Est. ACP (2025–29)**
 - Estimated annual Alternative Compliance Payment for the current period, at \$234 per metric ton CO₂e over the limit. Shows \$0 for compliant buildings and those not yet covered.""")    
@@ -4361,12 +4361,12 @@ with tab_address:
             st.session_state["ep_last_injected_addr"] = planner_prefill["address"]
 
             st.info(
-                "Building data saved — open the **Retrofit & Incentives** or **Emissions Planner** tabs "
+                "Building data saved: open the **Retrofit & Incentives** or **Emissions Planner** tabs "
                 "to model funding programs and compliance trajectory for this building."
             )
 
 
-#Tab 2 — owner portfolio lookup
+#Tab 2: owner portfolio lookup
 
 with tab_portfolio:
     st.write(
@@ -4398,8 +4398,8 @@ with tab_portfolio:
             if len(portfolio_result) == 1:
                 st.info(
                     "Only one building found for this owner. "
-                    "A Building Portfolio requires multiple buildings — "
-                    "use the Address Lookup tab for single-building analysis."
+                    "A Building Portfolio requires multiple buildings. "
+                    "Use the Address Lookup tab for single-building analysis."
                 )
             else:
                 st.markdown("---")
@@ -4413,14 +4413,14 @@ with tab_portfolio:
                 )
                 
 
-#Tab 3 — Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer)
+#Tab 3: Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer)
 
 with tab_retrofit_optimizer:
     opt_prefill = st.session_state.get("optimizer_prefill", {})
     render_retrofit_optimizer_tab(prefill=opt_prefill)
 
 
-#Tab 4 — Emissions Planner
+#Tab 4: Emissions Planner
 
 with tab_planner:
     planner_prefill = st.session_state.get("planner_prefill", {})
