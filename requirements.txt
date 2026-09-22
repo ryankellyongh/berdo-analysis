@@ -5,3 +5,4 @@ openpyxl
 jupyter
 streamlit
 plotly
+reportlab
