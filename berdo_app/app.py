@@ -171,7 +171,7 @@ PROPERTY_TYPE_MAP = {
     "residential care facility":            "Healthcare",
     "senior care community":                "Healthcare",
     "senior living community":              "Healthcare",
-    "nursing home":                         "Healthcare", # legacy name
+    "nursing home":                         "Healthcare", #legacy name
 
     #Lodging (5.8)
     "barracks":                             "Lodging",
