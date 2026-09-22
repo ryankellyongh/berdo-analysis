@@ -7,7 +7,7 @@ from pathlib import Path
 #Page config
 
 st.set_page_config(
-    page_title="BERDO Compliance Planner",
+    page_title="BERDO Priority Screening Tool",
     layout="wide"
 )
 
@@ -56,10 +56,10 @@ PROJECTED_GRID_EF = {
     yr: round(kg * MWH_PER_MMBTU) for yr, kg in APPENDIX_B_KG_PER_MMBTU.items()
 }
 
-# MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
-# Verified against BERDO Emissions Factors List, last updated May 5, 2026.
-# BERDO electricity formula: G = U × (1 − R) × E
-# Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
+#MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
+#Verified against BERDO Emissions Factors List, last updated May 5, 2026.
+#BERDO electricity formula: G = U × (1 − R) × E
+#Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
 RPS_CLASS_I = {
     2022: 0.20, 2023: 0.22, 2024: 0.24, 2025: 0.27, 2026: 0.30,
     2027: 0.33, 2028: 0.36, 2029: 0.39, 2030: 0.40,
@@ -114,7 +114,7 @@ PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 #Mapping from Energy Star Portfolio Manager property types → BERDO categories
 
 PROPERTY_TYPE_MAP = {
-    # Assembly (2025-29 limit: 7.8)
+    #Assembly (2025-29 limit: 7.8)
     "aquarium":                             "Assembly",
     "convention center":                    "Assembly",
     "fitness center/health club/gym":       "Assembly",
@@ -171,7 +171,7 @@ PROPERTY_TYPE_MAP = {
     "residential care facility":            "Healthcare",
     "senior care community":                "Healthcare",
     "senior living community":              "Healthcare",
-    "nursing home":                         "Healthcare", # legacy name
+    "nursing home":                         "Healthcare", #legacy name
 
     #Lodging (5.8)
     "barracks":                             "Lodging",
@@ -274,6 +274,45 @@ def project_ghg_intensities(ghg_intensity, elec_share, base_year):
         projected.append(round(fossil_intensity + future_elec, 3))
     return projected
 
+def building_elec_share(total_kg, elec_kg):
+    """
+    Share of a building's reported GHG emissions that comes from grid electricity:
+    City-reported electricity emissions ÷ reported total emissions.
+
+    Returns (share, note). share is None when it can't be determined — e.g. the
+    2023 dataset has no fuel-level emissions. note explains any adjustment.
+    """
+    total = pd.to_numeric(total_kg, errors="coerce")
+    elec  = pd.to_numeric(elec_kg,  errors="coerce")
+    if total is None or elec is None or pd.isna(total) or pd.isna(elec) or total <= 0:
+        return None, None
+    if elec < 0:
+        return 0.0, (
+            "Reported electricity emissions are negative, likely from on-site "
+            "generation exported to the grid. Electricity share set to 0% for the "
+            "grid scenario — verify."
+        )
+    share = elec / total
+    if share > 1:
+        return 1.0, "Electricity emissions exceed the reported total; share capped at 100% — verify."
+    return round(float(share), 3), None
+
+
+def resolve_elec_share(prefill, sidebar_share, use_reported=True):
+    """
+    Electricity share for the Retrofit and Planner tabs, with a plain-language
+    source. Prefers the looked-up building's reported share.
+    """
+    prefill = prefill or {}
+    reported = prefill.get("elec_share")
+    if use_reported and reported is not None:
+        yr = prefill.get("elec_share_year")
+        return reported, f"this building's reported {yr} data" if yr else "this building's reported data"
+    if sidebar_share is not None:
+        return sidebar_share, "sidebar estimate"
+    return 0.5, "default estimate; no reported breakdown available"
+
+
 def map_property_type(raw_type):
     """
     Return the BERDO Building Use for an ESPM property type, or None if the
@@ -345,7 +384,7 @@ def parse_property_uses(raw) -> list:
     return uses
 
 
-def blended_limits(uses):
+def blend_limits_by_area(uses):
     """
     Floor-area-weighted BERDO limits for a list of uses.
     Returns (limits or None, mapped_sqft, unmapped_sqft). Uses without a BERDO
@@ -392,7 +431,7 @@ def building_limits(property_type, all_property_types=None, exclude_parking=True
     mapped_cats = {u["BERDO category"] for u in uses if u["BERDO category"]}
 
     if len(mapped_cats) > 1:
-        limits, _, unmapped = blended_limits(uses)
+        limits, _, unmapped = blend_limits_by_area(uses)
         notes.append(
             f"Mixed-use: limit blended across {len(mapped_cats)} BERDO categories "
             "by reported floor area"
@@ -556,7 +595,7 @@ def render_use_mix_editor(top):
         use_rows = edited.to_dict("records")
         if exclude_parking:
             use_rows = [r for r in use_rows if not _is_parking(r.get("ESPM use"))]
-        limits, mapped_sqft, unmapped_sqft = blended_limits(use_rows)
+        limits, mapped_sqft, unmapped_sqft = blend_limits_by_area(use_rows)
         n_cats = len({
             r.get("BERDO category") for r in use_rows
             if r.get("BERDO category") in BERDO_STANDARDS
@@ -910,6 +949,7 @@ COLUMN_RENAME_MAP = {
     
     #Fuel usage columns (all in kBtu except Electricity which is kWh)
     
+    "Electricity Emissions (kgCO2e)": "elec_emissions_kg",
     "Natural Gas Usage (kBtu)":       "fuel_natural_gas_kbtu",
     "Electricity Usage (kWh)":        "fuel_electricity_kwh",
     "District Steam Usage (kBtu)":    "fuel_district_steam_kbtu",
@@ -1039,6 +1079,11 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
             
             #Deductions block for _load_single_csv
     
+    #Reported electricity emissions. Missing stays missing (not 0), so buildings
+    #without a breakdown fall back to the sidebar estimate instead of 0%.
+    if "elec_emissions_kg" in df.columns:
+        df["elec_emissions_kg"] = pd.to_numeric(df["elec_emissions_kg"], errors="coerce")
+
     #Zero-out negative electricity net metering (prevents negative roll-over)
     if "fuel_electricity_kwh" in df.columns:
         df["fuel_electricity_kwh"] = df["fuel_electricity_kwh"].clip(lower=0)
@@ -1223,6 +1268,7 @@ def lookup_building_priority(df, address):
             "Site EUI":                    row.get("site_eui"),
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
             "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
+            "Electricity Emissions (kgCO2e)": row.get("elec_emissions_kg"),
             "Primary Fuel":                infer_primary_fuel(row),
             "fuel_natural_gas_kbtu":       row.get("fuel_natural_gas_kbtu"),
             "fuel_electricity_kwh":        row.get("fuel_electricity_kwh"),
@@ -1275,6 +1321,7 @@ def lookup_owner_portfolio(df, owner_name):
             "Site EUI":                    row.get("site_eui"),
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
             "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
+            "Electricity Emissions (kgCO2e)": row.get("elec_emissions_kg"),
             "Compliance Status":           row.get("compliance_status"),
             "Data Status":                 data_status,
             "BERDO Status":                berdo_status,
@@ -1313,7 +1360,8 @@ def calculate_blended_standard(buildings_df):
 
 #Portfolio compliance section
 
-def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy):
+def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy,
+                             use_reported_share=True):
     """
     Renders BERDO compliance analysis for a multi-building owner portfolio.
     Shows portfolio-level blended standard, aggregate gap, fine exposure,
@@ -1536,8 +1584,29 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     ))
 
     if elec_share is not None:
+        #Emissions-weighted portfolio share: each building's reported share where
+        #available, the sidebar estimate for the rest.
+        portfolio_share, share_src = elec_share, "sidebar estimate"
+        if use_reported_share and total_emissions > 0:
+            elec_kg, n_reported = 0.0, 0
+            for _, r in valid.iterrows():
+                s, _ = building_elec_share(
+                    r.get("GHG Emissions (kgCO2e)"), r.get("Electricity Emissions (kgCO2e)"))
+                if s is None:
+                    s = elec_share
+                else:
+                    n_reported += 1
+                elec_kg += s * float(r["GHG Emissions (kgCO2e)"])
+            if n_reported > 0:
+                portfolio_share = elec_kg / total_emissions
+                share_src = f"reported for {n_reported} of {len(valid)} buildings"
+                if n_reported < len(valid):
+                    share_src += "; sidebar estimate for the rest"
+        st.caption(
+            f"Grid scenario electricity share: **{portfolio_share:.0%}** ({share_src})."
+        )
         projected = project_ghg_intensities(
-            portfolio_intensity, elec_share,
+            portfolio_intensity, portfolio_share,
             selected_year,
         )
         fig.add_trace(go.Scatter(
@@ -2996,7 +3065,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 help="Check current pricing at berdo.greenenergyconsumers.org. Prices move.",
             )
         _rec_gap_kg  = max(prefill_ghg_val - limits[0], 0) * sqft if prefill_ghg_val else 0
-        _rec_elec_kg = (prefill_ghg_val or 0) * sqft * (elec_share if elec_share is not None else 0.5)
+        _rec_share, _rec_share_src = resolve_elec_share(prefill, elec_share, use_reported_share)
+        _rec_elec_kg = (prefill_ghg_val or 0) * sqft * _rec_share
         rec = rec_pathway(_rec_gap_kg, _rec_elec_kg, 2025, rec_price)
         if rec:
             with rc2:
@@ -3032,8 +3102,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                     f"fossil-fuel portion of this building's gap."
                 )
             st.caption(
-                f"Assumes {(elec_share if elec_share is not None else 0.5):.0%} of this building's "
-                f"emissions come from electricity (set in the sidebar). "
+                f"Assumes {_rec_share:.0%} of this building's emissions come from "
+                f"electricity ({_rec_share_src}). "
                 f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
                 "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
                 "independent broker. RECs must be MA Class I from non-emitting sources: solar, wind, "
@@ -3206,7 +3276,8 @@ Actual awards depend on application outcome, project documentation, and contract
 
 #EMISSIONS PLANNER — Tab 5
 
-def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None):
+def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None,
+                                 use_reported_share: bool = True):
     """
     Tab 5 — Emissions Planner.
     Shows compliance projection table across all BERDO periods,
@@ -3419,7 +3490,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         return
 
     apply_grid = show_grid_decarb
-    elec_share_val = elec_share if elec_share is not None else 0.5
+    elec_share_val, elec_share_src = resolve_elec_share(prefill, elec_share, use_reported_share)
 
     limits = limits_for_category(berdo_category, prefill)
 
@@ -3428,7 +3499,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         ef_2050 = effective_grid_ef(2050)
         st.caption(
             f"Grid decarbonization is ON (sidebar). "
-            f"Electricity share: {round(elec_share_val * 100)}%. "
+            f"Electricity share: {round(elec_share_val * 100)}% ({elec_share_src}). "
             f"Base year grid EF (2025): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
             "Toggle in the sidebar to turn off."
@@ -3771,18 +3842,29 @@ show_grid_decarb = st.sidebar.checkbox(
         "Fossil fuel use is held constant."
     ),
 )
+use_reported_share = True   #also applies to the REC comparison when the scenario is off
 if show_grid_decarb:
+    use_reported_share = st.sidebar.checkbox(
+        "Use each building's reported electricity share",
+        value=True,
+        key="sidebar_use_reported_share",
+        help=(
+            "Uses the City-reported electricity emissions ÷ total emissions "
+            "(available from the 2024 dataset onward). Buildings without a "
+            "breakdown use the slider below. Uncheck to apply the slider to every building."
+        ),
+    )
     elec_share_pct = st.sidebar.slider(
         "Electricity share of GHG emissions (%)",
         min_value=0,
         max_value=100,
         value=50,
         step=5,
+        key="sidebar_elec_share",
         help=(
-            "Estimated percentage of this building's total GHG emissions "
-            "that come from grid electricity (vs. fossil fuels such as "
-            "natural gas). Check the building's energy breakdown in ESPM "
-            "or use 50% as a starting estimate for a typical office/mixed-use building."
+            "Used when a building has no reported electricity breakdown, or for "
+            "every building if the option above is unchecked. For reference, the "
+            "median 2024–2025 building gets about 37% of its emissions from electricity."
         ),
     )
     elec_share = elec_share_pct / 100.0
@@ -3850,6 +3932,8 @@ with tab_address:
             st.dataframe(result[display_cols], use_container_width=True, hide_index=True)
 
             top = result.iloc[0]
+            bldg_share, bldg_share_note = building_elec_share(
+                top.get("GHG Emissions (kgCO2e)"), top.get("Electricity Emissions (kgCO2e)"))
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Data status", top["Data Status"])
@@ -3880,6 +3964,13 @@ with tab_address:
                     f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
                     "Used to pre-fill the Retrofit & Incentives tab."
                 )
+            if bldg_share is not None:
+                st.caption(
+                    f"Electricity accounts for **{bldg_share:.0%}** of this building's "
+                    "reported emissions (City-reported electricity emissions ÷ total)."
+                )
+                if bldg_share_note:
+                    st.caption(bldg_share_note)
                 
             with st.expander("What do these fields mean?"):
                 st.markdown(r"""
@@ -3919,11 +4010,27 @@ with tab_address:
             #Grid decarbonization projection 
             projected_intensities = None
             if show_grid_decarb and elec_share is not None:
+                year_txt = f"{selected_year} data" if selected_year else "reported data"
+                if use_reported_share and bldg_share is not None:
+                    share_for_grid = bldg_share
+                    st.caption(
+                        f"Grid scenario uses this building's reported electricity share: "
+                        f"**{bldg_share:.0%}** ({year_txt})."
+                    )
+                else:
+                    share_for_grid = elec_share
+                    why = ("the reported-share option is off in the sidebar"
+                           if not use_reported_share
+                           else "this year's data has no electricity breakdown for this building")
+                    st.caption(
+                        f"Grid scenario uses the sidebar estimate of **{elec_share:.0%}** "
+                        f"because {why}."
+                    )
                 ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
                 if pd.notna(ghg_val) and ghg_val > 0:
                     projected_intensities = project_ghg_intensities(
                         ghg_intensity=float(ghg_val),
-                        elec_share=elec_share,
+                        elec_share=share_for_grid,
                         base_year=selected_year,
                     )
 
@@ -3950,6 +4057,8 @@ with tab_address:
                 "berdo_category": berdo_cat,
                 "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
                 "limits":        use_mix_limits,
+                "elec_share":    bldg_share,
+                "elec_share_year": selected_year or None,
             }
 
             #Calculate fine for 2025–29 period if possible
@@ -3974,6 +4083,8 @@ with tab_address:
                 "sqft":             opt_prefill.get("sqft", 50_000),
                 "berdo_category":   berdo_cat,
                 "limits":           use_mix_limits,
+                "elec_share":       bldg_share,
+                "elec_share_year":  selected_year or None,
                 "ghg_intensity":    float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0,
                 "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
             }
@@ -4036,6 +4147,7 @@ with tab_portfolio:
                     elec_share=elec_share if show_grid_decarb else None,
                     all_years=all_years,
                     show_yoy=show_yoy,
+                    use_reported_share=use_reported_share,
                 )
                 
 
@@ -4054,4 +4166,5 @@ with tab_planner:
         prefill=planner_prefill,
         show_grid_decarb=show_grid_decarb,
         elec_share=elec_share,
+        use_reported_share=use_reported_share,
     )
