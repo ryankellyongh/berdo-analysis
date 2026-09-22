@@ -442,8 +442,8 @@ def building_limits(property_type, all_property_types=None, exclude_parking=True
         blended, _, unmapped = blend_limits_by_area(uses)
         if blended:
             notes.append(
-                f"Mixed-use: default limit is the largest use ({largest_cat or 'unmapped'}); "
-                f"a Blended Emissions Standard, if adopted, would be about "
+                f"Mixed-use: default limit is the largest use ({largest_cat or 'unmapped'}). "
+                f"A Blended Emissions Standard, if adopted, would be about "
                 f"{blended[0]:.2f} for 2025–29"
             )
         if unmapped > 0:
@@ -535,13 +535,14 @@ def calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=None):
 
 #Compliance pathways
 
-def render_compliance_pathways(ctx: dict):
+def get_compliance_pathways(ctx: dict) -> list:
     """
-    Explains every BERDO compliance mechanism and flexibility measure, with links
-    to official City pages, and says why each may or may not fit this building.
+    Every BERDO compliance mechanism and flexibility measure, with official links
+    and a plain-text note on why each may or may not fit this building.
+    Used by the on-screen pathways section and the PDF summary.
 
     ctx keys (all optional): over_now, fails_later, blend_available, blend_fixes,
-    owner_building_count, elec_share, owner_name.
+    owner_building_count, elec_share.
     Nothing here is an eligibility determination; it points owners to options.
     """
     over_now    = ctx.get("over_now", False)
@@ -549,109 +550,100 @@ def render_compliance_pathways(ctx: dict):
     n_owned     = ctx.get("owner_building_count", 0) or 0
     elec_share  = ctx.get("elec_share")
 
-    def _why(text, strong=False):
-        return f"**For this building:** {text}" if strong else f"*For this building:* {text}"
+    def L(*pairs):
+        return [(label, BERDO_LINKS[key]) for label, key in pairs]
 
-    pathways = [
-        {
-            "group": "Ways to comply",
-            "name": "Reduce emissions",
-            "what": "Improve efficiency and move away from fossil fuels. This is the only "
-                    "option that lowers emissions permanently.",
-            "approval": "None",
-            "deadline": "Ongoing; plan around equipment replacement cycles",
-            "links": [("Retrofit Resource Hub", "retrofit_hub"),
-                      ("Building Decarbonization Advisor Program", "advisor_program")],
-            "why": _why("see the Retrofit & Incentives and Emissions Planner tabs to model projects.",
-                        strong=over_now or fails_later),
-        },
-        {
-            "group": "Ways to comply",
-            "name": "Renewable energy (RECs, PPAs)",
-            "what": "Buy eligible renewable energy to offset electricity emissions. "
-                    "It does not offset fossil fuel emissions.",
-            "approval": "None; eligibility rules apply",
-            "deadline": f"REC Connector purchases for 2025 emissions: {REC_CONNECTOR_DEADLINE}",
-            "links": [("Renewable Energy quick guide", "renewable_guide"),
-                      ("MA Class I REC Connector Program", "rec_connector")],
-            "why": _why(
-                f"electricity is about {elec_share:.0%} of reported emissions, so renewables "
-                "can address at most that share." if elec_share is not None else
-                "the electricity share isn't reported for this year; RECs only cover electricity."),
-        },
-        {
-            "group": "Ways to comply",
-            "name": "Alternative Compliance Payment (ACP)",
-            "what": f"Pay USD {ACP_RATE} per metric ton CO₂e over the limit (the rate this tool "
-                    "uses). Payments go to the Equitable Emissions Investment Fund for "
-                    "projects in environmental justice communities.",
-            "approval": "None",
-            "deadline": "Annual, with emissions compliance",
-            "links": [("Equitable Emissions Investment Fund", "eeif")],
-            "why": _why("this tool estimates ACP exposure in the Compliance Gap Analysis above.",
-                        strong=over_now),
-        },
-        {
-            "group": "Flexibility measures",
-            "name": "Blended Emissions Standard",
-            "what": "Mixed-use buildings may use a limit weighted by the floor area of "
-                    "each primary use instead of the largest-use default.",
-            "approval": "No Review Board approval listed; follow the City's template",
-            "deadline": "With annual reporting",
-            "links": [("Building-level blended standard template", "blended_template"),
-                      ("Flexibility Measures quick guide", "flex_guide")],
-            "why": _why(
-                "adopting a blended standard would bring this building under its 2025–29 "
-                "limit. Compare both limits in 'Building uses and emissions limit' above.",
-                strong=True) if ctx.get("blend_fixes") else
-                _why("this building reports more than one use; compare both limits in "
-                     "'Building uses and emissions limit' above.") if ctx.get("blend_available") else
-                _why("only one primary use is reported, so this likely doesn't apply."),
-        },
-        {
-            "group": "Flexibility measures",
-            "name": "Building Portfolio",
-            "what": "An owner groups their BERDO buildings and complies with one "
-                    "portfolio-wide blended standard. All buildings must have the same owner.",
-            "approval": "BERDO Review Board",
-            "deadline": f"September 1 each year. Next: {_fmt_deadline('portfolio_ics')}",
-            "links": [("Apply (application portal)", "apply_portal"),
-                      ("Portfolio blended standard template", "portfolio_template")],
-            "why": _why(
-                f"this owner name appears on {n_owned} buildings in the dataset. See the "
-                "Owner Portfolio tab. Owner names in public data can be inconsistent; verify.",
-                strong=n_owned > 1 and over_now) if n_owned > 1 else
-                _why("only one building found under this owner name in the dataset."),
-        },
-        {
-            "group": "Flexibility measures",
-            "name": "Individual Compliance Schedule",
-            "what": "Owners who have tracked historical emissions can choose a baseline "
-                    "year and follow a custom timeline: 50% reduction by 2030 and net zero "
-                    "by 2050 from that baseline.",
-            "approval": "BERDO Review Board",
-            "deadline": f"September 1 each year. Next: {_fmt_deadline('portfolio_ics')}",
-            "links": [("Apply (application portal)", "apply_portal"),
-                      ("ICS eligibility template", "ics_template")],
-            "why": _why("may help if the building has already cut emissions since an earlier "
-                        "baseline year. Public data can't show this; check your own records."),
-        },
-        {
-            "group": "Flexibility measures",
-            "name": "Hardship Compliance Plan",
-            "what": "Owners facing an eligible financial or technical hardship can request "
-                    "an alternative timeline and/or more flexible targets. Under-resourced "
-                    "owners can use a streamlined short-term application.",
-            "approval": "BERDO Review Board",
-            "deadline": (f"Short-term: October 1. Next: {_fmt_deadline('short_term_hcp')}. "
-                         f"Long-term: July 1. Next: {_fmt_deadline('long_term_hcp')}"),
-            "links": [("Guidance & FAQ", "hcp_guide"),
-                      ("Streamlined option for under-resourced owners", "hcp_streamlined")],
-            "why": _why("public data can't show financial or technical hardship; review the "
-                        "eligibility criteria in the guidance."),
-        },
+    if ctx.get("blend_fixes"):
+        blend_why, blend_strong = ("adopting a blended standard would bring this building "
+                                   "under its 2025–29 limit.", True)
+    elif ctx.get("blend_available"):
+        blend_why, blend_strong = ("this building reports more than one use; compare the "
+                                   "default and blended limits.", False)
+    else:
+        blend_why, blend_strong = ("only one primary use is reported, so this likely "
+                                   "doesn't apply.", False)
+
+    if n_owned > 1:
+        port_why = (f"this owner name appears on {n_owned} buildings in the dataset. Owner "
+                    "names in public data can be inconsistent; verify.")
+    else:
+        port_why = "only one building found under this owner name in the dataset."
+
+    return [
+        {"group": "Ways to comply", "name": "Reduce emissions",
+         "what": "Improve efficiency and move away from fossil fuels. This is the only "
+                 "option that lowers emissions permanently.",
+         "approval": "None",
+         "deadline": "Ongoing; plan around equipment replacement cycles",
+         "links": L(("Retrofit Resource Hub", "retrofit_hub"),
+                    ("Building Decarbonization Advisor Program", "advisor_program")),
+         "why": "model projects in the Retrofit & Incentives and Emissions Planner tabs.",
+         "strong": over_now or fails_later},
+        {"group": "Ways to comply", "name": "Renewable energy (RECs, PPAs)",
+         "what": "Buy eligible renewable energy to offset electricity emissions. "
+                 "It does not offset fossil fuel emissions.",
+         "approval": "None; eligibility rules apply",
+         "deadline": f"REC Connector purchases for 2025 emissions: {REC_CONNECTOR_DEADLINE}",
+         "links": L(("Renewable Energy quick guide", "renewable_guide"),
+                    ("MA Class I REC Connector Program", "rec_connector")),
+         "why": (f"electricity is about {elec_share:.0%} of reported emissions, so renewables "
+                 "can address at most that share." if elec_share is not None else
+                 "the electricity share isn't reported for this year; RECs only cover electricity."),
+         "strong": False},
+        {"group": "Ways to comply", "name": "Alternative Compliance Payment (ACP)",
+         "what": f"Pay USD {ACP_RATE} per metric ton CO2e over the limit (the rate this tool "
+                 "uses). Payments go to the Equitable Emissions Investment Fund for "
+                 "projects in environmental justice communities.",
+         "approval": "None",
+         "deadline": "Annual, with emissions compliance",
+         "links": L(("Equitable Emissions Investment Fund", "eeif")),
+         "why": "this tool estimates ACP exposure in the compliance gap analysis.",
+         "strong": over_now},
+        {"group": "Flexibility measures", "name": "Blended Emissions Standard",
+         "what": "Mixed-use buildings may use a limit weighted by the floor area of "
+                 "each primary use instead of the largest-use default.",
+         "approval": "No Review Board approval listed; follow the City's template",
+         "deadline": "With annual reporting",
+         "links": L(("Building-level blended standard template", "blended_template"),
+                    ("Flexibility Measures quick guide", "flex_guide")),
+         "why": blend_why, "strong": blend_strong},
+        {"group": "Flexibility measures", "name": "Building Portfolio",
+         "what": "An owner groups their BERDO buildings and complies with one "
+                 "portfolio-wide blended standard. All buildings must have the same owner.",
+         "approval": "BERDO Review Board",
+         "deadline": f"September 1 each year. Next: {_fmt_deadline('portfolio_ics')}",
+         "links": L(("Apply (application portal)", "apply_portal"),
+                    ("Portfolio blended standard template", "portfolio_template")),
+         "why": port_why, "strong": n_owned > 1 and over_now},
+        {"group": "Flexibility measures", "name": "Individual Compliance Schedule",
+         "what": "Owners who have tracked historical emissions can choose a baseline "
+                 "year and follow a custom timeline: 50% reduction by 2030 and net zero "
+                 "by 2050 from that baseline.",
+         "approval": "BERDO Review Board",
+         "deadline": f"September 1 each year. Next: {_fmt_deadline('portfolio_ics')}",
+         "links": L(("Apply (application portal)", "apply_portal"),
+                    ("ICS eligibility template", "ics_template")),
+         "why": "may help if the building has already cut emissions since an earlier "
+                "baseline year. Public data can't show this; check your own records.",
+         "strong": False},
+        {"group": "Flexibility measures", "name": "Hardship Compliance Plan",
+         "what": "Owners facing an eligible financial or technical hardship can request "
+                 "an alternative timeline and/or more flexible targets. Under-resourced "
+                 "owners can use a streamlined short-term application.",
+         "approval": "BERDO Review Board",
+         "deadline": (f"Short-term: October 1. Next: {_fmt_deadline('short_term_hcp')}. "
+                      f"Long-term: July 1. Next: {_fmt_deadline('long_term_hcp')}"),
+         "links": L(("Guidance & FAQ", "hcp_guide"),
+                    ("Streamlined option for under-resourced owners", "hcp_streamlined")),
+         "why": "public data can't show financial or technical hardship; review the "
+                "eligibility criteria in the guidance.",
+         "strong": False},
     ]
 
+
+def render_compliance_pathways(ctx: dict):
+    """On-screen version of get_compliance_pathways()."""
+    over_now = ctx.get("over_now", False)
     title = "BERDO compliance pathways" + (": options for a building over its limit" if over_now else "")
     with st.expander(title, expanded=over_now):
         st.caption(
@@ -660,15 +652,17 @@ def render_compliance_pathways(ctx: dict):
             "Confirm details and deadlines on the City's pages."
         )
         current_group = None
-        for p in pathways:
+        for p in get_compliance_pathways(ctx):
             if p["group"] != current_group:
                 current_group = p["group"]
                 st.markdown(f"#### {current_group}")
-            links = " · ".join(f"[{label}]({BERDO_LINKS[key]})" for label, key in p["links"])
+            why = (f"**For this building:** {p['why']}" if p["strong"]
+                   else f"*For this building:* {p['why']}")
+            links = " · ".join(f"[{label}]({url})" for label, url in p["links"])
             st.markdown(
                 f"**{p['name']}:** {p['what']}  \n"
                 f"Approval: {p['approval']} · Deadline: {p['deadline']}  \n"
-                f"{p['why']}  \n"
+                f"{why}  \n"
                 f"{links}"
             )
         st.markdown("#### Get help")
@@ -684,6 +678,183 @@ def render_compliance_pathways(ctx: dict):
             f"{PATHWAYS_VERIFIED}. BERDO regulations are being updated; check the City's "
             "pages before acting."
         )
+
+
+#One-page PDF summary
+
+def build_building_summary_pdf(s: dict) -> bytes:
+    """
+    One-page PDF of a building's screening results and options, for sharing with a
+    board, lender, or consultant. Every figure is labeled Reported, Calculated, or
+    Estimated. KeepInFrame(shrink) guarantees the content fits on one page.
+
+    s keys: address, owner, data_year, facts [(item, value, source)],
+    periods [dict], limit_basis, blend_note, grid_note, notes [str], pathways [dict].
+    """
+    from io import BytesIO
+    from xml.sax.saxutils import escape
+    import datetime as _dt
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                    TableStyle, KeepInFrame)
+
+    def esc(x):
+        return escape(str(x)) if x is not None else ""
+
+    def co2(text):
+        #Built-in PDF fonts have no subscript-2 glyph, so use markup instead
+        return text.replace("CO₂", "CO<sub>2</sub>").replace("CO2e", "CO<sub>2</sub>e")
+
+    base = getSampleStyleSheet()
+    ink, muted, accent, rule = (colors.HexColor("#1F2A37"), colors.HexColor("#5B6573"),
+                                colors.HexColor("#2F5D8A"), colors.HexColor("#D5DAE1"))
+    st_title = ParagraphStyle("t", parent=base["Title"], fontName="Helvetica-Bold",
+                              fontSize=15, leading=18, alignment=0, spaceAfter=2, textColor=ink)
+    st_sub   = ParagraphStyle("s", parent=base["Normal"], fontName="Helvetica-Bold",
+                              fontSize=11, leading=14, textColor=ink)
+    st_meta  = ParagraphStyle("m", parent=base["Normal"], fontSize=8, leading=10, textColor=muted)
+    st_h     = ParagraphStyle("h", parent=base["Normal"], fontName="Helvetica-Bold",
+                              fontSize=9.5, leading=12, textColor=accent, spaceBefore=7, spaceAfter=3)
+    st_body  = ParagraphStyle("b", parent=base["Normal"], fontSize=8, leading=10, textColor=ink)
+    st_cell  = ParagraphStyle("c", parent=st_body, fontSize=7.8, leading=9.5)
+    st_cellb = ParagraphStyle("cb", parent=st_cell, fontName="Helvetica-Bold")
+    st_small = ParagraphStyle("sm", parent=st_body, fontSize=7, leading=8.6, textColor=muted)
+
+    def P(text, style=st_cell):
+        return Paragraph(text, style)
+
+    grid = TableStyle([
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, accent),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.3, rule),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+    ])
+
+    story = []
+    today = _dt.date.today()
+    story.append(P("BERDO Screening Summary", st_title))
+    story.append(P(esc(s.get("address", "")), st_sub))
+    story.append(P(
+        f"Owner: {esc(s.get('owner') or 'Not reported')} &nbsp;·&nbsp; "
+        f"Data year: {esc(s.get('data_year') or 'Not specified')} &nbsp;·&nbsp; "
+        f"Generated {today.strftime('%B')} {today.day}, {today.year}", st_meta))
+    story.append(Spacer(1, 5))
+
+    banner = Table([[P(
+        "<b>Screening estimate, not an official City of Boston compliance determination.</b> "
+        "Figures are labeled <b>Reported</b> (from the City's public BERDO data), "
+        "<b>Calculated</b> (by this tool from reported data), or <b>Estimated</b> "
+        "(depends on this tool's assumptions).", st_body)]], colWidths=[7.3 * inch])
+    banner.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EEF3F8")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#B8C7D9")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(banner)
+
+    #Building at a glance: two side-by-side fact tables
+    story.append(P("Building at a glance", st_h))
+    facts = s.get("facts", [])
+    half = (len(facts) + 1) // 2
+    def fact_table(rows):
+        data = [[P("<b>Item</b>"), P("<b>Value</b>"), P("<b>Source</b>")]]
+        data += [[P(esc(a)), P(co2(esc(b))), P(esc(c), st_small)] for a, b, c in rows]
+        t = Table(data, colWidths=[1.25 * inch, 1.45 * inch, 0.85 * inch])
+        t.setStyle(grid)
+        return t
+    two = Table([[fact_table(facts[:half]), fact_table(facts[half:])]],
+                colWidths=[3.65 * inch, 3.65 * inch])
+    two.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                             ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                             ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(two)
+
+    #Emissions limit by period
+    periods = s.get("periods", [])
+    if periods:
+        story.append(P("Emissions limit by compliance period", st_h))
+        has_grid = any(p.get("grid_status") for p in periods)
+        head = ["Period", "Limit (kg CO2e/sf/yr)", "Gap vs. current intensity",
+                "Status at current emissions", "Est. annual ACP"]
+        if has_grid:
+            head.append("Grid scenario")
+        data = [[P(f"<b>{co2(h)}</b>") for h in head]]
+        for p in periods:
+            row = [P(esc(p["period"])), P(f"{p['limit']:.2f}"),
+                   P(f"{p['gap']:+.2f}"),
+                   P(esc(p["status"]), st_cellb if p["status"] != "Meets limit" else st_cell),
+                   P(f"USD {p['acp']:,.0f}" if p["acp"] else "USD 0")]
+            if has_grid:
+                row.append(P(esc(p.get("grid_status") or "")))
+            data.append(row)
+        widths = [0.8, 1.35, 1.35, 1.6, 1.1] + ([1.1] if has_grid else [])
+        t = Table(data, colWidths=[w * inch for w in widths])
+        t.setStyle(grid)
+        story.append(t)
+        cap = [esc(s.get("limit_basis", ""))]
+        if s.get("blend_note"):
+            cap.append(esc(s["blend_note"]))
+        if s.get("grid_note"):
+            cap.append(esc(s["grid_note"]))
+        cap.append("Limits: Reported (BERDO emissions standards). Gap and status: Calculated. "
+                   f"ACP: Estimated at USD {ACP_RATE} per metric ton over the limit, "
+                   "assuming emissions stay flat. The 2050+ row is an annual figure with no end date.")
+        story.append(Spacer(1, 2))
+        story.append(P(co2(" ".join(c for c in cap if c)), st_small))
+
+    #Screening notes
+    notes = [n for n in s.get("notes", []) if n]
+    if notes:
+        story.append(P("Screening notes", st_h))
+        for n in notes[:6]:
+            story.append(P(f"• {co2(esc(n))}", st_body))
+
+    #Options
+    pw = s.get("pathways", [])
+    if pw:
+        story.append(P("Options to consider", st_h))
+        ordered = sorted(pw, key=lambda p: not p["strong"])
+        data = [[P("<b>Option</b>"), P("<b>For this building</b>"),
+                 P("<b>Approval · Deadline</b>"), P("<b>Official link</b>")]]
+        for p in ordered:
+            label, url = p["links"][0]
+            data.append([
+                P(("<b>" if p["strong"] else "") + esc(p["name"]) + ("</b>" if p["strong"] else "")),
+                P(co2(esc(p["why"][:1].upper() + p["why"][1:]))),
+                P(f"{esc(p['approval'])} · {esc(p['deadline'])}", st_small),
+                P(f'<link href="{esc(url)}" color="#2F5D8A"><u>{esc(label)}</u></link>', st_small),
+            ])
+        t = Table(data, colWidths=[1.45 * inch, 2.75 * inch, 1.75 * inch, 1.35 * inch])
+        t.setStyle(grid)
+        story.append(t)
+        story.append(Spacer(1, 2))
+        story.append(P("Options in bold are most relevant to this building's screening result. "
+                       "Listing an option is not a determination of eligibility.", st_small))
+
+    #Footer
+    story.append(Spacer(1, 6))
+    story.append(P(
+        "Sources: City of Boston BERDO public data disclosure; BERDO emissions standards; "
+        f"boston.gov BERDO and Review Board pages (pathways and deadlines verified {PATHWAYS_VERIFIED}). "
+        f'Questions about official compliance: <link href="{BERDO_LINKS["one_on_one"]}" color="#2F5D8A">'
+        "<u>schedule a call with BERDO staff</u></link>. "
+        "Prepared with the BERDO Priority Screening Tool. Not financial, legal, or tax advice.",
+        st_small))
+
+    buf = BytesIO()
+    margin = 0.5 * inch
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=margin, rightMargin=margin,
+                            topMargin=margin, bottomMargin=margin,
+                            title=f"BERDO Screening Summary: {s.get('address', '')}",
+                            author="BERDO Priority Screening Tool")
+    frame_w, frame_h = letter[0] - 2 * margin, letter[1] - 2 * margin
+    doc.build([KeepInFrame(frame_w, frame_h - 2, story, mode="shrink")])
+    return buf.getvalue()
 
 
 #Mixed-use editor
@@ -4298,14 +4469,97 @@ with tab_address:
             if _owner and _owner != "nan":
                 _n_owned = int((df_full["Property Owner Name"].astype(str)
                                 .str.strip().str.lower() == _owner).sum())
-            render_compliance_pathways({
+            _pathways_ctx = {
                 "over_now":             top["BERDO Status"] == "Over 2025–29 limit",
                 "fails_later":          top["BERDO Status"] == "Fails 2030–34",
                 "blend_available":      _bl_ctx["basis"] != "largest_use",
                 "blend_fixes":          _blend_fixes,
                 "owner_building_count": _n_owned,
                 "elec_share":           bldg_share,
-            })
+            }
+            render_compliance_pathways(_pathways_ctx)
+
+            #One-page PDF summary for a board, lender, or consultant
+            _pdf_limits = use_mix_limits or _bl_ctx["limits"]
+            _periods = []
+            if _pdf_limits and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx) and _sqft_ctx > 0:
+                for _i, _g in enumerate(calculate_compliance_gap(
+                        float(_ghg_ctx), float(_sqft_ctx), None, limits=_pdf_limits)):
+                    _row = {"period": _g["period"], "limit": _g["limit"], "gap": _g["gap"],
+                            "status": "Meets limit" if _g["compliant"] else "Over limit",
+                            "acp": _g["annual_fine_usd"]}
+                    if projected_intensities is not None:
+                        _pg = calculate_compliance_gap(projected_intensities[_i], float(_sqft_ctx),
+                                                       None, limits=_pdf_limits)[_i]
+                        _row["grid_status"] = "Meets limit" if _pg["compliant"] else "Over limit"
+                    _periods.append(_row)
+
+            def _num(v, fmt):
+                v = pd.to_numeric(v, errors="coerce")
+                return fmt.format(v) if pd.notna(v) else "Not reported"
+
+            _facts = [
+                ("BERDO category", _bl_ctx["label"] or "Not mappable", "Calculated"),
+                ("Reported property type", top.get("Property Type") or "Not reported", "Reported"),
+                ("Gross floor area", _num(top.get("Gross Floor Area"), "{:,.0f} sq ft"), "Reported"),
+                ("Total GHG emissions", _num(pd.to_numeric(top.get("GHG Emissions (kgCO2e)"),
+                                                           errors="coerce") / 1000,
+                                             "{:,.0f} metric tons CO2e"), "Reported"),
+                ("GHG intensity", _num(_ghg_ctx, "{:.2f} kg CO2e/sf/yr"), "Calculated"),
+                ("Electricity share of emissions",
+                 (f"{bldg_share:.1%}" if bldg_share < 0.10 else f"{bldg_share:.0%}")
+                 if bldg_share is not None else "Not reported", "Calculated"),
+                ("Site EUI", _num(top.get("Site EUI"), "{:.1f} kBtu/sf/yr"), "Reported"),
+                ("Reporting status", str(top.get("Compliance Status") or "Not reported").capitalize(), "Reported"),
+                ("Screening result", top.get("BERDO Status"), "Calculated"),
+                ("Est. annual ACP (2025–29)",
+                 f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0",
+                 "Estimated"),
+            ]
+            _limit_basis = (
+                "Limits shown use the Blended Emissions Standard, an option the owner may adopt "
+                "(estimated by this tool from floor area by use)."
+                if use_mix_limits else
+                f"Limits shown are the default for the building's largest use ({_bl_ctx['label']})."
+            )
+            _blend_note = ""
+            if not use_mix_limits and _bl_ctx.get("blended"):
+                _blend_note = (f"If the owner adopts a Blended Emissions Standard, the 2025–29 "
+                               f"limit would be about {_bl_ctx['blended'][0]:.2f} (estimated).")
+            _grid_note = ""
+            if projected_intensities is not None:
+                _grid_note = ("Grid scenario: projection assuming the electric grid gets cleaner "
+                              "per the City's projected emissions factors, with fossil fuel use "
+                              "unchanged (Estimated).")
+            _notes = [n.strip() for n in str(top.get("Notes") or "").split(";") if n.strip()]
+
+            try:
+                _pdf_bytes = build_building_summary_pdf({
+                    "address":     top.get("Building Address", address_input),
+                    "owner":       top.get("Property Owner Name"),
+                    "data_year":   selected_year or None,
+                    "facts":       _facts,
+                    "periods":     _periods,
+                    "limit_basis": _limit_basis,
+                    "blend_note":  _blend_note,
+                    "grid_note":   _grid_note,
+                    "notes":       _notes,
+                    "pathways":    get_compliance_pathways(_pathways_ctx),
+                })
+                _slug = re.sub(r"[^A-Za-z0-9]+", "_", str(top.get("Building Address", "building"))).strip("_")
+                st.download_button(
+                    "Download one-page summary (PDF)",
+                    data=_pdf_bytes,
+                    file_name=f"BERDO_summary_{_slug}_{selected_year or 'data'}.pdf",
+                    mime="application/pdf",
+                    help="Status, limits by period, screening notes, and compliance options "
+                         "on one page, for a board, lender, or consultant. Reflects the "
+                         "settings currently shown (blended standard, grid scenario).",
+                )
+            except ImportError:
+                st.caption(
+                    "PDF export needs the reportlab package. Add `reportlab` to requirements.txt."
+                )
 
             #Store prefill data for Incentive Optimizer tab
             ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
