@@ -7,7 +7,7 @@ from pathlib import Path
 #Page config
 
 st.set_page_config(
-    page_title="BERDO Priority Screening Tool",
+    page_title="BERDO Compliance Planner",
     layout="wide"
 )
 
@@ -56,10 +56,10 @@ PROJECTED_GRID_EF = {
     yr: round(kg * MWH_PER_MMBTU) for yr, kg in APPENDIX_B_KG_PER_MMBTU.items()
 }
 
-#MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
-#Verified against BERDO Emissions Factors List, last updated May 5, 2026.
-#BERDO electricity formula: G = U × (1 − R) × E
-#Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
+# MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
+# Verified against BERDO Emissions Factors List, last updated May 5, 2026.
+# BERDO electricity formula: G = U × (1 − R) × E
+# Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
 RPS_CLASS_I = {
     2022: 0.20, 2023: 0.22, 2024: 0.24, 2025: 0.27, 2026: 0.30,
     2027: 0.33, 2028: 0.36, 2029: 0.39, 2030: 0.40,
@@ -114,7 +114,7 @@ PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 #Mapping from Energy Star Portfolio Manager property types → BERDO categories
 
 PROPERTY_TYPE_MAP = {
-    #Assembly (2025-29 limit: 7.8)
+    # Assembly (2025-29 limit: 7.8)
     "aquarium":                             "Assembly",
     "convention center":                    "Assembly",
     "fitness center/health club/gym":       "Assembly",
@@ -171,7 +171,7 @@ PROPERTY_TYPE_MAP = {
     "residential care facility":            "Healthcare",
     "senior care community":                "Healthcare",
     "senior living community":              "Healthcare",
-    "nursing home":                         "Healthcare", #legacy name
+    "nursing home":                         "Healthcare", # legacy name
 
     #Lodging (5.8)
     "barracks":                             "Lodging",
@@ -236,6 +236,9 @@ PROPERTY_TYPE_ALIASES = {
     "college / university":         "College/University",
     "residence hall / dormitory":   "Lodging",
     "manufacturing/industrial":     "Manufacturing/Industrial",
+    #City data sometimes writes "etc" without the period
+    "personal services (health/beauty, dry cleaning, etc)": "Services",
+    "repair services (vehicle, shoe, locksmith, etc)":      "Services",
 }
 PROPERTY_TYPE_MAP.update(PROPERTY_TYPE_ALIASES)
 
@@ -285,6 +288,156 @@ def map_property_type(raw_type):
         return hit
     #Retry without the normalized dash spacing, for keys stored tightly.
     return PROPERTY_TYPE_MAP.get(key.replace(" - ", "-"))
+
+
+#Mixed-use buildings
+#BERDO sets a mixed-use building's limit as the floor-area-weighted average of
+#the limits for each of its uses. The 2024+ datasets report floor area by use in
+#"All Property Types and GFAs", e.g. "Office (26744),Laboratory (85744)".
+#Earlier years list the uses without floor areas, so the blend can't be computed.
+
+_USE_WITH_GFA = re.compile(r"\s*,?\s*(.+?)\s*\((\d[\d,]*\.?\d*)\)")
+
+
+def _is_parking(name) -> bool:
+    return "parking" in str(name).lower()
+
+
+def _split_top_level(raw: str) -> list:
+    """Split a comma-separated list, ignoring commas inside parentheses."""
+    parts, depth, cur = [], 0, ""
+    for ch in raw:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    return [p for p in parts if p]
+
+
+def parse_property_uses(raw) -> list:
+    """
+    Parse reported uses WITH floor areas into
+    [{"ESPM use", "BERDO category", "Sq ft"}, ...].
+    Returns [] when the field is empty or lists no floor areas (pre-2024 data).
+    """
+    if not isinstance(raw, str) or "(" not in raw:
+        return []
+    uses = []
+    for m in _USE_WITH_GFA.finditer(raw):
+        name = m.group(1).strip().strip(",").strip()
+        try:
+            sqft = float(m.group(2).replace(",", ""))
+        except ValueError:
+            continue
+        if sqft > 0:
+            uses.append({
+                "ESPM use": name,
+                "BERDO category": map_property_type(name),
+                "Sq ft": sqft,
+            })
+    return uses
+
+
+def blended_limits(uses):
+    """
+    Floor-area-weighted BERDO limits for a list of uses.
+    Returns (limits or None, mapped_sqft, unmapped_sqft). Uses without a BERDO
+    category (e.g. ESPM "Other") are left out of the blend and reported as
+    unmapped so the caller can flag them.
+    """
+    mapped = unmapped = 0.0
+    weighted = [0.0] * len(COMPLIANCE_PERIODS)
+    for u in uses:
+        sq = pd.to_numeric(u.get("Sq ft"), errors="coerce")
+        if sq is None or pd.isna(sq) or sq <= 0:
+            continue
+        cat = u.get("BERDO category")
+        if cat not in BERDO_STANDARDS:
+            unmapped += sq
+            continue
+        mapped += sq
+        for i, lim in enumerate(BERDO_STANDARDS[cat]):
+            weighted[i] += lim * sq
+    if mapped == 0:
+        return None, 0.0, unmapped
+    return [round(w / mapped, 3) for w in weighted], mapped, unmapped
+
+
+def building_limits(property_type, all_property_types=None, exclude_parking=True):
+    """
+    Decide which limits apply to a building.
+
+    basis:
+      "blended"      more than one BERDO category with reported floor areas
+      "multi_no_gfa" more than one category listed, but no floor areas (pre-2024)
+      "largest_use"  single use; limits of the largest property type
+
+    Parking is excluded from the blend by default, which keeps limits the same
+    as the previous single-use logic for e.g. "Multifamily Housing, Parking".
+    Verify parking treatment against the BERDO regulations.
+    """
+    largest_cat = map_property_type(property_type)
+    notes = []
+
+    uses = parse_property_uses(all_property_types)
+    if exclude_parking:
+        uses = [u for u in uses if not _is_parking(u["ESPM use"])]
+    mapped_cats = {u["BERDO category"] for u in uses if u["BERDO category"]}
+
+    if len(mapped_cats) > 1:
+        limits, _, unmapped = blended_limits(uses)
+        notes.append(
+            f"Mixed-use: limit blended across {len(mapped_cats)} BERDO categories "
+            "by reported floor area"
+        )
+        if unmapped > 0:
+            notes.append(
+                f"{unmapped:,.0f} sq ft of listed uses could not be mapped to a BERDO "
+                "category (e.g. 'Other') and is left out of the blend — verify"
+            )
+        return {"limits": limits, "label": "Mixed-use (blended)",
+                "category": largest_cat, "basis": "blended",
+                "uses": uses, "listed_names": [], "notes": notes}
+
+    listed_names = []
+    if isinstance(all_property_types, str) and not uses:
+        listed_names = _split_top_level(all_property_types)
+        if exclude_parking:
+            listed_names = [n for n in listed_names if not _is_parking(n)]
+    listed_cats = {map_property_type(n) for n in listed_names} - {None}
+
+    if len(listed_cats) > 1:
+        basis = "multi_no_gfa"
+        notes.append(
+            "Multiple uses listed without floor area by use — limit is based on "
+            "the largest use only and may be wrong; verify"
+        )
+    else:
+        basis = "largest_use"
+        listed_names = []
+
+    return {"limits": BERDO_STANDARDS.get(largest_cat) if largest_cat else None,
+            "label": largest_cat, "category": largest_cat, "basis": basis,
+            "uses": uses, "listed_names": listed_names, "notes": notes}
+
+
+def limits_for_category(berdo_category, prefill):
+    """
+    Limits for the Retrofit and Planner tabs: use the blended limits carried
+    over from Address Lookup when the tab is still showing that building's
+    category; otherwise fall back to the single-category standard.
+    """
+    prefill = prefill or {}
+    if prefill.get("limits") and berdo_category == prefill.get("berdo_category"):
+        return prefill["limits"]
+    return BERDO_STANDARDS[berdo_category]
     
 def standardize_address_series(series):
     """
@@ -306,8 +459,9 @@ def standardize_address_series(series):
 
 #Compliance gap calculation
 
-def calculate_compliance_gap(ghg_intensity, sqft, berdo_category):
-    limits = BERDO_STANDARDS.get(berdo_category)
+def calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=None):
+    if limits is None:
+        limits = BERDO_STANDARDS.get(berdo_category)
     if limits is None:
         return []
 
@@ -329,6 +483,110 @@ def calculate_compliance_gap(ghg_intensity, sqft, berdo_category):
     return results
 
 
+#Mixed-use editor
+
+def render_use_mix_editor(top):
+    """
+    Shows floor area by use and lets the owner correct it. Pre-fills from the
+    reported data (2024+). Returns blended limits when the building has more
+    than one BERDO category, otherwise None (single-use limits apply).
+    """
+    address  = str(top.get("Building Address", ""))
+    raw_type = top.get("Property Type")
+    bl = building_limits(raw_type, top.get("All Property Types"))
+    reported_gfa = pd.to_numeric(top.get("Gross Floor Area"), errors="coerce")
+    reported_gfa = 0.0 if pd.isna(reported_gfa) else float(reported_gfa)
+
+    if bl["basis"] == "blended":
+        rows = bl["uses"]
+    elif bl["basis"] == "multi_no_gfa":
+        #Floor areas not reported: give the largest use the full GFA, others 0
+        rows = [{
+            "ESPM use": n,
+            "BERDO category": map_property_type(n),
+            "Sq ft": reported_gfa if map_property_type(n) == bl["category"] else 0.0,
+        } for n in bl["listed_names"]]
+    else:
+        rows = [{"ESPM use": str(raw_type or ""), "BERDO category": bl["category"],
+                 "Sq ft": reported_gfa}]
+
+    is_mixed = bl["basis"] != "largest_use"
+    title = "Building uses and emissions limit" + (" — mixed-use" if is_mixed else "")
+
+    with st.expander(title, expanded=is_mixed):
+        if bl["basis"] == "blended":
+            st.caption(
+                "This building reports more than one use. BERDO limits for mixed-use "
+                "buildings are weighted by the floor area of each use. The table below "
+                "is pre-filled from the reported data — correct it if it's out of date."
+            )
+        elif bl["basis"] == "multi_no_gfa":
+            st.warning(
+                "This year's data lists more than one use but no floor area for each. "
+                "Enter the square footage by use to calculate a blended limit. "
+                "Until then, the largest use's limit is used, which may be wrong."
+            )
+        else:
+            st.caption(
+                "One use reported. If the building has more than one use, add a row "
+                "for each use with its floor area."
+            )
+
+        edited = st.data_editor(
+            pd.DataFrame(rows, columns=["ESPM use", "BERDO category", "Sq ft"]),
+            key=f"use_mix_{address}",
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "ESPM use": st.column_config.TextColumn("Reported use"),
+                "BERDO category": st.column_config.SelectboxColumn(
+                    "BERDO category", options=sorted(BERDO_STANDARDS.keys())),
+                "Sq ft": st.column_config.NumberColumn(
+                    "Floor area (sq ft)", min_value=0, step=100, format="%d"),
+            },
+        )
+        exclude_parking = st.checkbox(
+            "Leave parking out of the blend", value=True,
+            key=f"use_mix_parking_{address}",
+            help="Parking is commonly excluded from BERDO emissions standards. "
+                 "Verify against the BERDO regulations for this building.",
+        )
+
+        use_rows = edited.to_dict("records")
+        if exclude_parking:
+            use_rows = [r for r in use_rows if not _is_parking(r.get("ESPM use"))]
+        limits, mapped_sqft, unmapped_sqft = blended_limits(use_rows)
+        n_cats = len({
+            r.get("BERDO category") for r in use_rows
+            if r.get("BERDO category") in BERDO_STANDARDS
+            and (pd.to_numeric(r.get("Sq ft"), errors="coerce") or 0) > 0
+        })
+
+        if unmapped_sqft > 0:
+            st.warning(
+                f"{unmapped_sqft:,.0f} sq ft has no BERDO category and is left out of "
+                "the blend. Choose a category for those rows."
+            )
+        if reported_gfa > 0 and mapped_sqft > 0 and abs(mapped_sqft - reported_gfa) / reported_gfa > 0.05:
+            st.caption(
+                f"Floor area in this table ({mapped_sqft:,.0f} sq ft) differs from the "
+                f"reported gross floor area ({reported_gfa:,.0f} sq ft) by more than 5%. "
+                "The blend uses the table; emissions intensity still uses reported GFA."
+            )
+
+        if limits and n_cats > 1:
+            st.markdown("**Blended limit by period (kg CO₂e/sf/yr)**")
+            st.caption(" · ".join(
+                f"{p}: {l:.2f}" for p, l in zip(COMPLIANCE_PERIODS, limits)))
+            st.caption(
+                "Calculated by this tool from floor area by use. "
+                "Not an official City of Boston determination."
+            )
+            return limits
+        return None
+
+
 #Compliance gap display
 
 def render_compliance_section(
@@ -337,6 +595,7 @@ def render_compliance_section(
     prior_year_label=None,
     projected_intensities=None,
     base_year=2025,
+    limits=None,
 ):
     """
     projected_intensities: list of 6 floats (one per compliance period) from
@@ -361,7 +620,7 @@ def render_compliance_section(
         st.warning("Floor area is missing — cannot calculate fine exposure.")
         return
 
-    if berdo_category is None:
+    if berdo_category is None and limits is None:
         st.warning(
             f"Property type **{raw_type}** could not be mapped to a BERDO "
             "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
@@ -369,12 +628,13 @@ def render_compliance_section(
         )
         return
 
-    gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category)
+    gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=limits)
+    category_label = "Mixed-use (blended)" if limits is not None else berdo_category
 
     #Projected gaps (for grid decarb scenario metric cards)
     if projected_intensities is not None:
         proj_gaps = [
-            calculate_compliance_gap(pi, sqft, berdo_category)
+            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits)
             for pi in projected_intensities
         ]
         #proj_gaps[i] is a list of 6 period gaps for the projected intensity at period i
@@ -386,7 +646,7 @@ def render_compliance_section(
     st.caption(
         f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
         f"Floor area: **{int(sqft):,} sq ft** · "
-        f"BERDO category: **{berdo_category}**"
+        f"BERDO category: **{category_label}**"
     )
 
     #Metric cards (first 3 periods)
@@ -488,7 +748,7 @@ def render_compliance_section(
 
     if projected_intensities is not None:
         proj_fines = [
-            calculate_compliance_gap(pi, sqft, berdo_category)[i]["annual_fine_usd"]
+            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits)[i]["annual_fine_usd"]
             for i, pi in enumerate(projected_intensities)
         ]
         fig.add_trace(go.Scatter(
@@ -640,6 +900,7 @@ Not an official City of Boston compliance determination.
 
 COLUMN_RENAME_MAP = {
     "Largest Property Type": "property_type",
+    "All Property Types and GFAs": "all_property_types",
     "Reported Gross Floor Area (Sq Ft)": "gross_floor_area",
     "Site EUI (Energy Use Intensity kBtu/ft²)": "site_eui",
     "Estimated Total GHG Emissions (kgCO2e)": "ghg_emissions",
@@ -857,13 +1118,14 @@ def evaluate_building(row):
     didn't report needs outreach; a building over its limit needs retrofit
     capital. Those are different interventions.
     """
-    berdo_cat = map_property_type(row["property_type"])
+    bl        = building_limits(row.get("property_type"), row.get("all_property_types"))
+    limits    = bl["limits"]
     ghg       = row["ghg_intensity_kgco2e_sqft"]
     sqft      = row["gross_floor_area"]
-    notes     = []
+    notes     = list(bl["notes"])
 
     scoreable = (
-        berdo_cat is not None
+        limits is not None
         and pd.notna(ghg)
         and pd.notna(sqft)
         and sqft > 0
@@ -875,7 +1137,7 @@ def evaluate_building(row):
         notes.append("Did not report — accruing daily reporting fines")
     elif not scoreable:
         data_status = "Incomplete data"
-        if berdo_cat is None:
+        if limits is None:
             notes.append("Property type missing or not mappable to a BERDO category")
         if pd.isna(sqft) or sqft <= 0:
             notes.append("Floor area missing")
@@ -900,7 +1162,7 @@ def evaluate_building(row):
         berdo_status = "Not yet covered"
         notes.append("Not subject to a BERDO emissions limit until 2030")
     else:
-        gaps = calculate_compliance_gap(ghg, sqft, berdo_cat)
+        gaps = calculate_compliance_gap(ghg, sqft, None, limits=limits)
         if not gaps[0]["compliant"]:
             berdo_status = "Over 2025–29 limit"
             acp_2025 = gaps[0]["annual_fine_usd"]
@@ -956,6 +1218,7 @@ def lookup_building_priority(df, address):
             "Building Address":             row.get("Building Address"),
             "Property Owner Name":         row.get("Property Owner Name"),
             "Property Type":               row.get("property_type"),
+            "All Property Types":          row.get("all_property_types"),
             "Gross Floor Area":            row.get("gross_floor_area"),
             "Site EUI":                    row.get("site_eui"),
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
@@ -1007,6 +1270,7 @@ def lookup_owner_portfolio(df, owner_name):
             "Building Address":            row.get("Building Address"),
             "Property Owner Name":         row.get("Property Owner Name"),
             "Property Type":               row.get("property_type"),
+            "All Property Types":          row.get("all_property_types"),
             "Gross Floor Area":            row.get("gross_floor_area"),
             "Site EUI":                    row.get("site_eui"),
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
@@ -1033,10 +1297,9 @@ def calculate_blended_standard(buildings_df):
 
     for _, row in buildings_df.iterrows():
         sqft = pd.to_numeric(row.get("Gross Floor Area"), errors="coerce")
-        berdo_cat = map_property_type(row.get("Property Type"))
-        if pd.isna(sqft) or sqft <= 0 or berdo_cat is None:
+        limits = building_limits(row.get("Property Type"), row.get("All Property Types"))["limits"]
+        if pd.isna(sqft) or sqft <= 0 or limits is None:
             continue
-        limits = BERDO_STANDARDS[berdo_cat]
         total_sqft += sqft
         for i, lim in enumerate(limits):
             weighted_limits[i] += lim * sqft
@@ -1354,10 +1617,10 @@ shows individual gaps.
             for _, row in valid.iterrows():
                 intensity = pd.to_numeric(row.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
                 sqft_r    = pd.to_numeric(row.get("Gross Floor Area"), errors="coerce")
-                berdo_cat = map_property_type(row.get("Property Type"))
-                if pd.isna(intensity) or pd.isna(sqft_r) or berdo_cat is None:
+                b_limits = building_limits(row.get("Property Type"), row.get("All Property Types"))["limits"]
+                if pd.isna(intensity) or pd.isna(sqft_r) or b_limits is None:
                     continue
-                lim  = BERDO_STANDARDS[berdo_cat][0]
+                lim  = b_limits[0]
                 tons = round(max(intensity - lim, 0) * sqft_r / 1000, 1)
                 if tons > worst_gap_tons:
                     worst_gap_tons = tons
@@ -1393,14 +1656,12 @@ marked "Did not report" in the excluded table represent additional unknown expos
     for _, row in valid.iterrows():
         sqft      = pd.to_numeric(row["Gross Floor Area"], errors="coerce")
         intensity = pd.to_numeric(row["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
-        berdo_cat = map_property_type(row.get("Property Type"))
+        bl = building_limits(row.get("Property Type"), row.get("All Property Types"))
 
-        if pd.isna(sqft) or pd.isna(intensity) or berdo_cat is None:
+        if pd.isna(sqft) or pd.isna(intensity) or bl["limits"] is None:
             continue
 
-        limit_2025 = BERDO_STANDARDS[berdo_cat][0]
-        limit_2030 = BERDO_STANDARDS[berdo_cat][1]
-        limit_2035 = BERDO_STANDARDS[berdo_cat][2]
+        limit_2025, limit_2030, limit_2035 = bl["limits"][:3]
 
         def _gap_tons(lim):
             return round((intensity - lim) * sqft / 1000, 1)
@@ -1410,7 +1671,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
 
         breakdown_rows.append({
             "Address":        row["Building Address"],
-            "Type":           berdo_cat,
+            "Type":           bl["label"],
             "Sq Ft":          f"{int(sqft):,}",
             "GHG (kg/sf/yr)": round(intensity, 3),
             "2025 Limit":     limit_2025,
@@ -2237,7 +2498,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         prefill_ghg_proj = prefill.get("ghg_intensity")
         if prefill_ghg_proj and berdo_category and berdo_category in BERDO_STANDARDS:
             new_intensity = max(prefill_ghg_proj - proj_intensity_reduction, 0)
-            limit_2025 = BERDO_STANDARDS[berdo_category][0]
+            limit_2025 = limits_for_category(berdo_category, prefill)[0]
             gap_before = prefill_ghg_proj - limit_2025
             gap_after  = new_intensity - limit_2025
 
@@ -2677,7 +2938,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         fine_5yr  = annual_fine * 5
 
         #Future period fines — limits tighten each period
-        limits = BERDO_STANDARDS[berdo_category]
+        limits = limits_for_category(berdo_category, prefill)
         prefill_ghg_val = prefill.get("ghg_intensity")
 
         period_fines = []
@@ -3006,6 +3267,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     if prefill_addr_key:
         st.caption(f"Pre-filled from: {prefill_addr_key}")
+    if prefill.get("limits") and berdo_category == prefill.get("berdo_category"):
+        st.caption(
+            "Using the blended mixed-use limit from Address Lookup. "
+            "Change the building type above to use a single-category limit instead."
+        )
 
     if not berdo_category or ghg_intensity <= 0 or sqft <= 0:
         st.info(
@@ -3155,7 +3421,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     apply_grid = show_grid_decarb
     elec_share_val = elec_share if elec_share is not None else 0.5
 
-    limits = BERDO_STANDARDS[berdo_category]
+    limits = limits_for_category(berdo_category, prefill)
 
     if apply_grid:
         base_ef = effective_grid_ef(2025)
@@ -3174,7 +3440,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             "electricity-attributed emissions over time."
         )
         
-    limits = BERDO_STANDARDS[berdo_category]
+    limits = limits_for_category(berdo_category, prefill)
     ghg_emissions_raw = prefill.get("ghg_emissions_kg")
     if ghg_emissions_raw and ghg_emissions_raw > 0:
         total_emissions_kg = float(ghg_emissions_raw)
@@ -3661,12 +3927,15 @@ with tab_address:
                         base_year=selected_year,
                     )
 
+            use_mix_limits = render_use_mix_editor(top)
+
             render_compliance_section(
                 top,
                 prior_year_ghg_intensity=prior_ghg,
                 prior_year_label=prior_label,
                 projected_intensities=projected_intensities,
                 base_year=selected_year,
+                limits=use_mix_limits,
             )
 
             #Store prefill data for Incentive Optimizer tab
@@ -3680,15 +3949,16 @@ with tab_address:
                 "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else 50_000,
                 "berdo_category": berdo_cat,
                 "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
+                "limits":        use_mix_limits,
             }
 
             #Calculate fine for 2025–29 period if possible
             if (
                 pd.notna(ghg_val) and ghg_val > 0
                 and pd.notna(sqft_val) and sqft_val > 0
-                and berdo_cat in BERDO_STANDARDS
+                and (use_mix_limits is not None or berdo_cat in BERDO_STANDARDS)
             ):
-                limit_2025 = BERDO_STANDARDS[berdo_cat][0]
+                limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
                 gap = float(ghg_val) - limit_2025
                 if gap > 0:
                     excess_tons = gap * float(sqft_val) / 1000
@@ -3703,6 +3973,7 @@ with tab_address:
                 "address":          opt_prefill.get("address", address_input),
                 "sqft":             opt_prefill.get("sqft", 50_000),
                 "berdo_category":   berdo_cat,
+                "limits":           use_mix_limits,
                 "ghg_intensity":    float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0,
                 "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
             }
