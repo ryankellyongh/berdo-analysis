@@ -114,7 +114,7 @@ PERIOD_REPRESENTATIVE_YEARS = [2027, 2032, 2037, 2042, 2047, 2050]
 #Mapping from Energy Star Portfolio Manager property types → BERDO categories
 
 PROPERTY_TYPE_MAP = {
-    # Assembly (2025-29 limit: 7.8)
+    #Assembly (2025-29 limit: 7.8)
     "aquarium":                             "Assembly",
     "convention center":                    "Assembly",
     "fitness center/health club/gym":       "Assembly",
