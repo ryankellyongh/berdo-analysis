@@ -784,18 +784,31 @@ def build_building_summary_pdf(s: dict) -> bytes:
     story.append(P("Building at a glance", st_h))
     facts = s.get("facts", [])
     half = (len(facts) + 1) // 2
-    def fact_table(rows):
-        data = [[P("<b>Item</b>"), P("<b>Value</b>"), P("<b>Source</b>")]]
-        data += [[P(esc(a)), P(co2(esc(b))), P(esc(c), st_small)] for a, b, c in rows]
-        t = Table(data, colWidths=[1.25 * inch, 1.45 * inch, 0.85 * inch], hAlign="LEFT")
-        t.setStyle(grid)
-        return t
-    two = Table([[fact_table(facts[:half]), fact_table(facts[half:])]],
-                colWidths=[3.65 * inch, 3.65 * inch], hAlign="LEFT")
-    two.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
-                             ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                             ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
-    story.append(two)
+    #One table with two halves (Item | Value | Source, gap, Item | Value | Source), so
+    #each row has a single height and every rule lines up across the page.
+    left, right = facts[:half], facts[half:]
+    right += [("", "", "")] * (len(left) - len(right))
+    hdr = [P("<b>Item</b>"), P("<b>Value</b>"), P("<b>Source</b>")]
+    data = [hdr + [""] + hdr]
+    for (a1, b1, c1), (a2, b2, c2) in zip(left, right):
+        data.append([P(esc(a1)), P(co2(esc(b1))), P(esc(c1), st_small), "",
+                     P(esc(a2)), P(co2(esc(b2))), P(esc(c2), st_small)])
+    gap = 0.2
+    half_w = (7.3 - gap) / 2                       #3.55 in per half; total 7.3 in
+    col_w = [1.25, 1.45, half_w - 2.7]
+    facts_t = Table(data, colWidths=[w * inch for w in col_w + [gap] + col_w], hAlign="LEFT")
+    facts_t.setStyle(TableStyle([
+        #Rules drawn per half so they don't cross the gap column
+        ("LINEBELOW", (0, 0), (2, 0), 0.8, accent),
+        ("LINEBELOW", (4, 0), (6, 0), 0.8, accent),
+        ("LINEBELOW", (0, 1), (2, -1), 0.3, rule),
+        ("LINEBELOW", (4, 1), (6, -1), 0.3, rule),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (3, 0), (3, -1), 0), ("RIGHTPADDING", (3, 0), (3, -1), 0),
+    ]))
+    story.append(facts_t)
 
     #Emissions limit by period
     periods = s.get("periods", [])
