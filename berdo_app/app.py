@@ -56,10 +56,10 @@ PROJECTED_GRID_EF = {
     yr: round(kg * MWH_PER_MMBTU) for yr, kg in APPENDIX_B_KG_PER_MMBTU.items()
 }
 
-# MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
-# Verified against BERDO Emissions Factors List, last updated May 5, 2026.
-# BERDO electricity formula: G = U × (1 − R) × E
-# Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
+#MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
+#Verified against BERDO Emissions Factors List, last updated May 5, 2026.
+#BERDO electricity formula: G = U × (1 − R) × E
+#Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
 RPS_CLASS_I = {
     2022: 0.20, 2023: 0.22, 2024: 0.24, 2025: 0.27, 2026: 0.30,
     2027: 0.33, 2028: 0.36, 2029: 0.39, 2030: 0.40,
