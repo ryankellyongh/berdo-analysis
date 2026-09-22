@@ -12,7 +12,8 @@ st.set_page_config(
 )
 
 #BERDO 2.0 emissions standards
-#Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021)
+#Source: BERDO ordinance (City of Boston Code 7-2.2), Table 1 (adopted October 2021).
+#VERIFIED September 22, 2026: every value matches Table 1 of the ordinance text.
 #Units: kg CO2e / sq ft / year
 #Periods: 2025-29, 2030-34, 2035-39, 2040-44, 2045-49, 2050+
 
@@ -34,31 +35,32 @@ BERDO_STANDARDS = {
 
 COMPLIANCE_PERIODS = ["2025–29", "2030–34", "2035–39", "2040–44", "2045–49", "2050+"]
 
+#ACP rate: USD 234 per metric ton CO2e, per ordinance section (m)(d). The Review Board
+#reviews it every five years and it may be adjusted by regulation.
+#VERIFIED September 22, 2026.
 ACP_RATE = 234  #USD per metric ton CO2e over the limit
 
 
-#Projected ISO New England grid emissions factors by year
-#Source: BERDO Emissions Factors List, Appendix B (updated May 5, 2026)
-#Units: kg CO2e / MWh
-
-MWH_PER_MMBTU = 3.412
-
-APPENDIX_B_KG_PER_MMBTU = {
-    2022: 79.2, 2023: 77.1, 2024: 75.0, 2025: 72.9, 2026: 70.8,
-    2027: 68.7, 2028: 66.6, 2029: 64.6, 2030: 62.5, 2031: 60.4,
-    2032: 58.3, 2033: 56.2, 2034: 54.2, 2035: 52.1, 2036: 50.0,
-    2037: 47.9, 2038: 45.8, 2039: 43.7, 2040: 41.7, 2041: 39.6,
-    2042: 37.5, 2043: 35.4, 2044: 33.3, 2045: 31.2, 2046: 29.2,
-    2047: 27.1, 2048: 25.0, 2049: 22.9, 2050: 20.8,
-}
-
+#Projected ISO New England grid emissions factors by year, kg CO2e/MWh.
+#Source: BERDO Policies & Procedures, Version 4 (adopted April 13, 2026), Appendix B
+#"Projected Grid Emissions Factors". Appendix B was last updated in Version 3
+#(September 17, 2025). The official schedule starts in 2025; earlier years use 2025.
+#CORRECTED September 22, 2026: the previous schedule (a straight-line decline to 71 kg/MWh in 2050)
+#matched the official values only for 2025 and 2026.
 PROJECTED_GRID_EF = {
-    yr: round(kg * MWH_PER_MMBTU) for yr, kg in APPENDIX_B_KG_PER_MMBTU.items()
+    2025: 249, 2026: 242, 2027: 265, 2028: 265, 2029: 264,
+    2030: 259, 2031: 254, 2032: 249, 2033: 243, 2034: 237,
+    2035: 231, 2036: 224, 2037: 217, 2038: 211, 2039: 204,
+    2040: 198, 2041: 192, 2042: 187, 2043: 182, 2044: 177,
+    2045: 173, 2046: 168, 2047: 163, 2048: 159, 2049: 155,
+    2050: 150,
 }
 
-#MA RPS Class I minimum standard, per 225 CMR 14.07 / BERDO Appendix C.
-#Verified against BERDO Emissions Factors List, last updated May 5, 2026.
-#BERDO electricity formula: G = U × (1 − R) × E
+#MA RPS Class I minimum standard, per 225 CMR 14.07(1).
+#VERIFIED September 22, 2026 against the regulation's table: 27% in 2025, +3 points a year to
+#39% in 2029, 40% in 2030, then +1 point a year "unless modified by law".
+#BERDO electricity formula (Policies & Procedures v4, section 5.B):
+#Emissions = Electricity Use × (100% − RPS Class I) × Emissions Factor
 #Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
 RPS_CLASS_I = {
     2022: 0.20, 2023: 0.22, 2024: 0.24, 2025: 0.27, 2026: 0.30,
@@ -86,6 +88,11 @@ def rec_pathway(gap_kg, elec_emissions_kg, year, rec_price):
     """
     Cost of closing a compliance gap with MA Class I RECs instead of ACP.
     RECs offset electricity emissions only; any fossil residual still pays ACP.
+
+    Each REC avoids the raw projected factor E (not E × (1 − RPS)), because RECs
+    cover grid electricity not already matched by the RPS. The most a building can
+    abate is its electricity emissions, which already reflect (1 − RPS). So using
+    PROJECTED_GRID_EF here, and effective_grid_ef() elsewhere, is intentional.
     Returns a dict, or None if there is no gap.
     """
     if gap_kg <= 0:
@@ -238,6 +245,7 @@ PROPERTY_TYPE_ALIASES = {
     "manufacturing/industrial":     "Manufacturing/Industrial",
     #City data sometimes writes "etc" without the period
     "personal services (health/beauty, dry cleaning, etc)": "Services",
+    "personal services (health/beauty dry cleaning etc.)":  "Services",   #Appendix A spelling
     "repair services (vehicle, shoe, locksmith, etc)":      "Services",
 }
 PROPERTY_TYPE_MAP.update(PROPERTY_TYPE_ALIASES)
@@ -391,29 +399,47 @@ def parse_property_uses(raw) -> list:
     return uses
 
 
-def blend_limits_by_area(uses):
+def blend_limits_by_area(uses, primary_threshold=0.10):
     """
-    Floor-area-weighted BERDO limits for a list of uses.
-    Returns (limits or None, mapped_sqft, unmapped_sqft). Uses without a BERDO
-    category (e.g. ESPM "Other") are left out of the blend and reported as
-    unmapped so the caller can flag them.
+    Blended Emissions Standard per BERDO Policies & Procedures v4, section 6:
+        BES = [sum(SF_i × ES_i) over primary uses + SF_np × ES_1] / total SF
+    A use is primary only if it occupies at least 10% of floor area (ordinance
+    section (i)). Smaller uses, and uses with no BERDO category, are non-primary
+    and count at the limit of the largest primary use (ES_1).
+
+    The ordinance also lets a use qualify as primary if it accounts for more than
+    10% of energy use or emissions. Public data can't show that, so a small but
+    energy-intensive use may be treated as non-primary here.
+
+    Returns (limits or None, total_sqft, non_primary_sqft, n_primary_uses).
     """
-    mapped = unmapped = 0.0
-    weighted = [0.0] * len(COMPLIANCE_PERIODS)
+    rows = []
     for u in uses:
         sq = pd.to_numeric(u.get("Sq ft"), errors="coerce")
         if sq is None or pd.isna(sq) or sq <= 0:
             continue
-        cat = u.get("BERDO category")
-        if cat not in BERDO_STANDARDS:
-            unmapped += sq
-            continue
-        mapped += sq
+        rows.append((u.get("BERDO category"), float(sq)))
+    total = sum(sq for _, sq in rows)
+    if total == 0:
+        return None, 0.0, 0.0, 0
+
+    by_cat = {}
+    for cat, sq in rows:
+        if cat in BERDO_STANDARDS:
+            by_cat[cat] = by_cat.get(cat, 0.0) + sq
+    primary = {c: sq for c, sq in by_cat.items() if sq / total >= primary_threshold}
+    if not primary:
+        return None, total, total, 0
+
+    largest = max(primary, key=primary.get)
+    non_primary = total - sum(primary.values())
+    weighted = [0.0] * len(COMPLIANCE_PERIODS)
+    for cat, sq in primary.items():
         for i, lim in enumerate(BERDO_STANDARDS[cat]):
             weighted[i] += lim * sq
-    if mapped == 0:
-        return None, 0.0, unmapped
-    return [round(w / mapped, 3) for w in weighted], mapped, unmapped
+    for i, lim in enumerate(BERDO_STANDARDS[largest]):
+        weighted[i] += lim * non_primary
+    return [round(w / total, 3) for w in weighted], total, non_primary, len(primary)
 
 
 def building_limits(property_type, all_property_types=None, exclude_parking=True):
@@ -445,18 +471,18 @@ def building_limits(property_type, all_property_types=None, exclude_parking=True
 
     default_limits = BERDO_STANDARDS.get(largest_cat) if largest_cat else None
 
-    if len(mapped_cats) > 1:
-        blended, _, unmapped = blend_limits_by_area(uses)
-        if blended:
+    blended, _, non_primary, n_primary = (blend_limits_by_area(uses)
+                                          if len(mapped_cats) > 1 else (None, 0, 0, 0))
+    if n_primary > 1:
+        notes.append(
+            f"Mixed-use: default limit is the largest use ({largest_cat or 'unmapped'}). "
+            f"A Blended Emissions Standard, if adopted, would be about "
+            f"{blended[0]:.2f} for 2025–29"
+        )
+        if non_primary > 0:
             notes.append(
-                f"Mixed-use: default limit is the largest use ({largest_cat or 'unmapped'}). "
-                f"A Blended Emissions Standard, if adopted, would be about "
-                f"{blended[0]:.2f} for 2025–29"
-            )
-        if unmapped > 0:
-            notes.append(
-                f"{unmapped:,.0f} sq ft of listed uses could not be mapped to a BERDO "
-                "category (e.g. 'Other') and is left out of the blend estimate. Verify"
+                f"{non_primary:,.0f} sq ft of smaller or unclassified uses counts at the "
+                "largest primary use's limit, per the City's blended standard formula"
             )
         return {"limits": default_limits, "label": largest_cat,
                 "category": largest_cat, "basis": "blended", "blended": blended,
@@ -968,23 +994,31 @@ def render_use_mix_editor(top):
         use_rows = edited.to_dict("records")
         if exclude_parking:
             use_rows = [r for r in use_rows if not _is_parking(r.get("ESPM use"))]
-        limits, mapped_sqft, unmapped_sqft = blend_limits_by_area(use_rows)
-        n_cats = len({
-            r.get("BERDO category") for r in use_rows
-            if r.get("BERDO category") in BERDO_STANDARDS
+        limits, total_sqft, non_primary_sqft, n_cats = blend_limits_by_area(use_rows)
+        unclassified_sqft = sum(
+            float(pd.to_numeric(r.get("Sq ft"), errors="coerce") or 0)
+            for r in use_rows
+            if r.get("BERDO category") not in BERDO_STANDARDS
             and (pd.to_numeric(r.get("Sq ft"), errors="coerce") or 0) > 0
-        })
+        )
 
-        if unmapped_sqft > 0:
+        if unclassified_sqft > 0:
             st.warning(
-                f"{unmapped_sqft:,.0f} sq ft has no BERDO category and is left out of "
-                "the blend. Choose a category for those rows."
+                f"{unclassified_sqft:,.0f} sq ft has no BERDO category, so it counts at the "
+                "largest primary use's limit. Choose a category if it is a primary use."
             )
-        if reported_gfa > 0 and mapped_sqft > 0 and abs(mapped_sqft - reported_gfa) / reported_gfa > 0.05:
+        if limits and non_primary_sqft > 0:
             st.caption(
-                f"Floor area in this table ({mapped_sqft:,.0f} sq ft) differs from the "
+                f"{non_primary_sqft:,.0f} sq ft is non-primary (under 10% of floor area, or "
+                "unclassified) and counts at the largest primary use's limit, per the City's "
+                "formula. A use can also be primary if it accounts for more than 10% of "
+                "energy use or emissions, which public data can't show."
+            )
+        if reported_gfa > 0 and total_sqft > 0 and abs(total_sqft - reported_gfa) / reported_gfa > 0.05:
+            st.caption(
+                f"Floor area in this table ({total_sqft:,.0f} sq ft) differs from the "
                 f"reported gross floor area ({reported_gfa:,.0f} sq ft) by more than 5%. "
-                "The blend uses the table; emissions intensity still uses reported GFA."
+                "The City requires the uses to add up to the building's total floor area."
             )
 
         if limits and n_cats > 1:
@@ -1265,8 +1299,7 @@ def render_compliance_section(
             "fossil fuel use held constant. "
         )
     caption += (
-        "Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021); "
-        "BERDO Emissions Factors List (City of Boston, May 2026). "
+        "Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v4 (April 2026), Appendix B projected grid factors; 225 CMR 14.07 RPS Class I schedule. "
         "Not an official City of Boston compliance determination."
     )
     st.caption(caption)
@@ -1313,13 +1346,12 @@ buildings).
 The ISO New England electric grid is projected to become cleaner over time as renewable energy
 grows. This scenario holds fossil fuel use constant but scales down the electricity-attributed
 emissions using the City of Boston's official projected grid emissions factors (Appendix B of the
-BERDO Emissions Factors List). Use the sidebar slider to set the share of the building's
-emissions that come from electricity. If unknown, 50% is a reasonable starting point for a
-mixed-use or office building; electricity-heavy buildings (all-electric, data centers) should
-use a higher value.
+BERDO Policies & Procedures) and the state RPS Class I schedule. It uses each building's
+reported electricity share of emissions (2024 data onward); the sidebar slider applies only
+when that share isn't reported.
 
-Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021);
-BERDO Emissions Factors List (City of Boston, updated May 5, 2026).
+Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v4 (April 2026),
+Appendix B; 225 CMR 14.07. See "Sources & verification" in the sidebar.
 Not an official City of Boston compliance determination.
 """)
 
@@ -2341,7 +2373,7 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
 #RETROFIT COST BENCHMARKS
 #Source: ASHRAE, RSMeans, NBI New Construction Cost Study, DOE BTO
 #Units: national baseline USD per sq ft (low, high), Boston multiplier applied separately
-#Last verified: June 2026
+#NOT VERIFIED against a current source; treat as order-of-magnitude benchmarks.
 
 RETROFIT_COST_PER_SQFT = {
     #scope → (low $/sqft national, high $/sqft national, notes)
@@ -2359,29 +2391,29 @@ RETROFIT_COST_PER_SQFT = {
 #Source: RSMeans City Cost Index, Boston MA (2024-2025 avg)
 BOSTON_LABOR_MULTIPLIER = 1.25
 
-#BERDO EMISSIONS FACTORS
-#Source: EPA Energy Star Portfolio Manager (August 2025 edition)
-#BERDO uses these factors per the City of Boston regulations.
-#Units: kg CO₂e per kBtu of site energy consumed
+#BERDO EMISSIONS FACTORS FOR FUELS
+#BERDO Regulations section VIII.a.i: factors for natural gas, propane, fuel oil,
+#diesel, and kerosene are the most recent ENERGY STAR Portfolio Manager factors.
+#Source: Portfolio Manager Technical Reference: Greenhouse Gas Emissions (August 2025),
+#Figure 1 (U.S. direct factors) and Figure 3 (district steam).
+#VERIFIED/CORRECTED September 22, 2026. Units: kg CO2e per kBtu (= kg/MMBtu ÷ 1000).
 
 FUEL_EF_KG_PER_KBTU = {
-    #BERDO Emissions Factors List, 2025 factors (kg CO₂e/mmBtu ÷ 1000).
-    #Verified against the City of Boston PDF, last updated May 5, 2026.
-    "Natural gas":      0.05311,
-    "Propane":          0.06425,
-    "Fuel oil #1":      0.07350,
-    "Fuel oil #2":      0.07421,   #distillate / home heating oil
-    "Fuel oil #4":      0.07529,
-    "Fuel oil #5/#6":   0.07535,   #residual
-    "Diesel":           0.07421,
-    "Kerosene":         0.07769,
+    "Natural gas":      0.05311,   #53.11 (verified)
+    "Propane":          0.06195,   #61.95 (corrected from 64.25)
+    "Fuel oil #1":      0.07349,   #73.49
+    "Fuel oil #2":      0.07420,   #74.20, distillate / home heating oil
+    "Fuel oil #4":      0.07528,   #75.28
+    "Fuel oil #5/#6":   0.07426,   #74.26 (corrected from 75.35), residual
+    "Diesel":           0.07516,   #75.16 (corrected from 74.21)
+    "Kerosene":         0.07544,   #75.44 (corrected from 77.69)
     "District steam":   0.06640,   #Default District Steam; named systems differ, see below
     "Electricity":      None,      #use effective_grid_ef(): Appendix B × (1 − RPS Class I)
 }
 
-#District energy system factors, kg CO₂e/kBtu.
-#BERDO publishes per-operator factors; the default applies only when the system
-#is unknown. Source: BERDO Emissions Factors List, May 5, 2026.
+#District energy system factors, kg CO2e/kBtu.
+#NOT VERIFIED and not used in any calculation. The default (66.40) matches Portfolio
+#Manager; the named-system values could not be checked against a City source.
 DISTRICT_STEAM_EF = {
     "Default (unknown system)":              0.06640,
     "Vicinity District Steam (Boston)":      0.05810,
@@ -2560,8 +2592,8 @@ INCENTIVE_STACK = [
                    "HVAC (full system replacement)", "Building envelope (windows + insulation)",
                    "Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)", "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
-        "amount_psf_low": 0.58,
-        "amount_psf_high": 5.94,
+        "amount_psf_low": 0.59,   #2026 base (IRS Form 7205 instructions; Rev. Proc. 2025-32)
+        "amount_psf_high": 5.94,  #2026 maximum with prevailing wage and apprenticeship
         "cash_value_factor": 0.21,   #deduction, not credit: worth marginal rate × amount
         "closed_to_new_projects": True,
         "amount_str": "Up to USD 5.94/sqft (2026, prevailing wage and apprenticeship, Rev. Proc. 2025-32); USD 0.59–1.19/sqft base",
@@ -2626,7 +2658,7 @@ INCENTIVE_STACK = [
         "amount_psf_high": 3.00,
         "amount_str": "6% base (30% with prevailing wage and apprenticeship); capped per project",
         "eligibility": "Competitive allocation; manufacturing/industrial sites prioritized",
-        "expiration": "Closed. The full USD 10B was allocated across two rounds (USD 4B May 2024, USD 6B January 2025). OBBBA sec. 70515 (P.L. 119-21) caps allocations at USD 10B, so no further rounds are expected.",
+        "expiration": "Closed. The full USD 10B was allocated across two rounds (about USD 4B in March 2024, about USD 6B in January 2025). OBBBA sec. 70515 (P.L. 119-21) caps allocations at USD 10B, so no further rounds are expected.",
         "conflicts": ["IRA 48E", "Other IRA investment credits on same property"],
         "stacks_with": ["Mass Save rebates"],
         "berdo_periods": ["2025–29", "2030–34"],
@@ -2642,30 +2674,31 @@ INCENTIVE_STACK = [
         ],
     },
     {
-        "name": "MassDOER Clean Energy Grants",
-        "short": "MassDOER Grant",
+        "name": "MassDEP Gap Energy Grant",
+        "short": "MassDEP Gap Grant",
         "type": "State grant",
         "priority": 1,
-        "apply_first_reason": "Grant funds must be committed before construction. Apply during open rounds.",
-        "scopes": ["Electrification: HVAC (air-source heat pump)", "Electrification: HVAC (ground-source heat pump)", "Electrification: water heating",
+        "apply_first_reason": "Competitive rounds with fixed deadlines; the grant fills the last funding gap after utility incentives.",
+        "scopes": ["Lighting (LED retrofit + controls)", "HVAC (tune-up, controls, VFDs)",
+                   "HVAC (full system replacement)", "Electrification: HVAC (air-source heat pump)",
+                   "Electrification: HVAC (ground-source heat pump)", "Electrification: water heating",
                    "Building-wide deep retrofit (all systems)"],
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
-        "amount_psf_low": 0.20,
-        "amount_psf_high": 1.50,
-        "amount_str": "Up to USD 250,000/project; varies by program round",
-        "eligibility": "Nonprofits and municipal buildings in MA",
-        "expiration": "Check MassCEC for current open rounds",
+        "amount_psf_low": 0.0,
+        "amount_psf_high": 0.0,   #per-project grant (USD 75,000 to 350,000); no $/sqft proxy
+        "amount_str": "Gap IV round: USD 75,000 to 350,000 per grantee; USD 5M total program",
+        "eligibility": "Narrow: publicly owned drinking water and wastewater facilities, food or agricultural nonprofits, and small food distribution or processing businesses. Most BERDO buildings will not qualify.",
+        "expiration": "Periodic competitive rounds run by MassDEP's Clean Energy Results Program; check mass.gov for the current round",
         "conflicts": [],
-        "stacks_with": ["Mass Save rebates", "Green Communities"],
-        "berdo_periods": ["2025–29", "2030–34", "2035–39"],
-        "ownership": ["Nonprofit / Government"],
-        "source": "https://www.masscec.com/program/clean-energy-results-program",
+        "stacks_with": ["Mass Save rebates"],
+        "berdo_periods": ["2025–29", "2030–34"],
+        "ownership": ["Nonprofit / Government", "For-profit"],
+        "source": "https://mass.gov/info-details/massachusetts-gap-energy-grant-program",
         "checklist": [
-            "Monitor MassCEC website for open grant rounds",
-            "Prepare project narrative and cost estimate",
-            "Submit application during open window",
-            "Execute grant agreement if awarded",
-            "Submit progress reports and final documentation",
+            "Confirm your facility type is eligible for the current round",
+            "Line up utility incentives (e.g., Mass Save) first; the grant fills the remaining gap",
+            "Submit the application by the round's deadline",
+            "Complete the project and submit documentation for reimbursement",
         ],
     },
     {
@@ -2681,14 +2714,14 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.0,
         "amount_psf_high": 0.0,   #per-municipality formula grant: no $/sqft proxy is meaningful
-        "amount_str": "Typically USD 100,000–250,000/municipality per competitive round; DOER makes up to USD 20M available statewide annually",
+        "amount_str": "Competitive grants capped at USD 250,000 per municipality, or USD 500,000 for comprehensive building decarbonization",
         "eligibility": "Municipally owned buildings in MA communities with Green Community designation. Not available to private nonprofits.",
         "expiration": "Annual grant rounds; check DOER for current cycle",
         "conflicts": [],
-        "stacks_with": ["MassDOER Grant", "Mass Save rebates"],
+        "stacks_with": ["Mass Save rebates"],
         "berdo_periods": ["2025–29", "2030–34", "2035–39"],
         "ownership": ["Nonprofit / Government"],
-        "source": "https://www.mass.gov/green-communities-designation-grant-program",
+        "source": "https://www.mass.gov/info-details/green-communities-grants",
         "checklist": [
             "Confirm your municipality has Green Community designation",
             "Identify eligible measures in your approved Green Communities plan",
@@ -2747,8 +2780,9 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         "condition-adjusted cost ranges, matched funding programs, stacking order, and payback."
     )
     st.info(
-        "**Incentive data verified June 2026.** Mass Save program-year amounts reset each January. "
-        "IRA figures reflect current regulations. Always confirm amounts at source links before advising a client."
+        "**Federal tax rules and state grant caps verified September 22, 2026.** "
+        "Mass Save dollar figures and retrofit costs are unverified estimates. "
+        "Always confirm amounts at the source links before advising a client."
     )
 
     #Inputs
@@ -3693,21 +3727,21 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     st.markdown("---")
     st.warning(
         "**Screening tool only. Not professional financial or tax advice.** "
-        "Incentive amounts are benchmarks verified June 2026; they change annually. "
+        "Incentive amounts are estimates; see Sources & verification in the sidebar. "
         "IRA credit stacking rules are complex; consult a tax advisor for your specific situation. "
         "Do not use these figures for contracts, loan applications, or compliance filings."
     )
 
     with st.expander("Sources & methodology"):
         st.markdown("""
-**Incentive data sources (verified June 2026)**
-- Mass Save commercial rebates: masssave.com (amounts reset each January)
+**Incentive data sources (checked September 22, 2026)**
+- Mass Save commercial rebates: masssave.com (amounts reset each January; this tool's $/sqft figures are unverified estimates)
 - IRA Section 179D: inflation-adjusted amounts per Rev. Proc. 2024-40 (2025) and Rev. Proc. 2025-32 (2026)
 - IRA Section 48C: IRS Notice 2023-18 and Notice 2023-44; allocation rounds closed
 - IRA Section 45L: IRS Notice 2023-65; terminated for homes acquired after June 30, 2026 (P.L. 119-21)
 - IRA Section 179D: terminated for property whose construction begins after June 30, 2026 (P.L. 119-21)
-- MassDOER / MassCEC: masscec.com and mass.gov/doer (program-dependent)
-- Green Communities: mass.gov/green-communities (annual grant rounds)
+- MassDEP Gap Energy Grant: mass.gov, Clean Energy Results Program (narrow eligibility; USD 75,000 to 350,000 per grantee in the Gap IV round)
+- Green Communities: mass.gov (competitive grants capped at USD 250,000 per municipality, or USD 500,000 for comprehensive building decarbonization)
 
 **Stacking methodology**
 Utility rebates (Mass Save) are taxable income and reduce your 179D depreciable basis, so
@@ -4247,8 +4281,9 @@ Alternative Compliance Payments are assessed at \$234 per metric ton of CO₂e a
 building's emissions limit. The table shows annual fines; the summary metrics multiply by 
 5 years per period for cumulative exposure.
 
-Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021); 
-EPA Portfolio Manager Emissions Factors (August 2025).
+Sources: BERDO ordinance Table 1 and ACP rate; ENERGY STAR Portfolio Manager
+Greenhouse Gas Technical Reference (August 2025) for fuel factors; BERDO Policies &
+Procedures v4, Appendix B, for projected grid factors.
 Not an official City of Boston BERDO compliance determination.
 """)
 
@@ -4284,7 +4319,7 @@ show_grid_decarb = st.sidebar.checkbox(
     help=(
         "Projects future GHG intensity assuming the ISO-NE grid cleans up "
         "per the City of Boston's official projected emissions factors "
-        "(Appendix B, BERDO Emissions Factors List, May 2026). "
+        "(Appendix B, BERDO Policies & Procedures v4, April 2026). "
         "Fossil fuel use is held constant."
     ),
 )
@@ -4323,6 +4358,43 @@ if show_grid_decarb:
     )
 else:
     elec_share = None
+
+#Sources & verification register
+SOURCES_REGISTER = [
+    ("Emissions standards (limits by use and period)", "Verified", "BERDO ordinance, Table 1"),
+    ("ACP rate: USD 234 per metric ton", "Verified", "BERDO ordinance, section (m)(d); reviewed every 5 years"),
+    ("Projected grid emissions factors, 2025 to 2050", "Corrected", "BERDO Policies & Procedures v4 (Apr 2026), Appendix B"),
+    ("Electricity formula: use × (1 − RPS) × factor", "Verified", "BERDO Policies & Procedures v4, section 5.B"),
+    ("RPS Class I schedule", "Verified", "225 CMR 14.07(1)"),
+    ("Fuel factors: natural gas, fuel oil #1, #2, #4, district steam", "Verified", "Portfolio Manager GHG Technical Reference (Aug 2025)"),
+    ("Fuel factors: propane, fuel oil #5/#6, diesel, kerosene", "Corrected", "Portfolio Manager GHG Technical Reference (Aug 2025)"),
+    ("Property type to building use mapping", "Verified", "BERDO Policies & Procedures v4, Appendix A"),
+    ("Blended standard formula and 10% primary-use rule", "Corrected", "BERDO ordinance (i); Policies & Procedures v4, section 6"),
+    ("Daily fines: reporting and emissions", "Verified", "BERDO ordinance, section (r)"),
+    ("Flexibility measure deadlines; REC Connector deadline", "Verified", "boston.gov BERDO and Review Board pages"),
+    ("179D and 45L termination; 179D 2026 amounts", "Verified", "P.L. 119-21; IRS Form 7205 instructions"),
+    ("48C: fully allocated, no new rounds", "Verified", "DOE 48C program page; P.L. 119-21 sec. 70515"),
+    ("Green Communities grant caps", "Corrected", "Mass. DOER announcements"),
+    ("MassDEP Gap Energy Grant (was mislabeled MassDOER)", "Corrected", "mass.gov Gap IV request for responses"),
+    ("Parking left out of blended standard by default", "Unverified", "Not confirmed in City documents"),
+    ("Mass Save rebate $/sqft estimates", "Unverified", "Tool estimates; confirm at masssave.com"),
+    ("Retrofit cost ranges and Boston labor multiplier", "Unverified", "Order-of-magnitude benchmarks"),
+    ("Default REC price (USD 40)", "Unverified", "Placeholder; user can change it"),
+    ("Fuel unit conversions (therms, gallons)", "Unverified", "Standard Portfolio Manager conversions assumed"),
+    ("Named district steam factors", "Unverified", "Not used in calculations"),
+]
+SOURCES_VERIFIED_ON = "September 22, 2026"
+
+with st.sidebar.expander("Sources & verification"):
+    st.caption(
+        f"Each constant this tool uses, checked against official sources on {SOURCES_VERIFIED_ON}. "
+        "Corrected = the value was wrong and has been fixed. Unverified = no official source "
+        "was found, so treat the figure as an estimate."
+    )
+    st.dataframe(
+        pd.DataFrame(SOURCES_REGISTER, columns=["Item", "Status", "Source"]),
+        hide_index=True, use_container_width=True,
+    )
 
 #Page header
 st.title("BERDO Compliance Planner")
