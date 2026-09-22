@@ -298,6 +298,13 @@ def building_elec_share(total_kg, elec_kg):
     return round(float(share), 3), None
 
 
+def fmt_share(share) -> str:
+    """Format an electricity share consistently: one decimal under 10% (0.6%), else whole (37%)."""
+    if share is None or pd.isna(share):
+        return "Not reported"
+    return f"{share:.1%}" if 0 < share < 0.10 else f"{share:.0%}"
+
+
 def resolve_elec_share(prefill, sidebar_share, use_reported=True):
     """
     Electricity share for the Retrofit and Planner tabs, with a plain-language
@@ -586,7 +593,7 @@ def get_compliance_pathways(ctx: dict) -> list:
          "deadline": f"REC Connector purchases for 2025 emissions: {REC_CONNECTOR_DEADLINE}",
          "links": L(("Renewable Energy quick guide", "renewable_guide"),
                     ("MA Class I REC Connector Program", "rec_connector")),
-         "why": (f"electricity is about {elec_share:.0%} of reported emissions, so renewables "
+         "why": (f"electricity is about {fmt_share(elec_share)} of reported emissions, so renewables "
                  "can address at most that share." if elec_share is not None else
                  "the electricity share isn't reported for this year; RECs only cover electricity."),
          "strong": False},
@@ -681,6 +688,22 @@ def render_compliance_pathways(ctx: dict):
 
 
 #One-page PDF summary
+
+def reporting_status_label(raw) -> str:
+    """
+    Plain-language label for the City's "Reporting Compliance Status". That field is
+    about the annual report only, not emissions limits, so the label says so.
+    """
+    s = str(raw or "").strip().lower()
+    labels = {
+        "in compliance":     "Submitted (City status: in compliance)",
+        "not submitted":     "Not submitted (City status: not submitted)",
+        "pending revisions": "Submitted, revisions pending (City status: pending revisions)",
+        "state":             "City status: state (verify BERDO treatment)",
+        "federal":           "City status: federal (verify BERDO treatment)",
+    }
+    return labels.get(s, "Not reported" if s in ("", "nan", "none") else f"City status: {s}")
+
 
 def build_building_summary_pdf(s: dict) -> bytes:
     """
@@ -1962,7 +1985,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
                 if n_reported < len(valid):
                     share_src += "; sidebar estimate for the rest"
         st.caption(
-            f"Grid scenario electricity share: **{portfolio_share:.0%}** ({share_src})."
+            f"Grid scenario electricity share: **{fmt_share(portfolio_share)}** ({share_src})."
         )
         projected = project_ghg_intensities(
             portfolio_intensity, portfolio_share,
@@ -3511,7 +3534,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                     f"fossil-fuel portion of this building's gap."
                 )
             st.caption(
-                f"Assumes {_rec_share:.0%} of this building's emissions come from "
+                f"Assumes {fmt_share(_rec_share)} of this building's emissions come from "
                 f"electricity ({_rec_share_src}). "
                 f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
                 "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
@@ -3908,7 +3931,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         ef_2050 = effective_grid_ef(2050)
         st.caption(
             f"Grid decarbonization is ON (sidebar). "
-            f"Electricity share: {round(elec_share_val * 100)}% ({elec_share_src}). "
+            f"Electricity share: {fmt_share(elec_share_val)} ({elec_share_src}). "
             f"Base year grid EF (2025): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
             "Toggle in the sidebar to turn off."
@@ -4375,7 +4398,7 @@ with tab_address:
                 )
             if bldg_share is not None:
                 st.caption(
-                    f"Electricity accounts for **{bldg_share:.0%}** of this building's "
+                    f"Electricity accounts for **{fmt_share(bldg_share)}** of this building's "
                     "reported emissions (City-reported electricity emissions ÷ total)."
                 )
                 if bldg_share_note:
@@ -4424,7 +4447,7 @@ with tab_address:
                     share_for_grid = bldg_share
                     st.caption(
                         f"Grid scenario uses this building's reported electricity share: "
-                        f"**{bldg_share:.0%}** ({year_txt})."
+                        f"**{fmt_share(bldg_share)}** ({year_txt})."
                     )
                 else:
                     share_for_grid = elec_share
@@ -4432,7 +4455,7 @@ with tab_address:
                            if not use_reported_share
                            else "this year's data has no electricity breakdown for this building")
                     st.caption(
-                        f"Grid scenario uses the sidebar estimate of **{elec_share:.0%}** "
+                        f"Grid scenario uses the sidebar estimate of **{fmt_share(elec_share)}** "
                         f"because {why}."
                     )
                 ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
@@ -4507,10 +4530,9 @@ with tab_address:
                                              "{:,.0f} metric tons CO2e"), "Reported"),
                 ("GHG intensity", _num(_ghg_ctx, "{:.2f} kg CO2e/sf/yr"), "Calculated"),
                 ("Electricity share of emissions",
-                 (f"{bldg_share:.1%}" if bldg_share < 0.10 else f"{bldg_share:.0%}")
-                 if bldg_share is not None else "Not reported", "Calculated"),
+                 fmt_share(bldg_share), "Calculated"),
                 ("Site EUI", _num(top.get("Site EUI"), "{:.1f} kBtu/sf/yr"), "Reported"),
-                ("Reporting status", str(top.get("Compliance Status") or "Not reported").capitalize(), "Reported"),
+                ("Annual reporting", reporting_status_label(top.get("Compliance Status")), "Reported"),
                 ("Screening result", top.get("BERDO Status"), "Calculated"),
                 ("Est. annual ACP (2025–29)",
                  f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0",
