@@ -771,7 +771,7 @@ def build_building_summary_pdf(s: dict) -> bytes:
         "<b>Screening estimate, not an official City of Boston compliance determination.</b> "
         "Figures are labeled <b>Reported</b> (from the City's public BERDO data), "
         "<b>Calculated</b> (by this tool from reported data), or <b>Estimated</b> "
-        "(depends on this tool's assumptions).", st_body)]], colWidths=[7.3 * inch])
+        "(depends on this tool's assumptions).", st_body)]], colWidths=[7.3 * inch], hAlign="LEFT")
     banner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EEF3F8")),
         ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#B8C7D9")),
@@ -787,11 +787,11 @@ def build_building_summary_pdf(s: dict) -> bytes:
     def fact_table(rows):
         data = [[P("<b>Item</b>"), P("<b>Value</b>"), P("<b>Source</b>")]]
         data += [[P(esc(a)), P(co2(esc(b))), P(esc(c), st_small)] for a, b, c in rows]
-        t = Table(data, colWidths=[1.25 * inch, 1.45 * inch, 0.85 * inch])
+        t = Table(data, colWidths=[1.25 * inch, 1.45 * inch, 0.85 * inch], hAlign="LEFT")
         t.setStyle(grid)
         return t
     two = Table([[fact_table(facts[:half]), fact_table(facts[half:])]],
-                colWidths=[3.65 * inch, 3.65 * inch])
+                colWidths=[3.65 * inch, 3.65 * inch], hAlign="LEFT")
     two.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
                              ("LEFTPADDING", (0, 0), (-1, -1), 0),
                              ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
@@ -816,7 +816,8 @@ def build_building_summary_pdf(s: dict) -> bytes:
                 row.append(P(esc(p.get("grid_status") or "")))
             data.append(row)
         widths = [0.8, 1.35, 1.35, 1.6, 1.1] + ([1.1] if has_grid else [])
-        t = Table(data, colWidths=[w * inch for w in widths])
+        scale = 7.3 / sum(widths)   #always span the full page width, with or without the grid column
+        t = Table(data, colWidths=[w * scale * inch for w in widths], hAlign="LEFT")
         t.setStyle(grid)
         story.append(t)
         cap = [esc(s.get("limit_basis", ""))]
@@ -852,7 +853,7 @@ def build_building_summary_pdf(s: dict) -> bytes:
                 P(f"{esc(p['approval'])} · {esc(p['deadline'])}", st_small),
                 P(f'<link href="{esc(url)}" color="#2F5D8A"><u>{esc(label)}</u></link>', st_small),
             ])
-        t = Table(data, colWidths=[1.45 * inch, 2.75 * inch, 1.75 * inch, 1.35 * inch])
+        t = Table(data, colWidths=[1.45 * inch, 2.75 * inch, 1.75 * inch, 1.35 * inch], hAlign="LEFT")
         t.setStyle(grid)
         story.append(t)
         story.append(Spacer(1, 2))
