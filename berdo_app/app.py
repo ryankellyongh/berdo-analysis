@@ -2476,7 +2476,22 @@ def _fmt_deadline(key):
 #Retiring 1 MA Class I REC covers 1 MWh of otherwise-unmatched grid electricity,
 #avoiding PROJECTED_GRID_EF[year] kg CO2e. RECs offset ELECTRICITY emissions only.
 REC_CONNECTOR_DEADLINE = "October 31, 2026"   #for 2025 emissions compliance
-REC_DEFAULT_PRICE  = 40.0                 #USD/REC. Verify at berdo.greenenergyconsumers.org
+#REC Connector pricing (Green Energy Consumers Alliance, berdo.greenenergyconsumers.org),
+#all-inclusive of admin fees, valid through December 31, 2026. VERIFIED September 23, 2026.
+#(minimum quantity, USD per REC)
+REC_CONNECTOR_TIERS = [(2500, 42.0), (1000, 44.0), (500, 46.0), (100, 50.0), (50, 52.0), (1, 54.0)]
+REC_CONNECTOR_PRICES_VALID_THROUGH = "December 31, 2026"
+REC_DEFAULT_PRICE = 54.0   #1-49 tier; used only as the starting value for a custom price
+
+
+def rec_connector_price(n_recs) -> float:
+    """All-inclusive REC Connector price per REC for a given purchase quantity."""
+    import math
+    n = max(int(math.ceil(n_recs or 0)), 1)
+    for min_qty, price in REC_CONNECTOR_TIERS:
+        if n >= min_qty:
+            return price
+    return REC_CONNECTOR_TIERS[-1][1]
 
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
 FUEL_UNIT_TO_KBTU = {
@@ -3539,15 +3554,31 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             "RECs cannot offset fossil fuel emissions."
         )
         rc1, rc2 = st.columns([1, 3])
-        with rc1:
-            rec_price = st.number_input(
-                "REC price (USD/REC)", min_value=0.0, max_value=200.0,
-                value=REC_DEFAULT_PRICE, step=5.0, key="opt_rec_price",
-                help="Check current pricing at berdo.greenenergyconsumers.org. Prices move.",
-            )
         _rec_gap_kg  = max(prefill_ghg_val - limits[0], 0) * sqft if prefill_ghg_val else 0
         _rec_share, _rec_share_src = resolve_elec_share(prefill, elec_share, use_reported_share)
         _rec_elec_kg = (prefill_ghg_val or 0) * sqft * _rec_share
+        #RECs needed doesn't depend on price, so size the purchase first, then price it
+        _rec_sizing = rec_pathway(_rec_gap_kg, _rec_elec_kg, 2025, 0.0)
+        _recs_needed = _rec_sizing["recs_needed"] if _rec_sizing else 0
+        with rc1:
+            _price_source = st.radio(
+                "REC price",
+                ["City REC Connector (tiered)", "Enter my own price"],
+                key="opt_rec_price_source",
+                help="REC Connector prices are all-inclusive and depend on quantity. "
+                     "Choose your own price to model a broker quote.",
+            )
+            if _price_source == "Enter my own price":
+                rec_price = st.number_input(
+                    "Price (USD/REC)", min_value=0.0, max_value=200.0,
+                    value=REC_DEFAULT_PRICE, step=1.0, key="opt_rec_price",
+                )
+            else:
+                rec_price = rec_connector_price(_recs_needed)
+                st.caption(
+                    f"USD {rec_price:.0f}/REC for about {_recs_needed:,.0f} RECs "
+                    f"(Connector tier, valid through {REC_CONNECTOR_PRICES_VALID_THROUGH})."
+                )
         rec = rec_pathway(_rec_gap_kg, _rec_elec_kg, 2025, rec_price)
         if rec:
             with rc2:
@@ -3589,8 +3620,9 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 f"Consumers Alliance) by **{REC_CONNECTOR_DEADLINE}**, or through an independent broker. "
                 "Either way, RECs must be generated between January 1, 2024 and June 30, 2026, and "
                 "retired by December 31, 2026. Only non-emitting MA Class I RECs count (solar, wind, "
-                "small hydro, geothermal); biomass and landfill methane do not. The default price "
-                "is a placeholder: check current pricing at berdo.greenenergyconsumers.org."
+                "small hydro, geothermal); biomass and landfill methane do not. Connector prices are from "
+                "berdo.greenenergyconsumers.org; the Connector retires RECs by December 15 and "
+                "proof must reach the City by December 31."
             )
         else:
             rec = None
@@ -4380,7 +4412,7 @@ SOURCES_REGISTER = [
     ("Parking left out of blended standard by default", "Unverified", "Not confirmed in City documents"),
     ("Mass Save rebate $/sqft estimates", "Unverified", "Mass Save business pages list programs but not dollar amounts; links updated"),
     ("Retrofit cost ranges and Boston labor multiplier", "Unverified", "Order-of-magnitude benchmarks"),
-    ("Default REC price (USD 40)", "Unverified", "Current price is only on the Green Energy Consumers Alliance BERDO portal"),
+    ("REC Connector prices (USD 42 to 54 per REC by quantity)", "Corrected", "berdo.greenenergyconsumers.org, valid through Dec 31, 2026 (was a USD 40 placeholder)"),
     ("REC eligibility, generation window, and retirement deadline", "Verified", "boston.gov: How to Purchase MA Class I RECs for BERDO Compliance"),
     ("Fuel unit conversions (therms, ccf, Mcf, gallons)", "Corrected", "Portfolio Manager Thermal Energy Conversions, Fig. 3 (fuel oil #1: 139 kBtu/gal)"),
     ("Named district steam factors (Vicinity, MATEP)", "Verified", "BERDO Emissions Factors List (Sep 18, 2026); not used in calculations"),
