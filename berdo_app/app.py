@@ -2482,7 +2482,7 @@ REC_DEFAULT_PRICE  = 40.0                 #USD/REC. Verify at berdo.greenenergyc
 FUEL_UNIT_TO_KBTU = {
     "therms":   100.0,      #natural gas
     "ccf":      102.6,      #natural gas (hundred cubic feet)
-    "mcf":      1026.0,     #natural gas (thousand cubic feet)
+    "mcf":      1026.0,     #natural gas, thousand cubic feet (Portfolio Manager calls this "Kcf")
     "gallons_oil2":  138.0, #fuel oil #2
     "gallons_oil4":  146.0, #fuel oil #4
     "gallons_oil56": 150.0,  #fuel oil #5/#6
@@ -2515,14 +2515,14 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 2.00,
-        "amount_str": "USD 50–USD 300/ton cooling capacity; heat pump adders available",
+        "amount_str": "Varies by equipment; see Mass Save's Heating & Cooling page for current rates. This tool's dollar estimate is unverified.",
         "eligibility": "MA commercial accounts with Eversource, National Grid, or Unitil",
         "expiration": "Program year 2026 (resets each January)",
         "conflicts": [],
         "stacks_with": ["IRA 179D", "IRA 45L"],
         "berdo_periods": ["2025–29", "2030–34"],
         "ownership": ["For-profit", "Nonprofit / Government"],
-        "source": "https://www.masssave.com/saving/business-rebates",
+        "source": "https://www.masssave.com/en/business/rebates-offers-services/heating-and-cooling",
         "checklist": [
             "Contact your utility (Eversource / National Grid / Unitil) before project start",
             "Get pre-approval from Mass Save (required before installation)",
@@ -2541,14 +2541,14 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.10,
         "amount_psf_high": 0.60,
-        "amount_str": "USD 0.05–USD 0.30/kWh saved; fixture rebates vary by product",
+        "amount_str": "Varies by fixture and controls; see Mass Save's Lighting & Controls page for current rates. This tool's dollar estimate is unverified.",
         "eligibility": "MA commercial accounts",
         "expiration": "Program year 2026 (resets each January)",
         "conflicts": [],
         "stacks_with": ["IRA 179D"],
         "berdo_periods": ["2025–29", "2030–34"],
         "ownership": ["For-profit", "Nonprofit / Government"],
-        "source": "https://www.masssave.com/saving/business-rebates",
+        "source": "https://www.masssave.com/en/business/rebates-offers-services/lighting-and-controls",
         "checklist": [
             "Contact Mass Save or your utility for pre-approval",
             "Select eligible LED fixtures from the approved product list",
@@ -2567,14 +2567,14 @@ INCENTIVE_STACK = [
         "fuels": ["Natural gas", "Fuel oil", "Mixed / unknown", "Electric"],
         "amount_psf_low": 0.50,
         "amount_psf_high": 3.00,
-        "amount_str": "Up to USD 400,000/project; custom incentive based on modeled savings",
+        "amount_str": "Custom incentive based on modeled savings; see Mass Save's Deep Energy Retrofit page. This tool's dollar estimate is unverified.",
         "eligibility": "MA commercial buildings; requires pre-approval and energy model",
         "expiration": "Program year 2026",
         "conflicts": [],
         "stacks_with": ["IRA 179D", "IRA 48C"],
         "berdo_periods": ["2025–29", "2030–34", "2035–39"],
         "ownership": ["For-profit", "Nonprofit / Government"],
-        "source": "https://www.masssave.com/saving/large-business",
+        "source": "https://www.masssave.com/en/business/rebates-offers-services/deep-energy-retrofit",
         "checklist": [
             "Submit a pre-application to Mass Save Large Business program",
             "Commission an ASHRAE Level 2 energy audit",
@@ -2974,7 +2974,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         )
     with proj_cols[1]:
         unit_options = {
-            "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
+            "Natural gas":    ["therms", "ccf", "Mcf (thousand cu ft)", "kBtu", "MMBtu"],
             "Fuel oil #1":     ["gallons", "kBtu", "MMBtu"],
             "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
             "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
@@ -3004,7 +3004,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     if proj_amount > 0:
         #Convert to kBtu
         unit_map = {
-            "therms": 100.0, "ccf": 102.6, "mcf": 1026.0,
+            "therms": 100.0, "ccf": 102.6, "Mcf (thousand cu ft)": 1026.0,
             "gallons": 138.0,  #default for oil; overridden below
             "kBtu": 1.0, "MMBtu": 1000.0,
             "kWh": 3.412, "MWh": 3412.0,
@@ -3012,7 +3012,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         #Override gallon factor by fuel type
         if proj_unit == "gallons":
             gal_factor = {
-                "Fuel oil #1": 135.0,
+                "Fuel oil #1": 139.0,   #Portfolio Manager Thermal Energy Conversions, Fig. 3
                 "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
                 "Fuel oil #5/#6": 150.0, "Propane": 92.0,
                 "Diesel": 138.0, "Kerosene": 135.0,
@@ -3107,7 +3107,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         st.info(
             "No incentives matched your inputs. "
             "Try adjusting ownership type, fuel, or scope, "
-            "or check masssave.com and masscec.com directly."
+            "or check masssave.com and mass.gov directly."
         )
         return
 
@@ -3585,11 +3585,12 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             st.caption(
                 f"Assumes {fmt_share(_rec_share)} of this building's emissions come from "
                 f"electricity ({_rec_share_src}). "
-                f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
-                "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
-                "independent broker. RECs must be MA Class I from non-emitting sources: solar, wind, "
-                "small hydro, geothermal. Biomass and landfill gas do not qualify. BERDO's REC rules "
-                "are under active revision; confirm before relying on this."
+                f"For 2025 compliance: buy through the City's REC Connector Program (Green Energy "
+                f"Consumers Alliance) by **{REC_CONNECTOR_DEADLINE}**, or through an independent broker. "
+                "Either way, RECs must be generated between January 1, 2024 and June 30, 2026, and "
+                "retired by December 31, 2026. Only non-emitting MA Class I RECs count (solar, wind, "
+                "small hydro, geothermal); biomass and landfill methane do not. The default price "
+                "is a placeholder: check current pricing at berdo.greenenergyconsumers.org."
             )
         else:
             rec = None
@@ -3858,7 +3859,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     #Project entry table
     fuel_unit_options = {
-        "Natural gas":    ["therms", "ccf", "mcf", "kBtu", "MMBtu"],
+        "Natural gas":    ["therms", "ccf", "Mcf (thousand cu ft)", "kBtu", "MMBtu"],
         "Fuel oil #1":    ["gallons", "kBtu", "MMBtu"],
         "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
         "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
@@ -3870,13 +3871,13 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         "District steam": ["kBtu", "MMBtu", "therms"],
     }
     unit_to_kbtu = {
-        "therms": 100.0, "ccf": 102.6, "mcf": 1026.0,
+        "therms": 100.0, "ccf": 102.6, "Mcf (thousand cu ft)": 1026.0,
         "kBtu": 1.0, "MMBtu": 1000.0,
         "kWh": 3.412, "MWh": 3412.0,
         "gallons": 138.0,  #overridden per fuel below
     }
     gallon_kbtu = {
-        "Fuel oil #1": 135.0,  
+        "Fuel oil #1": 139.0,   #Portfolio Manager Thermal Energy Conversions, Fig. 3
         "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
         "Fuel oil #5/#6": 150.0, "Propane": 92.0,
         "Diesel": 138.0, "Kerosene": 135.0,
@@ -4377,10 +4378,11 @@ SOURCES_REGISTER = [
     ("Green Communities grant caps", "Corrected", "Mass. DOER announcements"),
     ("MassDEP Gap Energy Grant (was mislabeled MassDOER)", "Corrected", "mass.gov Gap IV request for responses"),
     ("Parking left out of blended standard by default", "Unverified", "Not confirmed in City documents"),
-    ("Mass Save rebate $/sqft estimates", "Unverified", "Tool estimates; confirm at masssave.com"),
+    ("Mass Save rebate $/sqft estimates", "Unverified", "Mass Save business pages list programs but not dollar amounts; links updated"),
     ("Retrofit cost ranges and Boston labor multiplier", "Unverified", "Order-of-magnitude benchmarks"),
-    ("Default REC price (USD 40)", "Unverified", "Placeholder; user can change it"),
-    ("Fuel unit conversions (therms, gallons)", "Unverified", "Standard Portfolio Manager conversions assumed"),
+    ("Default REC price (USD 40)", "Unverified", "Current price is only on the Green Energy Consumers Alliance BERDO portal"),
+    ("REC eligibility, generation window, and retirement deadline", "Verified", "boston.gov: How to Purchase MA Class I RECs for BERDO Compliance"),
+    ("Fuel unit conversions (therms, ccf, Mcf, gallons)", "Corrected", "Portfolio Manager Thermal Energy Conversions, Fig. 3 (fuel oil #1: 139 kBtu/gal)"),
     ("Named district steam factors (Vicinity, MATEP)", "Verified", "BERDO Emissions Factors List (Sep 18, 2026); not used in calculations"),
 ]
 SOURCES_VERIFIED_ON = "September 23, 2026"
