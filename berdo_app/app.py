@@ -1361,6 +1361,8 @@ Not an official City of Boston compliance determination.
 
 COLUMN_RENAME_MAP = {
     "BERDO ID": "berdo_id",
+    "Corresponding Campus ID": "campus_id",
+    "Notes": "city_notes",
     "Tax Parcel ID": "tax_parcel_id",
     "Largest Property Type": "property_type",
     "All Property Types and GFAs": "all_property_types",
@@ -1478,9 +1480,10 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
     df.columns = df.columns.astype(str).str.strip()
     df = df.rename(columns=COLUMN_RENAME_MAP)
     #Stable identifiers for linking the same building across years
-    for _id_col in ("berdo_id", "tax_parcel_id"):
+    for _id_col in ("berdo_id", "tax_parcel_id", "campus_id"):
         if _id_col in df.columns:
             df[_id_col] = df[_id_col].map(normalize_id)
+    df = mark_campus_rows(df)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
@@ -1609,6 +1612,11 @@ def evaluate_building(row):
     ghg       = row["ghg_intensity_kgco2e_sqft"]
     sqft      = row["gross_floor_area"]
     notes     = list(bl["notes"])
+    if bool(row.get("is_campus_member")):
+        notes.append(
+            f"Reported as part of campus {row.get('campus_id')}: per the City, this row may "
+            "not reflect the building's full energy use, so its intensity and status are less certain"
+        )
 
     scoreable = (
         limits is not None
@@ -1699,6 +1707,57 @@ def evaluate_building(row):
     return data_status, berdo_status, acp_2025, notes
 
 
+def mark_campus_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Campus reporting in the City's disclosure has two kinds of rows:
+      - summary rows: totals for a whole campus (not a building). Identified by a
+        City note starting "This is a campus", or a BERDO ID that is one of the
+        year's campus IDs (e.g. "C10002").
+      - member rows: individual buildings with a Corresponding Campus ID. Per the
+        City, these rows "may not reflect the full building's energy and water use."
+    Adds is_campus_summary, is_campus_member, and campus_key (the campus ID to join on).
+    """
+    df = df.copy()
+    campus_col = df["campus_id"] if "campus_id" in df.columns else pd.Series(None, index=df.index)
+    ids = df["berdo_id"] if "berdo_id" in df.columns else pd.Series(None, index=df.index)
+    notes = (df["city_notes"] if "city_notes" in df.columns
+             else pd.Series("", index=df.index)).fillna("").astype(str)
+    campus_ids = set(campus_col.dropna())
+    id_is_campus = ids.isin(campus_ids) & ids.notna()
+    df["is_campus_summary"] = notes.str.strip().str.startswith("This is a campus") | id_is_campus
+    df["campus_key"] = ids.where(id_is_campus, campus_col)
+    df["is_campus_member"] = campus_col.notna() & ~df["is_campus_summary"]
+    return df
+
+
+def buildings_only(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop campus summary rows, which hold campus totals rather than a building."""
+    if "is_campus_summary" in df.columns:
+        return df[~df["is_campus_summary"].fillna(False).astype(bool)]
+    return df
+
+
+def campus_context(df: pd.DataFrame, campus_id):
+    """Summary totals and member buildings for one campus in one year's data."""
+    campus_id = normalize_id(campus_id)
+    if not campus_id or "campus_key" not in df.columns:
+        return None
+    rows = df[df["campus_key"] == campus_id]
+    summary = rows[rows["is_campus_summary"]]
+    members = rows[rows["is_campus_member"]]
+    out = {"campus_id": campus_id, "members": members, "summary": None}
+    if not summary.empty:
+        s = summary.iloc[0]
+        gfa = pd.to_numeric(s.get("gross_floor_area"), errors="coerce")
+        ghg = pd.to_numeric(s.get("ghg_emissions"), errors="coerce")
+        out["summary"] = {
+            "gfa": gfa, "ghg": ghg,
+            "intensity": (ghg / gfa) if pd.notna(ghg) and pd.notna(gfa) and gfa > 0 else None,
+            "property_type": s.get("property_type"),
+        }
+    return out
+
+
 def normalize_id(v):
     """Clean an ID to a string ('100182.0' -> '100182'); None if missing."""
     if v is None:
@@ -1744,6 +1803,7 @@ def find_building_in_year(df: pd.DataFrame, berdo_id=None, parcel_id=None, addre
     Returns (row, matched_by, had_duplicates) or None.
     """
     berdo_id, parcel_id = normalize_id(berdo_id), normalize_id(parcel_id)
+    df = buildings_only(df)
     year_has_ids = "berdo_id" in df.columns and df["berdo_id"].notna().any()
 
     if year_has_ids and berdo_id:
@@ -1793,6 +1853,7 @@ def lookup_building_priority(df, address):
         return None
 
     #Standardize the dataframe's address column using your updated series function
+    df = buildings_only(df)
     df_addresses_std = standardize_address_series(df["Building Address"])
     
     #Filter matches where the standardized address contains the search query
@@ -1813,6 +1874,8 @@ def lookup_building_priority(df, address):
             "Property Owner Name":         row.get("Property Owner Name"),
             "BERDO ID":                    row.get("berdo_id"),
             "Tax Parcel ID":               row.get("tax_parcel_id"),
+            "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
+            "City Note":                   row.get("city_notes"),
             "Property Type":               row.get("property_type"),
             "All Property Types":          row.get("all_property_types"),
             "Gross Floor Area":            row.get("gross_floor_area"),
@@ -1852,6 +1915,7 @@ def lookup_owner_portfolio(df, owner_name):
     """
     import re
     owner_clean = owner_name.strip()
+    df = buildings_only(df)
     matches = df[
         df["Property Owner Name"].astype(str).str.contains(
             re.escape(owner_clean), case=False, na=False
@@ -1868,6 +1932,8 @@ def lookup_owner_portfolio(df, owner_name):
             "Property Owner Name":         row.get("Property Owner Name"),
             "BERDO ID":                    row.get("berdo_id"),
             "Tax Parcel ID":               row.get("tax_parcel_id"),
+            "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
+            "City Note":                   row.get("city_notes"),
             "Property Type":               row.get("property_type"),
             "All Property Types":          row.get("all_property_types"),
             "Gross Floor Area":            row.get("gross_floor_area"),
@@ -4674,6 +4740,40 @@ with tab_address:
 
             st.write("**Notes:**", top["Notes"])
 
+            _city_note = top.get("City Note")
+            if isinstance(_city_note, str) and _city_note.strip():
+                st.caption(f"**City note:** {_city_note.strip()}")
+
+            if top.get("Campus ID"):
+                _ctx = campus_context(df_full, top.get("Campus ID"))
+                if _ctx:
+                    _s = _ctx["summary"]
+                    _row_i = pd.to_numeric(top.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
+                    _msg = (f"**Part of campus {_ctx['campus_id']}** with "
+                            f"{len(_ctx['members'])} buildings in this year's data. The City says "
+                            "campus rows may not reflect a building's full energy use, so this "
+                            "building's emissions intensity, and any flag based on it, is less certain.")
+                    if _s and _s["intensity"] is not None:
+                        _msg += (f" Campus totals: {_s['gfa']:,.0f} sq ft, "
+                                 f"{_s['ghg'] / 1000:,.0f} metric tons CO₂e, "
+                                 f"{_s['intensity']:.2f} kg CO₂e/sf/yr")
+                        if pd.notna(_row_i):
+                            _msg += f" (this building's row: {_row_i:.2f})"
+                        _msg += "."
+                    st.info(_msg)
+                    with st.expander(f"Buildings on campus {_ctx['campus_id']}"):
+                        _m = _ctx["members"]
+                        st.dataframe(pd.DataFrame({
+                            "Address": _m["Building Address"],
+                            "BERDO ID": _m.get("berdo_id"),
+                            "Floor area (sq ft)": pd.to_numeric(_m["gross_floor_area"], errors="coerce").round(0),
+                            "GHG intensity (kg/sf/yr)": pd.to_numeric(
+                                _m["ghg_intensity_kgco2e_sqft"], errors="coerce").round(2),
+                            "Property type": _m["property_type"],
+                        }), hide_index=True, use_container_width=True)
+                        st.caption("Rows as reported in the City's disclosure. Campus totals come "
+                                   "from the campus summary row in the same dataset.")
+
 
 #Fuel breakdown
             fuel_breakdown = get_fuel_breakdown(top)
@@ -4706,6 +4806,7 @@ with tab_address:
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
 - **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). For 2026, the City lists October 15 as the deadline for annual reporting with approved extensions. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
+- **Campus buildings**: Some buildings are reported as part of a campus. The City notes these rows may not reflect the full building's energy use; the tool flags them and shows the campus totals.
 - **State / Federal**: The City's data marks the building as owned by a state or federal agency. This tool shows its emissions for reference only, because BERDO's treatment of these buildings is unconfirmed.
 
 **Site EUI (Energy Use Intensity)**
@@ -4867,6 +4968,10 @@ with tab_address:
                               "per the City's projected emissions factors, with fossil fuel use "
                               "unchanged (Estimated).")
             _notes = [n.strip() for n in str(top.get("Notes") or "").split(";") if n.strip()]
+            _cn = top.get("City Note")
+            if isinstance(_cn, str) and _cn.strip():
+                _cn = _cn.strip()
+                _notes.append("City note: " + (_cn if len(_cn) <= 240 else _cn[:237] + "..."))
 
             try:
                 _pdf_bytes = build_building_summary_pdf({
