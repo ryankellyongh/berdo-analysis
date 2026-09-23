@@ -42,12 +42,13 @@ ACP_RATE = 234  #USD per metric ton CO2e over the limit
 
 
 #Projected ISO New England grid emissions factors by year, kg CO2e/MWh.
-#Source: BERDO Policies & Procedures, Version 4 (adopted April 13, 2026), Appendix B
-#"Projected Grid Emissions Factors". Appendix B was last updated in Version 3
-#(September 17, 2025). The official schedule starts in 2025; earlier years use 2025.
+#Sources: BERDO Policies & Procedures Version 5 (adopted September 14, 2026), Appendix B,
+#unchanged since Version 3 (September 17, 2025); and the BERDO Emissions Factors List
+#(updated September 18, 2026), Appendix B, which adds 2022 to 2024. VERIFIED September 23, 2026.
 #CORRECTED September 22, 2026: the previous schedule (a straight-line decline to 71 kg/MWh in 2050)
 #matched the official values only for 2025 and 2026.
 PROJECTED_GRID_EF = {
+    2022: 270, 2023: 263, 2024: 256,
     2025: 249, 2026: 242, 2027: 265, 2028: 265, 2029: 264,
     2030: 259, 2031: 254, 2032: 249, 2033: 243, 2034: 237,
     2035: 231, 2036: 224, 2037: 217, 2038: 211, 2039: 204,
@@ -59,7 +60,7 @@ PROJECTED_GRID_EF = {
 #MA RPS Class I minimum standard, per 225 CMR 14.07(1).
 #VERIFIED September 22, 2026 against the regulation's table: 27% in 2025, +3 points a year to
 #39% in 2029, 40% in 2030, then +1 point a year "unless modified by law".
-#BERDO electricity formula (Policies & Procedures v4, section 5.B):
+#BERDO electricity formula (Policies & Procedures v5, section 5.B):
 #Emissions = Electricity Use × (100% − RPS Class I) × Emissions Factor
 #Schedule: +3 pp/yr 2025–2029, 40% in 2030, +1 pp/yr thereafter.
 RPS_CLASS_I = {
@@ -401,7 +402,7 @@ def parse_property_uses(raw) -> list:
 
 def blend_limits_by_area(uses, primary_threshold=0.10):
     """
-    Blended Emissions Standard per BERDO Policies & Procedures v4, section 6:
+    Blended Emissions Standard per BERDO Policies & Procedures v5, section 6:
         BES = [sum(SF_i × ES_i) over primary uses + SF_np × ES_1] / total SF
     A use is primary only if it occupies at least 10% of floor area (ordinance
     section (i)). Smaller uses, and uses with no BERDO category, are non-primary
@@ -1299,7 +1300,7 @@ def render_compliance_section(
             "fossil fuel use held constant. "
         )
     caption += (
-        "Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v4 (April 2026), Appendix B projected grid factors; 225 CMR 14.07 RPS Class I schedule. "
+        "Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v5 (September 2026), Appendix B projected grid factors; 225 CMR 14.07 RPS Class I schedule. "
         "Not an official City of Boston compliance determination."
     )
     st.caption(caption)
@@ -1350,7 +1351,7 @@ BERDO Policies & Procedures) and the state RPS Class I schedule. It uses each bu
 reported electricity share of emissions (2024 data onward); the sidebar slider applies only
 when that share isn't reported.
 
-Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v4 (April 2026),
+Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v5 (September 2026),
 Appendix B; 225 CMR 14.07. See "Sources & verification" in the sidebar.
 Not an official City of Boston compliance determination.
 """)
@@ -2392,28 +2393,28 @@ RETROFIT_COST_PER_SQFT = {
 BOSTON_LABOR_MULTIPLIER = 1.25
 
 #BERDO EMISSIONS FACTORS FOR FUELS
-#BERDO Regulations section VIII.a.i: factors for natural gas, propane, fuel oil,
-#diesel, and kerosene are the most recent ENERGY STAR Portfolio Manager factors.
-#Source: Portfolio Manager Technical Reference: Greenhouse Gas Emissions (August 2025),
-#Figure 1 (U.S. direct factors) and Figure 3 (district steam).
-#VERIFIED/CORRECTED September 22, 2026. Units: kg CO2e per kBtu (= kg/MMBtu ÷ 1000).
+#Source: BERDO Emissions Factors List (City of Boston, updated September 18, 2026),
+#"2025 Emissions Factors". The City uses Portfolio Manager factors "as adopted in January
+#2025", which differ slightly from Portfolio Manager's August 2025 technical reference.
+#The City's list governs BERDO, so those values are used here.
+#VERIFIED September 23, 2026. Units: kg CO2e per kBtu (= kg/mmBtu ÷ 1000).
 
 FUEL_EF_KG_PER_KBTU = {
-    "Natural gas":      0.05311,   #53.11 (verified)
-    "Propane":          0.06195,   #61.95 (corrected from 64.25)
-    "Fuel oil #1":      0.07349,   #73.49
-    "Fuel oil #2":      0.07420,   #74.20, distillate / home heating oil
-    "Fuel oil #4":      0.07528,   #75.28
-    "Fuel oil #5/#6":   0.07426,   #74.26 (corrected from 75.35), residual
-    "Diesel":           0.07516,   #75.16 (corrected from 74.21)
-    "Kerosene":         0.07544,   #75.44 (corrected from 77.69)
+    "Natural gas":      0.05311,   #53.11
+    "Propane":          0.06425,   #64.25
+    "Fuel oil #1":      0.07350,   #73.50
+    "Fuel oil #2":      0.07421,   #74.21, distillate / home heating oil
+    "Fuel oil #4":      0.07529,   #75.29
+    "Fuel oil #5/#6":   0.07535,   #75.35, residual
+    "Diesel":           0.07421,   #74.21
+    "Kerosene":         0.07769,   #77.69
     "District steam":   0.06640,   #Default District Steam; named systems differ, see below
     "Electricity":      None,      #use effective_grid_ef(): Appendix B × (1 − RPS Class I)
 }
 
 #District energy system factors, kg CO2e/kBtu.
-#NOT VERIFIED and not used in any calculation. The default (66.40) matches Portfolio
-#Manager; the named-system values could not be checked against a City source.
+#VERIFIED September 23, 2026 against the BERDO Emissions Factors List (September 18, 2026).
+#Not currently used in any calculation.
 DISTRICT_STEAM_EF = {
     "Default (unknown system)":              0.06640,
     "Vicinity District Steam (Boston)":      0.05810,
@@ -4282,8 +4283,8 @@ building's emissions limit. The table shows annual fines; the summary metrics mu
 5 years per period for cumulative exposure.
 
 Sources: BERDO ordinance Table 1 and ACP rate; ENERGY STAR Portfolio Manager
-Greenhouse Gas Technical Reference (August 2025) for fuel factors; BERDO Policies &
-Procedures v4, Appendix B, for projected grid factors.
+BERDO Emissions Factors List (September 18, 2026) for fuel factors; BERDO Policies &
+Procedures v5, Appendix B, for projected grid factors.
 Not an official City of Boston BERDO compliance determination.
 """)
 
@@ -4319,7 +4320,7 @@ show_grid_decarb = st.sidebar.checkbox(
     help=(
         "Projects future GHG intensity assuming the ISO-NE grid cleans up "
         "per the City of Boston's official projected emissions factors "
-        "(Appendix B, BERDO Policies & Procedures v4, April 2026). "
+        "(Appendix B, BERDO Policies & Procedures v5, September 2026). "
         "Fossil fuel use is held constant."
     ),
 )
@@ -4363,15 +4364,14 @@ else:
 SOURCES_REGISTER = [
     ("Emissions standards (limits by use and period)", "Verified", "BERDO ordinance, Table 1"),
     ("ACP rate: USD 234 per metric ton", "Verified", "BERDO ordinance, section (m)(d); reviewed every 5 years"),
-    ("Projected grid emissions factors, 2025 to 2050", "Corrected", "BERDO Policies & Procedures v4 (Apr 2026), Appendix B"),
-    ("Electricity formula: use × (1 − RPS) × factor", "Verified", "BERDO Policies & Procedures v4, section 5.B"),
-    ("RPS Class I schedule", "Verified", "225 CMR 14.07(1)"),
-    ("Fuel factors: natural gas, fuel oil #1, #2, #4, district steam", "Verified", "Portfolio Manager GHG Technical Reference (Aug 2025)"),
-    ("Fuel factors: propane, fuel oil #5/#6, diesel, kerosene", "Corrected", "Portfolio Manager GHG Technical Reference (Aug 2025)"),
-    ("Property type to building use mapping", "Verified", "BERDO Policies & Procedures v4, Appendix A"),
-    ("Blended standard formula and 10% primary-use rule", "Corrected", "BERDO ordinance (i); Policies & Procedures v4, section 6"),
+    ("Projected grid emissions factors, 2022 to 2050", "Corrected", "Policies & Procedures v5 (Sep 2026) and Emissions Factors List (Sep 18, 2026), Appendix B"),
+    ("Electricity formula: use × (1 − RPS) × factor", "Verified", "BERDO Policies & Procedures v5, section 5.B"),
+    ("RPS Class I schedule", "Verified", "225 CMR 14.07(1); Emissions Factors List, Appendix C"),
+    ("Fuel and default district steam factors", "Verified", "BERDO Emissions Factors List (Sep 18, 2026)"),
+    ("Property type to building use mapping", "Verified", "BERDO Policies & Procedures v5, Appendix A"),
+    ("Blended standard formula and 10% primary-use rule", "Corrected", "BERDO ordinance (i); Policies & Procedures v5, section 6"),
     ("Daily fines: reporting and emissions", "Verified", "BERDO ordinance, section (r)"),
-    ("Flexibility measure deadlines; REC Connector deadline", "Verified", "boston.gov BERDO and Review Board pages"),
+    ("Flexibility measure, REC Connector, and 2026 reporting deadlines", "Verified", "boston.gov BERDO and Review Board pages"),
     ("179D and 45L termination; 179D 2026 amounts", "Verified", "P.L. 119-21; IRS Form 7205 instructions"),
     ("48C: fully allocated, no new rounds", "Verified", "DOE 48C program page; P.L. 119-21 sec. 70515"),
     ("Green Communities grant caps", "Corrected", "Mass. DOER announcements"),
@@ -4381,9 +4381,9 @@ SOURCES_REGISTER = [
     ("Retrofit cost ranges and Boston labor multiplier", "Unverified", "Order-of-magnitude benchmarks"),
     ("Default REC price (USD 40)", "Unverified", "Placeholder; user can change it"),
     ("Fuel unit conversions (therms, gallons)", "Unverified", "Standard Portfolio Manager conversions assumed"),
-    ("Named district steam factors", "Unverified", "Not used in calculations"),
+    ("Named district steam factors (Vicinity, MATEP)", "Verified", "BERDO Emissions Factors List (Sep 18, 2026); not used in calculations"),
 ]
-SOURCES_VERIFIED_ON = "September 22, 2026"
+SOURCES_VERIFIED_ON = "September 23, 2026"
 
 with st.sidebar.expander("Sources & verification"):
     st.caption(
@@ -4494,7 +4494,7 @@ with tab_address:
                 st.markdown(r"""
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
-- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). Note: the 2026 reporting deadline was extended to August 15, 2026. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
+- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). For 2026, the City lists October 15 as the deadline for annual reporting with approved extensions. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
 
 **Site EUI (Energy Use Intensity)**
 - Measures how much energy a building uses per square foot per year (kBtu/sq ft/yr). A higher EUI means the building uses more energy relative to its size. Missing EUI typically means the building did not submit complete energy data.
