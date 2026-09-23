@@ -4431,7 +4431,7 @@ with st.sidebar.expander("Sources & verification"):
     )
 
 #Page header
-st.title("BERDO Compliance Planner")
+st.title("BERDO Priority Screening Tool")
 st.write(
     "Enter a Boston building address to see its BERDO compliance status, fine exposure, "
     "and a matched incentive plan for funding decarbonization."
