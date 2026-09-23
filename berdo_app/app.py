@@ -528,7 +528,7 @@ def standardize_address_series(series):
     This section addresses standardization.
     IT also strips out full address details (like city, state, zip) after a comma.
     """
-    extracted = series.astype(str).str.split(",").str[0]
+    extracted = series.fillna("").astype(str).str.split(",").str[0]
     
     cleaned = (
         extracted
@@ -1360,6 +1360,8 @@ Not an official City of Boston compliance determination.
 #(berdo_2022.csv, berdo_2023.csv, …) in the data/ folder.
 
 COLUMN_RENAME_MAP = {
+    "BERDO ID": "berdo_id",
+    "Tax Parcel ID": "tax_parcel_id",
     "Largest Property Type": "property_type",
     "All Property Types and GFAs": "all_property_types",
     "Reported Gross Floor Area (Sq Ft)": "gross_floor_area",
@@ -1475,6 +1477,10 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
     df = pd.read_csv(file_path)
     df.columns = df.columns.astype(str).str.strip()
     df = df.rename(columns=COLUMN_RENAME_MAP)
+    #Stable identifiers for linking the same building across years
+    for _id_col in ("berdo_id", "tax_parcel_id"):
+        if _id_col in df.columns:
+            df[_id_col] = df[_id_col].map(normalize_id)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
@@ -1658,6 +1664,82 @@ def evaluate_building(row):
     return data_status, berdo_status, acp_2025, notes
 
 
+def normalize_id(v):
+    """Clean an ID to a string ('100182.0' -> '100182'); None if missing."""
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    if s.lower() in ("", "nan", "none"):
+        return None
+    return s[:-2] if s.endswith(".0") else s
+
+
+def _standardize_one(address) -> str:
+    return standardize_address_series(pd.Series([address])).iloc[0]
+
+
+def _pick_record(matches: pd.DataFrame):
+    """
+    When one building has several records in a year, prefer the record with GHG
+    data, then the larger floor area. Returns (row, had_duplicates).
+    """
+    if len(matches) == 1:
+        return matches.iloc[0], False
+    ranked = matches.assign(
+        _has_ghg=pd.to_numeric(matches.get("ghg_intensity_kgco2e_sqft"), errors="coerce").notna(),
+        _gfa=pd.to_numeric(matches.get("gross_floor_area"), errors="coerce").fillna(0),
+    ).sort_values(["_has_ghg", "_gfa"], ascending=False)
+    return ranked.iloc[0], True
+
+
+def find_building_in_year(df: pd.DataFrame, berdo_id=None, parcel_id=None, address=None):
+    """
+    Find one building's record in one year's data.
+
+    1. BERDO ID, when the year has IDs (2022 onward).
+    2. Tax Parcel ID, for years without BERDO IDs (2021), only when that parcel
+       has a single building; parcels can contain several buildings.
+    3. Exact standardized address, as a last resort.
+
+    Returns (row, matched_by, had_duplicates) or None.
+    """
+    berdo_id, parcel_id = normalize_id(berdo_id), normalize_id(parcel_id)
+    year_has_ids = "berdo_id" in df.columns and df["berdo_id"].notna().any()
+
+    if year_has_ids and berdo_id:
+        m = df[df["berdo_id"] == berdo_id]
+        if not m.empty:
+            row, dup = _pick_record(m)
+            return row, "BERDO ID", dup
+
+    addr_std = (_standardize_one(address)
+                if isinstance(address, str) and address.strip() else None)
+    if not year_has_ids and parcel_id and "tax_parcel_id" in df.columns:
+        m = df[df["tax_parcel_id"] == parcel_id]
+        if not m.empty:
+            n_buildings = standardize_address_series(m["Building Address"]).nunique()
+            if n_buildings == 1:
+                row, dup = _pick_record(m)
+                return row, "Tax parcel", dup
+            if addr_std:
+                m2 = m[standardize_address_series(m["Building Address"]) == addr_std]
+                if not m2.empty:
+                    row, dup = _pick_record(m2)
+                    return row, "Tax parcel + address", dup
+
+    if addr_std:
+        m = df[standardize_address_series(df["Building Address"]) == addr_std]
+        if not m.empty:
+            row, dup = _pick_record(m)
+            return row, "Address (exact)", dup
+    return None
+
+
 def lookup_building_priority(df, address):
     if not address or not isinstance(address, str):
         return None
@@ -1683,6 +1765,9 @@ def lookup_building_priority(df, address):
     
     if matches.empty:
         return None
+    #Exact address matches first, so "20 Gillette Park" beats "20 Gillette Park Rear"
+    matches = (matches.assign(_exact=(df_addresses_std.loc[matches.index] == search_std))
+               .sort_values("_exact", ascending=False))
         
     results = []
 
@@ -1691,6 +1776,8 @@ def lookup_building_priority(df, address):
         results.append({
             "Building Address":             row.get("Building Address"),
             "Property Owner Name":         row.get("Property Owner Name"),
+            "BERDO ID":                    row.get("berdo_id"),
+            "Tax Parcel ID":               row.get("tax_parcel_id"),
             "Property Type":               row.get("property_type"),
             "All Property Types":          row.get("all_property_types"),
             "Gross Floor Area":            row.get("gross_floor_area"),
@@ -1744,6 +1831,8 @@ def lookup_owner_portfolio(df, owner_name):
         results.append({
             "Building Address":            row.get("Building Address"),
             "Property Owner Name":         row.get("Property Owner Name"),
+            "BERDO ID":                    row.get("berdo_id"),
+            "Tax Parcel ID":               row.get("tax_parcel_id"),
             "Property Type":               row.get("property_type"),
             "All Property Types":          row.get("all_property_types"),
             "Gross Floor Area":            row.get("gross_floor_area"),
@@ -2240,10 +2329,11 @@ marked "Did not report" in the excluded table represent additional unknown expos
 
 #Year-over-year trend chart
 
-def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
+def render_yoy_trend(building, all_years: dict[int, pd.DataFrame]):
     """
-    Searches every loaded year for the given address and renders a
-    year-over-year trend chart for GHG intensity and Site EUI.
+    Finds the same building in every loaded year, by BERDO ID first (see
+    find_building_in_year), and renders a year-over-year trend chart for GHG
+    intensity and Site EUI. `building` is the selected lookup row.
     Returns the prior-year GHG intensity (float | None) for use in the
     compliance chart overlay, and the prior-year label string.
     """
@@ -2251,24 +2341,22 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
     if len(years_sorted) < 2:
         return None, None  #Nothing to compare
 
-    import re
-    search_std = (
-        re.split(r',', address)[0].strip().upper()
-        .replace(".", "").replace(" STREET", " ST")
-        .replace(" AVENUE", " AVE").replace(" ROAD", " RD")
-    )
     records = []
     for yr in years_sorted:
-        df = all_years[yr]
-        df_std = standardize_address_series(df["Building Address"])
-        matches = df[df_std.str.startswith(search_std, na=False)]
-        
-        if matches.empty:
+        found = find_building_in_year(
+            all_years[yr],
+            berdo_id=building.get("BERDO ID"),
+            parcel_id=building.get("Tax Parcel ID"),
+            address=building.get("Building Address"),
+        )
+        if found is None:
             continue
-        row = matches.iloc[0]
+        row, matched_by, dup = found
         ghg = pd.to_numeric(row.get("ghg_intensity_kgco2e_sqft"), errors="coerce")
         eui = pd.to_numeric(row.get("site_eui"), errors="coerce")
-        records.append({"year": yr, "ghg_intensity": ghg, "site_eui": eui})
+        records.append({"year": yr, "ghg_intensity": ghg, "site_eui": eui,
+                        "matched_by": matched_by, "duplicates": dup,
+                        "address_that_year": row.get("Building Address")})
 
     if len(records) < 2:
         return None, None
@@ -2365,6 +2453,29 @@ def render_yoy_trend(address, all_years: dict[int, pd.DataFrame]):
             "2022 GHG intensity is not shown because the City of Boston did not publish "
             "GHG emissions totals in that year's dataset."
         )
+
+    #How each year was matched, so users can judge the trend
+    by_method = {}
+    for r in records:
+        by_method.setdefault(r["matched_by"], []).append(str(int(r["year"])))
+    st.caption("Years linked by " + "; ".join(
+        f"{method}: {', '.join(yrs)}" for method, yrs in by_method.items()) + ".")
+    weaker = [r for r in records if r["matched_by"] != "BERDO ID"]
+    if weaker:
+        st.caption(
+            "Years not linked by BERDO ID are matched by tax parcel or exact address, "
+            "which is less certain. Check that the floor area and use look consistent."
+        )
+    dups = [str(int(r["year"])) for r in records if r["duplicates"]]
+    if dups:
+        st.caption(
+            f"More than one record for this building in {', '.join(dups)}; the record with "
+            "emissions data (or the larger floor area) is shown."
+        )
+    renamed = {r["address_that_year"] for r in records if r["address_that_year"]}
+    if len(renamed) > 1:
+        st.caption("The address is written differently across years: " +
+                   "; ".join(sorted(str(a) for a in renamed)) + ".")
 
     prior_ghg   = prior["ghg_intensity"] if pd.notna(prior["ghg_intensity"]) else None
     prior_label = str(int(prior["year"]))
@@ -4483,7 +4594,22 @@ with tab_address:
             ]
             st.dataframe(result[display_cols], use_container_width=True, hide_index=True)
 
-            top = result.iloc[0]
+            if len(result) > 1:
+                def _label(r):
+                    owner = r.get("Property Owner Name")
+                    owner = owner if isinstance(owner, str) and owner.strip() else "owner not reported"
+                    bid = r.get("BERDO ID") or "no BERDO ID"
+                    return f"{r.get('Building Address')} · {owner} · BERDO ID {bid}"
+                _labels = [_label(r) for _, r in result.iterrows()]
+                _pick = st.selectbox(
+                    f"{len(result)} buildings match this search. Choose one:",
+                    options=list(range(len(result))),
+                    format_func=lambda i: _labels[i],
+                    key=f"lookup_pick_{address_input}",
+                )
+                top = result.iloc[_pick]
+            else:
+                top = result.iloc[0]
             bldg_share, bldg_share_note = building_elec_share(
                 top.get("GHG Emissions (kgCO2e)"), top.get("Electricity Emissions (kgCO2e)"))
             col1, col2, col3 = st.columns(3)
@@ -4556,7 +4682,7 @@ with tab_address:
             #Year-over-year trend (multi-year mode only)
             prior_ghg, prior_label = None, None
             if show_yoy and multi_year_mode:
-                prior_ghg, prior_label = render_yoy_trend(address_input, all_years)
+                prior_ghg, prior_label = render_yoy_trend(top, all_years)
                 st.markdown("---")
 
             #Grid decarbonization projection 
