@@ -723,9 +723,9 @@ def reporting_status_label(raw) -> str:
     """
     s = str(raw or "").strip().lower()
     labels = {
-        "in compliance":     "Submitted (City status: in compliance)",
+        "in compliance":     "Submitted and accepted (City status: in compliance)",
         "not submitted":     "Not submitted (City status: not submitted)",
-        "pending revisions": "Submitted, revisions pending (City status: pending revisions)",
+        "pending revisions": "Submitted, awaiting City acceptance (City status: pending revisions)",
         "state":             "City status: state (verify BERDO treatment)",
         "federal":           "City status: federal (verify BERDO treatment)",
     }
@@ -1565,7 +1565,10 @@ def load_all_years() -> dict[int, pd.DataFrame]:
             year = int(stem.split("_")[1])
         except (IndexError, ValueError):
             continue
-        year_map[year] = _load_single_csv(fp)
+        #Datasets are labeled by reporting year and cover the prior calendar year's energy
+        #use (the City's estimated electricity emissions in the "2025" file use 2024 grid
+        #factors exactly). data_year is the year of energy use.
+        year_map[year] = _load_single_csv(fp).assign(data_year=year - 1)
 
     if not year_map:
         #Fallback: single legacy file
@@ -1693,6 +1696,16 @@ def evaluate_building(row):
                 f"Exceeds 2025–29 limit by {gaps[0]['gap']:.2f} kg/sf/yr "
                 f"({gaps[0]['excess_metric_tons']:,.0f} excess MT)"
             )
+            _dy  = pd.to_numeric(row.get("data_year"), errors="coerce")
+            _el  = pd.to_numeric(row.get("elec_emissions_kg"), errors="coerce")
+            _tot = pd.to_numeric(row.get("ghg_emissions"), errors="coerce")
+            if pd.notna(_dy) and int(_dy) < 2025 and pd.notna(_el) and pd.notna(_tot) and _el > 0:
+                _adj = (_tot - _el + _el * effective_grid_ef(2025) / effective_grid_ef(int(_dy))) / sqft
+                notes.append(
+                    f"Based on {int(_dy)} energy use. At the 2025 grid factor, the same energy use "
+                    f"would be about {_adj:.2f} kg/sf/yr "
+                    f"({'still over' if _adj > gaps[0]['limit'] else 'under'} the 2025–29 limit)"
+                )
         elif not gaps[1]["compliant"]:
             berdo_status = "Fails 2030–34"
             notes.append("Compliant now; exceeds the 2030–34 limit at current emissions")
@@ -2242,7 +2255,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         )
         projected = project_ghg_intensities(
             portfolio_intensity, portfolio_share,
-            selected_year,
+            (selected_year - 1) if selected_year else 2025,
         )
         fig.add_trace(go.Scatter(
             x=COMPLIANCE_PERIODS,
@@ -4236,13 +4249,14 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     limits = limits_for_category(berdo_category, prefill)
 
+    _ep_base = int(prefill.get("data_year") or 2025)
     if apply_grid:
-        base_ef = effective_grid_ef(2025)
+        base_ef = effective_grid_ef(_ep_base)
         ef_2050 = effective_grid_ef(2050)
         st.caption(
             f"Grid decarbonization is ON (sidebar). "
             f"Electricity share: {fmt_share(elec_share_val)} ({elec_share_src}). "
-            f"Base year grid EF (2025): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
+            f"Base year grid EF ({_ep_base}): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
             "Toggle in the sidebar to turn off."
         )
@@ -4272,7 +4286,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         projected_intensities = project_ghg_intensities(
             ghg_intensity=baseline_intensity,
             elec_share=elec_share_val,
-            base_year=2025,
+            base_year=_ep_base,
         )
         grid_emissions_kg = [pi * sqft for pi in projected_intensities]
     else:
@@ -4562,7 +4576,7 @@ if multi_year_mode:
         "Select reporting year to screen:",
         options=years_sorted,
         index=len(years_sorted) - 1,
-        format_func=str,
+        format_func=lambda y: f"{y} ({y - 1} energy use)",
         horizontal=False,
     )
     df_full = all_years[selected_year]
@@ -4611,10 +4625,11 @@ if show_grid_decarb:
         ),
     )
     elec_share = elec_share_pct / 100.0
-    base_ef = effective_grid_ef(selected_year)
+    _data_year = (selected_year - 1) if selected_year else 2025
+    base_ef = effective_grid_ef(_data_year)
     ef_2050 = effective_grid_ef(2050)
     st.sidebar.caption(
-        f"Base year grid EF ({selected_year}): **{base_ef:.0f} kg/MWh** "
+        f"Base year grid EF ({_data_year}, the year of energy use): **{base_ef:.0f} kg/MWh** "
         f"(Appendix B × RPS Class I). Projected EF at 2050: **{ef_2050:.0f} kg/MWh** "
         f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner)."
     )
@@ -4637,6 +4652,10 @@ SOURCES_REGISTER = [
     ("48C: fully allocated, no new rounds", "Verified", "DOE 48C program page; P.L. 119-21 sec. 70515"),
     ("Green Communities grant caps", "Corrected", "Mass. DOER announcements"),
     ("MassDEP Gap Energy Grant (was mislabeled MassDOER)", "Corrected", "mass.gov Gap IV request for responses"),
+    ("Dataset year = reporting year; energy use is the prior calendar year", "Verified", "BERDO reporting rule; City's estimated electricity emissions match prior-year grid factors exactly"),
+    ("Reporting status definitions (in compliance, pending revisions, not submitted)", "Verified", "City 2024 Detailed Data Dictionary"),
+    ("State and federal status values", "Unverified", "Not defined in the City's 2024 Data Dictionary"),
+    ("First emissions compliance year: 35,000+ sq ft or 35+ units start with 2025 data", "Verified", "City 2024 Detailed Data Dictionary"),
     ("Parking left out of blended standard by default", "Unverified", "Not confirmed in City documents"),
     ("Mass Save rebate $/sqft estimates", "Unverified", "Mass Save business pages list programs but not dollar amounts; links updated"),
     ("Retrofit cost ranges and Boston labor multiplier", "Unverified", "Order-of-magnitude benchmarks"),
@@ -4668,7 +4687,7 @@ st.write(
 if multi_year_mode:
     year_range_str = f"{years_sorted[0]}–{years_sorted[-1]}"
     st.info(
-        f"Showing data for **{selected_year}**. "
+        f"Showing reporting year **{selected_year}**, which covers **{selected_year - 1}** energy use. "
         f"Multi-year data loaded: {year_range_str}. "
         "Use the sidebar to switch years or toggle the trend view."
     )
@@ -4703,6 +4722,12 @@ with tab_address:
             )
 
             st.subheader("Building Result")
+            if selected_year:
+                st.caption(
+                    f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
+                    "BERDO's first emissions compliance year is 2025 energy use, reported in 2026, so "
+                    "flags based on earlier data are a preview."
+                )
 
             display_cols = [
                 "Building Address", "Property Owner Name", "Property Type",
@@ -4862,7 +4887,7 @@ with tab_address:
                     projected_intensities = project_ghg_intensities(
                         ghg_intensity=float(ghg_val),
                         elec_share=share_for_grid,
-                        base_year=selected_year,
+                        base_year=(selected_year - 1) if selected_year else 2025,
                     )
 
             _gov = government_status(top.get("Compliance Status"))
@@ -4883,7 +4908,7 @@ with tab_address:
                 prior_year_ghg_intensity=prior_ghg,
                 prior_year_label=prior_label,
                 projected_intensities=projected_intensities,
-                base_year=selected_year,
+                base_year=(selected_year - 1) if selected_year else 2025,
                 limits=use_mix_limits,
             )
 
@@ -4937,7 +4962,7 @@ with tab_address:
                 ("Gross floor area", _num(top.get("Gross Floor Area"), "{:,.0f} sq ft"), "Reported"),
                 ("Total GHG emissions", _num(pd.to_numeric(top.get("GHG Emissions (kgCO2e)"),
                                                            errors="coerce") / 1000,
-                                             "{:,.0f} metric tons CO2e"), "Reported"),
+                                             "{:,.0f} metric tons CO2e"), "Reported (City estimate)"),
                 ("GHG intensity", _num(_ghg_ctx, "{:.2f} kg CO2e/sf/yr"), "Calculated"),
                 ("Electricity share of emissions",
                  fmt_share(bldg_share), "Calculated"),
@@ -4977,7 +5002,8 @@ with tab_address:
                 _pdf_bytes = build_building_summary_pdf({
                     "address":     top.get("Building Address", address_input),
                     "owner":       top.get("Property Owner Name"),
-                    "data_year":   selected_year or None,
+                    "data_year":   (f"{selected_year} reporting year ({selected_year - 1} energy use)"
+                                    if selected_year else None),
                     "facts":       _facts,
                     "periods":     _periods,
                     "limit_basis": _limit_basis,
@@ -5041,6 +5067,7 @@ with tab_address:
                 "limits":           use_mix_limits,
                 "elec_share":       bldg_share,
                 "elec_share_year":  selected_year or None,
+                "data_year":        (selected_year - 1) if selected_year else None,
                 "ghg_intensity":    float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0,
                 "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
             }
