@@ -1583,6 +1583,19 @@ def load_all_years() -> dict[int, pd.DataFrame]:
 
 #Priority scoring
 
+#The City's "Reporting Compliance Status" marks some records "state" or "federal".
+#Owners are mostly state and federal agencies (e.g., Massachusetts Port Authority).
+#A city ordinance generally can't compel those owners like private ones, and no
+#City statement on their treatment was found, so the tool reports their emissions
+#for reference only and doesn't flag them as noncompliant.
+GOVERNMENT_STATUSES = {"state": "State", "federal": "Federal"}
+
+
+def government_status(raw):
+    """Return 'State' or 'Federal' for those City statuses, otherwise None."""
+    return GOVERNMENT_STATUSES.get(str(raw or "").strip().lower())
+
+
 def evaluate_building(row):
     """
     Returns (data_status, berdo_status, acp_2025, notes).
@@ -1604,10 +1617,32 @@ def evaluate_building(row):
         and sqft > 0
     )
 
+    #State and federal records: report emissions for reference, don't flag
+    gov = government_status(row.get("compliance_status"))
+    if gov:
+        data_status = f"{gov} record"
+        notes.append(
+            f"The City's data marks this as a {gov.lower()} building. BERDO's emissions "
+            "limits and penalties may not apply the same way; confirm with the City before "
+            "treating it as noncompliant"
+        )
+        if scoreable:
+            g0 = calculate_compliance_gap(ghg, sqft, None, limits=limits)[0]
+            notes.append(
+                f"For reference only: {ghg:.2f} kg/sf/yr vs. a 2025–29 limit of "
+                f"{g0['limit']} ({'over' if not g0['compliant'] else 'under'} by "
+                f"{abs(g0['gap']):.2f})"
+            )
+        else:
+            notes.append("Emissions data incomplete in the public dataset")
+        if pd.notna(sqft) and sqft >= 100_000:
+            notes.append("Over 100,000 sq ft: longer retrofit lead time")
+        return data_status, f"Not assessed ({gov.lower()})", 0.0, notes
+
     #Flag 1: data status
     if row["compliance_status"] == "not submitted":
         data_status = "Not submitted"
-        notes.append("Did not report: accruing daily reporting fines")
+        notes.append("Did not report by the deadline; daily reporting fines may apply")
     elif not scoreable:
         data_status = "Incomplete data"
         if limits is None:
@@ -1897,11 +1932,18 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         missing_ghg  = pd.isna(ghg)
         missing_sqft = pd.isna(sqft) or sqft <= 0
 
+        status = str(row.get("Compliance Status", "")).strip().lower()
+        gov = government_status(status)
+        if gov:
+            excluded_rows.append({
+                "Building Address":  row.get("Building Address"),
+                "Property Type":     row.get("Property Type"),
+                "Compliance Status": row.get("Compliance Status"),
+                "Exclusion Reason":  f"{gov} record: BERDO treatment unconfirmed, so left out of the portfolio",
+            })
+            continue
         if missing_ghg or missing_sqft:
-            status = str(row.get("Compliance Status", "")).strip().lower()
-            if status == "state":
-                reason = "Reported under state status. Verify BERDO treatment before excluding"
-            elif missing_ghg and missing_sqft:
+            if missing_ghg and missing_sqft:
                 if status == "not submitted":
                     reason = "Did not report: no GHG data or floor area submitted"
                 elif status == "pending revisions":
@@ -1932,7 +1974,16 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     skipped          = len(excluded_rows)
 
     if valid.empty:
-        st.error("No buildings with sufficient data to calculate portfolio compliance.")
+        _n_gov = sum(1 for r in excluded_rows if " record: berdo treatment" in r["Exclusion Reason"].lower())
+        if _n_gov == len(excluded_rows) and _n_gov > 0:
+            st.info(
+                f"All {_n_gov} buildings for this owner are state or federal records in the City's "
+                "data. BERDO's treatment of these buildings is unconfirmed, so this tool doesn't "
+                "calculate portfolio compliance for them. Look up individual buildings in the "
+                "Address Lookup tab to see their emissions for reference."
+            )
+        else:
+            st.error("No buildings with sufficient data to calculate portfolio compliance.")
         
         #Still show excluded table so user knows what's missing
         
@@ -2290,11 +2341,11 @@ marked "Did not report" in the excluded table represent additional unknown expos
             1 for r in excluded_rows if "did not report" in r["Exclusion Reason"].lower()
         )
         state_exempt = sum(
-            1 for r in excluded_rows if "state status" in r["Exclusion Reason"].lower()
+            1 for r in excluded_rows if " record: berdo treatment" in r["Exclusion Reason"].lower()
         )
         label_parts = [f"Excluded buildings ({skipped})"]
         if state_exempt:
-            label_parts.append(f"{state_exempt} state status")
+            label_parts.append(f"{state_exempt} state/federal")
         if not_reported:
             label_parts.append(f"{not_reported} did not report")
         expander_label = " · ".join(label_parts)
@@ -2303,7 +2354,7 @@ marked "Did not report" in the excluded table represent additional unknown expos
         with st.expander(expander_label, expanded=auto_expand):
             st.caption(
                 "These buildings are not included in the portfolio calculation. "
-                "**State status** buildings are listed separately. Verify their BERDO treatment before excluding. "
+                "**State and federal** buildings are left out because their BERDO treatment is unconfirmed. "
                 "**Did not report** means no energy data was submitted to the City of Boston, "
                 "so their emissions are unknown and not reflected above. "
                 "**Pending revisions** means data was submitted but flagged for corrections."
@@ -4655,6 +4706,7 @@ with tab_address:
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
 - **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). For 2026, the City lists October 15 as the deadline for annual reporting with approved extensions. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
+- **State / Federal**: The City's data marks the building as owned by a state or federal agency. This tool shows its emissions for reference only, because BERDO's treatment of these buildings is unconfirmed.
 
 **Site EUI (Energy Use Intensity)**
 - Measures how much energy a building uses per square foot per year (kBtu/sq ft/yr). A higher EUI means the building uses more energy relative to its size. Missing EUI typically means the building did not submit complete energy data.
@@ -4711,6 +4763,17 @@ with tab_address:
                         elec_share=share_for_grid,
                         base_year=selected_year,
                     )
+
+            _gov = government_status(top.get("Compliance Status"))
+            if _gov:
+                st.info(
+                    f"**{_gov} building.** The City's data marks this as a {_gov.lower()} building. "
+                    "A city ordinance generally can't require state or federal agencies to comply "
+                    "the way it requires private owners, and the City hasn't published how BERDO "
+                    "applies to them. The analysis below compares its emissions to the BERDO limit "
+                    "for reference only. It is not a finding of noncompliance, and ACP estimates "
+                    "may not apply."
+                )
 
             use_mix_limits = render_use_mix_editor(top)
 
@@ -4781,7 +4844,8 @@ with tab_address:
                 ("Annual reporting", reporting_status_label(top.get("Compliance Status")), "Reported"),
                 ("Screening result", top.get("BERDO Status"), "Calculated"),
                 ("Est. annual ACP (2025–29)",
-                 f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0",
+                 f"Not estimated ({_gov.lower()} record)" if _gov else
+                 (f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0"),
                  "Estimated"),
             ]
             _limit_basis = (
@@ -4790,6 +4854,9 @@ with tab_address:
                 if use_mix_limits else
                 f"Limits shown are the default for the building's largest use ({_bl_ctx['label']})."
             )
+            if _gov:
+                _limit_basis = (f"Reference only: the City's data marks this as a {_gov.lower()} "
+                                "building, and BERDO's treatment of it is unconfirmed. " + _limit_basis)
             _blend_note = ""
             if not use_mix_limits and _bl_ctx.get("blended"):
                 _blend_note = (f"If the owner adopts a Blended Emissions Standard, the 2025–29 "
@@ -4853,7 +4920,7 @@ with tab_address:
             ):
                 limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
                 gap = float(ghg_val) - limit_2025
-                if gap > 0:
+                if gap > 0 and not _gov:
                     excess_tons = gap * float(sqft_val) / 1000
                     opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
                     opt_prefill["ghg_intensity"] = float(ghg_val)
