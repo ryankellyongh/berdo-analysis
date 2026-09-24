@@ -3185,7 +3185,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     with col1:
         sqft = st.number_input(
             "Gross floor area (sq ft)",
-            min_value=1_000, max_value=5_000_000,
+            min_value=1, max_value=50_000_000,
             value=st.session_state.get("opt_sqft", 50_000),
             step=1_000,
             help="Pre-filled from Address Lookup if available.",
@@ -4168,23 +4168,25 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     #Building inputs
     st.subheader("Building inputs")
 
-    #Inject prefill into session state when a new address lookup arrives
+    #Pre-fill the fields only when a different building (or data year) is looked up.
+    #This is the only place planner fields are set, so edits survive reruns.
     prefill_addr_key = prefill.get("address", "")
-    last_injected    = st.session_state.get("ep_last_injected_addr", "")
-    if prefill_addr_key and prefill_addr_key != last_injected:
+    _bkey         = prefill.get("building_key") or prefill_addr_key
+    last_injected = st.session_state.get("ep_last_injected_key", "")
+    if _bkey and _bkey != last_injected:
         if prefill.get("sqft"):
             st.session_state["ep_sqft"] = int(prefill["sqft"])
         if prefill.get("berdo_category"):
             st.session_state["ep_btype"] = prefill["berdo_category"]
         if prefill.get("ghg_intensity"):
             st.session_state["ep_ghg"] = float(prefill["ghg_intensity"])
-        st.session_state["ep_last_injected_addr"] = prefill_addr_key
+        st.session_state["ep_last_injected_key"] = _bkey
 
     col1, col2, col3 = st.columns(3)
     with col1:
         sqft = st.number_input(
             "Gross floor area (sq ft)",
-            min_value=1_000, max_value=5_000_000,
+            min_value=1, max_value=50_000_000,
             value=st.session_state.get("ep_sqft", 50_000),
             step=1_000, key="ep_sqft",
             help="Pre-filled from Address Lookup if available.",
@@ -4202,7 +4204,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     with col3:
         ghg_intensity = st.number_input(
             "Current GHG intensity (kg CO₂e/sqft/yr)",
-            min_value=0.0, max_value=100.0,
+            min_value=0.0, max_value=1000.0,
             value=float(st.session_state.get("ep_ghg", 0.0)),
             step=0.001, format="%.3f", key="ep_ghg",
             help="Pre-filled from Address Lookup if available. Found on your BERDO report.",
@@ -4273,12 +4275,15 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         "Diesel": 138.0, "Kerosene": 135.0,
     }
 
-    def calc_reduction_kg(fuel, unit, amount, year=2025):
+    def calc_kbtu(fuel, unit, amount):
         if unit == "gallons":
-            kbtu_factor = gallon_kbtu.get(fuel, 138.0)
-        else:
-            kbtu_factor = unit_to_kbtu.get(unit, 1.0)
-        kbtu = amount * kbtu_factor
+            return amount * gallon_kbtu.get(fuel, 138.0)
+        return amount * unit_to_kbtu.get(unit, 1.0)
+
+    def calc_reduction_kg(fuel, unit, amount, year=2025):
+        """First-year reduction, shown in the project table. The projection recalculates
+        electricity savings each year from the MWh saved (see reduction_in_year)."""
+        kbtu = calc_kbtu(fuel, unit, amount)
         if fuel == "Electricity":
             ef = effective_grid_ef(year) / 1000 / 3.412  #kg/kBtu
         else:
@@ -4295,7 +4300,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         header_cols[2].caption("Fuel type")
         header_cols[3].caption("Amount")
         header_cols[4].caption("Unit")
-        header_cols[5].caption("Emission reduction (kg CO₂e/yr)")
+        header_cols[5].caption("First-year reduction (kg CO₂e)")
         header_cols[6].caption("")
 
         for idx, proj in enumerate(projects):
@@ -4340,6 +4345,8 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                 )
             with row[5]:
                 proj["reduction_kg"] = calc_reduction_kg(proj["fuel"], proj["unit"], proj["amount"], proj["year"])
+                proj["elec_mwh"] = (calc_kbtu(proj["fuel"], proj["unit"], proj["amount"]) / 3412.0
+                                    if proj["fuel"] == "Electricity" else 0.0)
                 st.metric(
                     "Reduction", f"{proj['reduction_kg']:,.1f}",
                     label_visibility="collapsed"
@@ -4385,18 +4392,24 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         )
         
     limits = limits_for_category(berdo_category, prefill)
-    ghg_emissions_raw = prefill.get("ghg_emissions_kg")
-    if ghg_emissions_raw and ghg_emissions_raw > 0:
-        total_emissions_kg = float(ghg_emissions_raw)
-        baseline_intensity = total_emissions_kg / sqft
-        st.caption(
-            f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr** (from reported BERDO data). "
-            f"Derived intensity: {baseline_intensity:.3f} kg CO₂e/sqft/yr, "
-            f"used for every scenario below, including grid decarbonization."
-        )
-    else:
-        baseline_intensity = ghg_intensity
-        total_emissions_kg = baseline_intensity * sqft
+    #The editable fields are the baseline, so user edits always take effect.
+    baseline_intensity = ghg_intensity
+    total_emissions_kg = baseline_intensity * sqft
+    _rep_i = prefill.get("ghg_intensity")
+    _rep_sqft = prefill.get("sqft")
+    if _rep_i and prefill_addr_key:
+        if abs(ghg_intensity - _rep_i) < 5e-4 and _rep_sqft and int(sqft) == int(_rep_sqft):
+            st.caption(
+                f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr**, from the building's reported "
+                f"BERDO data ({baseline_intensity:.3f} kg CO₂e/sqft/yr). Edit the fields above to "
+                "model a different starting point."
+            )
+        else:
+            st.caption(
+                f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr**, from the values entered above. "
+                f"The building's reported intensity is {_rep_i:.3f} kg CO₂e/sqft/yr on "
+                f"{int(_rep_sqft or 0):,} sq ft."
+            )
 
     #Grid decarbonization, project intensities per period
     if apply_grid:
@@ -4424,9 +4437,34 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     PERIOD_YEARS = [list(range(s, s + 5)) for s in period_start_years[:-1]] + [[period_start_years[-1]]]
     _active_projects = [p for p in st.session_state.get("ep_projects", []) if p.get("reduction_kg", 0) > 0]
 
+    def grid_ef_for_year(y):
+        """
+        Effective grid factor (kg/MWh) the baseline uses in year y, so savings and baseline
+        stay consistent: with the grid scenario off, the baseline assumes the base-year grid;
+        with it on, each period uses its projected factor.
+        """
+        if apply_grid:
+            return effective_grid_ef(PERIOD_REPRESENTATIVE_YEARS[period_for_year(y)])
+        return effective_grid_ef(_ep_base)
+
+    _elec_capped_years = set()
+
     def reduction_in_year(y):
-        """Annual kg CO2e avoided in year y by projects implemented in or before y."""
-        return sum(p["reduction_kg"] for p in _active_projects if p["year"] <= y)
+        """
+        Annual kg CO2e avoided in year y by projects implemented in or before y.
+        Fossil fuel savings are fixed per unit of fuel. Electricity savings are MWh saved
+        times that year's grid factor, capped at the building's electricity emissions
+        (a project can't avoid more electricity emissions than the building produces).
+        """
+        live = [p for p in _active_projects if p["year"] <= y]
+        fossil = sum(p["reduction_kg"] for p in live if not p.get("elec_mwh"))
+        ef = grid_ef_for_year(y)
+        elec = sum(p["elec_mwh"] for p in live if p.get("elec_mwh")) * ef
+        elec_cap = total_emissions_kg * elec_share_val * ef / effective_grid_ef(_ep_base)
+        if elec > elec_cap:
+            _elec_capped_years.add(y)
+            elec = elec_cap
+        return fossil + elec
 
     #Average annual reduction within each period (a 2033 project counts for 2 of 5 years)
     period_reductions_kg = [
@@ -4526,6 +4564,19 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.caption("Project columns show the average year in each period: a project counts only "
                    "from its implementation year, so a 2033 project counts for 2 of the 5 years in 2030–34.")
     st.dataframe(pd.DataFrame(emissions_rows), use_container_width=True, hide_index=True)
+
+    if _elec_capped_years:
+        st.warning(
+            f"Electricity savings entered exceed this building's estimated electricity emissions "
+            f"(at {elec_share_val:.0%} of emissions) in {min(_elec_capped_years)}–{max(_elec_capped_years)}, "
+            "so they were capped. Check the amount entered or the electricity share."
+        )
+    if any(p.get("elec_mwh") for p in _active_projects):
+        st.caption(
+            "Electricity savings are recalculated each year from the MWh saved and the same grid "
+            "factor the baseline uses" + (", so they shrink as the grid gets cleaner." if apply_grid
+                                          else " (today's grid, since the grid scenario is off).")
+        )
 
     #Table 2: ACP fines
     st.markdown("#### Estimated ACP fine: annual, per period")
@@ -4707,7 +4758,10 @@ any retrofit.
 **How project reductions work**
 
 Each project's annual emission reduction (calculated from fuel type, unit, and quantity using
-the BERDO emissions factors) counts from its implementation year onward, never earlier. BERDO
+the BERDO emissions factors) counts from its implementation year onward, never earlier.
+Fossil fuel savings are fixed per unit of fuel. Electricity savings are recalculated each year
+from the MWh saved and the same grid factor used for the baseline, so with the grid scenario on
+they shrink as the grid gets cleaner, and they can never exceed the building's electricity emissions. BERDO
 compliance is annual, so each five-year period is modeled year by year: a project implemented
 in 2033 reduces emissions in 2033 and 2034, and the 2030–34 row shows the average of those five
 years. Cumulative ACP with projects is summed year by year rather than multiplying one year by five.
@@ -5242,18 +5296,18 @@ with tab_address:
                 "elec_share":       bldg_share,
                 "elec_share_year":  selected_year or None,
                 "data_year":        (selected_year - 1) if selected_year else None,
-                "ghg_intensity":    float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0,
+                #Full-precision intensity from reported totals, so the planner's editable
+                #field reproduces the reported baseline exactly
+                "ghg_intensity":    (float(ghg_emissions_raw) / float(sqft_val)
+                                     if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0
+                                     and pd.notna(sqft_val) and sqft_val > 0
+                                     else float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0),
                 "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
+                #Identifies this building and data year; the planner pre-fills its fields
+                #only when this changes, so user edits aren't overwritten on reruns
+                "building_key":     f"{top.get('BERDO ID') or ''}|{top.get('Building Address', address_input)}|{selected_year}",
             }
             st.session_state["planner_prefill"] = planner_prefill
-            #Inject directly into widget state for planner
-            if planner_prefill.get("sqft"):
-                st.session_state["ep_sqft"] = int(planner_prefill["sqft"])
-            if planner_prefill.get("berdo_category"):
-                st.session_state["ep_btype"] = planner_prefill["berdo_category"]
-            if planner_prefill.get("ghg_intensity", 0) > 0:
-                st.session_state["ep_ghg"] = planner_prefill["ghg_intensity"]
-            st.session_state["ep_last_injected_addr"] = planner_prefill["address"]
 
             st.info(
                 "Building data saved: open the **Retrofit & Incentives** or **Emissions Planner** tabs "
