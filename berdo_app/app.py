@@ -543,7 +543,67 @@ def standardize_address_series(series):
 
 #Compliance gap calculation
 
-def calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=None):
+#Coverage: does an emissions limit apply to this building in this period?
+#One source of truth used by every tab, the portfolio, and the PDF.
+PERIOD_START_YEARS = [2025, 2030, 2035, 2040, 2045, 2050]
+
+import re as _re
+_CITY_OWNER = _re.compile(r"^\s*CITY OF BOSTON\b|BOSTON HOUSING AUTH", _re.IGNORECASE)
+
+
+def is_city_building(owner_name) -> bool:
+    """
+    Ordinance definition: owned by the City, or the City pays all energy bills;
+    includes buildings owned or managed by the Boston Housing Authority. Public data
+    only shows the owner, so this detects City and BHA ownership by name.
+    """
+    return isinstance(owner_name, str) and bool(_CITY_OWNER.search(owner_name))
+
+
+def coverage_for(compliance_year=None, compliance_status=None, owner_name=None) -> dict:
+    """
+    Whether and when an emissions limit applies.
+      applies_from: first data year a limit applies (2025 or 2030), or None
+      known:        False for state/federal records or a missing compliance year
+      city:         City Building; ordinance section (r) daily fines don't apply
+    Per the ordinance, buildings of 20,000-35,000 sq ft or 15-34 units are not subject
+    to the standards until 2030 emissions; the City's "First Emissions Compliance Year
+    (Projected)" field records this.
+    """
+    gov = government_status(compliance_status)
+    city = is_city_building(owner_name) and not gov
+    cy = pd.to_numeric(compliance_year, errors="coerce")
+    if gov:
+        return {"applies_from": None, "known": False, "gov": gov, "city": False,
+                "reason": f"Not assessed ({gov.lower()})"}
+    if cy is None or pd.isna(cy):
+        return {"applies_from": None, "known": False, "gov": None, "city": city,
+                "reason": "Coverage year not reported"}
+    return {"applies_from": int(cy), "known": True, "gov": None, "city": city, "reason": None}
+
+
+def period_covered(cov, i) -> bool:
+    """True if a limit applies in compliance period i. No coverage info = assume it applies."""
+    if cov is None:
+        return True
+    return bool(cov["known"]) and PERIOD_START_YEARS[i] >= cov["applies_from"]
+
+
+def coverage_label(cov, i) -> str:
+    """Short label for a period where no limit applies."""
+    if cov and cov.get("gov"):
+        return "Not assessed"
+    if cov and not cov.get("known"):
+        return "Coverage unknown"
+    return "Not yet covered"
+
+
+def calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=None, coverage=None):
+    """
+    Gap to the limit in each period. When `coverage` says no limit applies in a
+    period, the gap is still reported for reference, but the period is marked
+    covered=False and carries no excess tons or ACP.
+    """
     if limits is None:
         limits = BERDO_STANDARDS.get(berdo_category)
     if limits is None:
@@ -554,17 +614,27 @@ def calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=None):
         limit = limits[i]
         gap = round(ghg_intensity - limit, 3)
         compliant = gap <= 0
-        excess_tons = 0.0 if compliant else round(gap * sqft / 1000, 1)
-        fine = 0.0 if compliant else round(excess_tons * ACP_RATE, 0)
+        covered = period_covered(coverage, i)
+        excess_tons = 0.0 if (compliant or not covered) else round(gap * sqft / 1000, 1)
+        fine = 0.0 if (compliant or not covered) else round(excess_tons * ACP_RATE, 0)
         results.append({
             "period": period,
             "limit": limit,
             "gap": gap,
             "compliant": compliant,
+            "covered": covered,
             "excess_metric_tons": excess_tons,
             "annual_fine_usd": fine,
         })
     return results
+
+
+def coverage_from_prefill(prefill) -> dict:
+    """Coverage carried from Address Lookup; manual entries are assumed covered from 2025."""
+    prefill = prefill or {}
+    if "coverage" in prefill and prefill["coverage"]:
+        return prefill["coverage"]
+    return {"applies_from": 2025, "known": True, "gov": None, "city": False, "reason": None}
 
 
 #Compliance pathways
@@ -850,7 +920,7 @@ def build_building_summary_pdf(s: dict) -> bytes:
         for p in periods:
             row = [P(esc(p["period"])), P(f"{p['limit']:.2f}"),
                    P(f"{p['gap']:+.2f}"),
-                   P(esc(p["status"]), st_cellb if p["status"] != "Meets limit" else st_cell),
+                   P(esc(p["status"]), st_cellb if p["status"] == "Over limit" else st_cell),
                    P(f"USD {p['acp']:,.0f}" if p["acp"] else "USD 0")]
             if has_grid:
                 row.append(P(esc(p.get("grid_status") or "")))
@@ -1091,13 +1161,15 @@ def render_compliance_section(
         )
         return
 
-    gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=limits)
+    cov = coverage_for(row.get("First Compliance Year"), row.get("Compliance Status"),
+                       row.get("Property Owner Name"))
+    gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=limits, coverage=cov)
     category_label = "Blended Emissions Standard" if limits is not None else berdo_category
 
     #Projected gaps (for grid decarb scenario metric cards)
     if projected_intensities is not None:
         proj_gaps = [
-            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits)
+            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits, coverage=cov)
             for pi in projected_intensities
         ]
         #proj_gaps[i] is a list of 6 period gaps for the projected intensity at period i
@@ -1105,6 +1177,20 @@ def render_compliance_section(
         proj_gap_for_period = [proj_gaps[i][i] for i in range(len(COMPLIANCE_PERIODS))]
     else:
         proj_gap_for_period = None
+
+    if cov["known"] and cov["applies_from"] > 2025:
+        st.caption(
+            f"This building isn't subject to an emissions limit until {cov['applies_from']} "
+            "emissions. Earlier periods are shown for reference, with no ACP."
+        )
+    elif not cov["known"] and not cov["gov"]:
+        st.caption(
+            "The first compliance year isn't reported, so the tool doesn't estimate ACP. "
+            "Gaps are shown for reference."
+        )
+    if cov["city"]:
+        st.caption("City building: the ordinance's daily fines don't apply; emissions standards and "
+                   "the ACP option still do.")
 
     st.caption(
         f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
@@ -1118,6 +1204,15 @@ def render_compliance_section(
     for i, col in enumerate(cols):
         g = gaps[i]
         with col:
+            if not g["covered"]:
+                st.metric(
+                    label=f"{period_labels[i]}  |  {coverage_label(cov, i)}",
+                    value="$0",
+                    delta=(f"for reference: {'+' if g['gap'] > 0 else '−'}{abs(g['gap']):.2f} kg "
+                           f"{'over' if g['gap'] > 0 else 'under'}"),
+                    delta_color="off",
+                )
+                continue
             status = "Compliant" if g["compliant"] else "Non-compliant"
             fine_str = (
                 "$0"
@@ -1211,7 +1306,7 @@ def render_compliance_section(
 
     if projected_intensities is not None:
         proj_fines = [
-            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits)[i]["annual_fine_usd"]
+            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits, coverage=cov)[i]["annual_fine_usd"]
             for i, pi in enumerate(projected_intensities)
         ]
         fig.add_trace(go.Scatter(
@@ -1252,7 +1347,7 @@ def render_compliance_section(
     st.plotly_chart(fig, use_container_width=True)
 
     #Fine exposure summary
-    non_compliant_periods = [g for g in gaps if not g["compliant"]]
+    non_compliant_periods = [g for g in gaps if g["covered"] and not g["compliant"]]
     if non_compliant_periods:
         finite     = [g for g in non_compliant_periods if g["period"] != "2050+"]
         indefinite = next((g for g in non_compliant_periods if g["period"] == "2050+"), None)
@@ -1273,7 +1368,7 @@ def render_compliance_section(
             proj_non_compliant = [
                 proj_gap_for_period[i]
                 for i in range(len(COMPLIANCE_PERIODS))
-                if not proj_gap_for_period[i]["compliant"]
+                if proj_gap_for_period[i]["covered"] and not proj_gap_for_period[i]["compliant"]
             ]
             proj_finite = [g for g in proj_non_compliant if g["period"] != "2050+"]
             total_proj_fine = sum(g["annual_fine_usd"] * 5 for g in proj_finite)
@@ -1666,22 +1761,31 @@ def evaluate_building(row):
         data_status = "Reported"
 
     #Flag 2: BERDO compliance status
-    subject_now = (
-        pd.notna(row.get("compliance_year"))
-        and int(row["compliance_year"]) <= 2025
-    )
+    cov = coverage_for(row.get("compliance_year"), row.get("compliance_status"),
+                       row.get("Property Owner Name"))
+    subject_now = period_covered(cov, 0)
+    if cov["city"]:
+        notes.append(
+            "City building: the ordinance's daily fines (section r) don't apply to City "
+            "buildings; emissions standards still do"
+        )
 
     acp_2025 = 0.0
     if not scoreable:
         berdo_status = "Unknown (data incomplete)"
-    elif pd.isna(row.get("compliance_year")):
+    elif not cov["known"]:
         berdo_status = "Coverage year not reported"
         notes.append("First compliance year missing, so it's unclear whether an emissions limit applies")
     elif not subject_now:
         berdo_status = "Not yet covered"
-        notes.append("Not subject to a BERDO emissions limit until 2030")
+        notes.append(f"Not subject to a BERDO emissions limit until {cov['applies_from']} emissions")
+        _g30 = calculate_compliance_gap(ghg, sqft, None, limits=limits)[1]
+        notes.append(
+            f"For reference: at current emissions, {'over' if not _g30['compliant'] else 'under'} "
+            f"the 2030–34 limit by {abs(_g30['gap']):.2f} kg/sf/yr"
+        )
     else:
-        gaps = calculate_compliance_gap(ghg, sqft, None, limits=limits)
+        gaps = calculate_compliance_gap(ghg, sqft, None, limits=limits, coverage=cov)
         if not gaps[0]["compliant"]:
             berdo_status = "Over 2025–29 limit"
             acp_2025 = gaps[0]["annual_fine_usd"]
@@ -1887,6 +1991,7 @@ def lookup_building_priority(df, address):
             "Property Owner Name":         row.get("Property Owner Name"),
             "BERDO ID":                    row.get("berdo_id"),
             "Tax Parcel ID":               row.get("tax_parcel_id"),
+            "First Compliance Year":       row.get("compliance_year"),
             "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
             "City Note":                   row.get("city_notes"),
             "Property Type":               row.get("property_type"),
@@ -1945,6 +2050,7 @@ def lookup_owner_portfolio(df, owner_name):
             "Property Owner Name":         row.get("Property Owner Name"),
             "BERDO ID":                    row.get("berdo_id"),
             "Tax Parcel ID":               row.get("tax_parcel_id"),
+            "First Compliance Year":       row.get("compliance_year"),
             "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
             "City Note":                   row.get("city_notes"),
             "Property Type":               row.get("property_type"),
@@ -2019,6 +2125,16 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
                 "Property Type":     row.get("Property Type"),
                 "Compliance Status": row.get("Compliance Status"),
                 "Exclusion Reason":  f"{gov} record: BERDO treatment unconfirmed, so left out of the portfolio",
+            })
+            continue
+        _pcov = coverage_for(row.get("First Compliance Year"), status, row.get("Property Owner Name"))
+        if not period_covered(_pcov, 0):
+            excluded_rows.append({
+                "Building Address":  row.get("Building Address"),
+                "Property Type":     row.get("Property Type"),
+                "Compliance Status": row.get("Compliance Status"),
+                "Exclusion Reason":  (f"Not yet covered: no emissions limit until {_pcov['applies_from']} emissions"
+                                      if _pcov["known"] else "First compliance year not reported"),
             })
             continue
         if missing_ghg or missing_sqft:
@@ -3748,10 +3864,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         prefill_ghg_val = prefill.get("ghg_intensity")
 
         period_fines = []
+        _rcov = coverage_from_prefill(prefill)
         if prefill_ghg_val:
             for i, period in enumerate(COMPLIANCE_PERIODS[:5]):
                 limit = limits[i]
-                gap = max(prefill_ghg_val - limit, 0)
+                gap = max(prefill_ghg_val - limit, 0) if period_covered(_rcov, i) else 0
                 excess_tons = gap * sqft / 1000
                 period_fines.append({
                     "period": period,
@@ -4316,6 +4433,16 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     emissions_rows = []
     fines_rows     = []
 
+    _ep_cov = coverage_from_prefill(prefill)
+    _covered = [period_covered(_ep_cov, i) for i in range(len(COMPLIANCE_PERIODS))]
+    if not all(_covered):
+        st.caption(
+            (f"This building isn't subject to an emissions limit until {_ep_cov['applies_from']} "
+             "emissions, so earlier periods show no ACP."
+             if _ep_cov["known"] else
+             f"{_ep_cov['reason']}: ACP isn't estimated for this building.")
+        )
+
     for i, period in enumerate(COMPLIANCE_PERIODS):
         limit_psf  = limits[i]
         limit_kg   = limit_psf * sqft
@@ -4330,10 +4457,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         gap_proj     = proj_kg      - limit_kg
         gap_combined = combined_kg  - limit_kg
 
-        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0)
-        fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0)
-        fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0)
-        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0)
+        _c = 1 if _covered[i] else 0
+        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0) * _c
+        fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0) * _c
+        fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0) * _c
+        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0) * _c
 
         def _ou(gap):
             if gap < 0:   return f"{abs(gap)/1000:,.0f} MT Under"
@@ -4396,7 +4524,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         return sum(
             max(emissions_by_period[i] - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
             for i in range(len(COMPLIANCE_PERIODS))
-            if COMPLIANCE_PERIODS[i] != "2050+"
+            if COMPLIANCE_PERIODS[i] != "2050+" and _covered[i]
         )
 
     baseline_fines_cumul = _cumulative_fine([total_emissions_kg] * len(COMPLIANCE_PERIODS))
@@ -4408,7 +4536,8 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
     s_cols = st.columns(max(num_cols, 2))
 
-    current_annual_fine = max(total_emissions_kg - limits[0] * sqft, 0) / 1000 * ACP_RATE
+    current_annual_fine = (max(total_emissions_kg - limits[0] * sqft, 0) / 1000 * ACP_RATE
+                           if _covered[0] else 0.0)
     s_cols[0].metric(
         "Annual ACP: current period (2025–29)",
         f"${current_annual_fine:,.0f}",
@@ -4891,6 +5020,8 @@ with tab_address:
                     )
 
             _gov = government_status(top.get("Compliance Status"))
+            _cov = coverage_for(top.get("First Compliance Year"), top.get("Compliance Status"),
+                                top.get("Property Owner Name"))
             if _gov:
                 st.info(
                     f"**{_gov} building.** The City's data marks this as a {_gov.lower()} building. "
@@ -4942,14 +5073,16 @@ with tab_address:
             _periods = []
             if _pdf_limits and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx) and _sqft_ctx > 0:
                 for _i, _g in enumerate(calculate_compliance_gap(
-                        float(_ghg_ctx), float(_sqft_ctx), None, limits=_pdf_limits)):
+                        float(_ghg_ctx), float(_sqft_ctx), None, limits=_pdf_limits, coverage=_cov)):
                     _row = {"period": _g["period"], "limit": _g["limit"], "gap": _g["gap"],
-                            "status": "Meets limit" if _g["compliant"] else "Over limit",
+                            "status": (coverage_label(_cov, _i) if not _g["covered"]
+                                       else "Meets limit" if _g["compliant"] else "Over limit"),
                             "acp": _g["annual_fine_usd"]}
                     if projected_intensities is not None:
                         _pg = calculate_compliance_gap(projected_intensities[_i], float(_sqft_ctx),
-                                                       None, limits=_pdf_limits)[_i]
-                        _row["grid_status"] = "Meets limit" if _pg["compliant"] else "Over limit"
+                                                       None, limits=_pdf_limits, coverage=_cov)[_i]
+                        _row["grid_status"] = (coverage_label(_cov, _i) if not _pg["covered"]
+                                               else "Meets limit" if _pg["compliant"] else "Over limit")
                     _periods.append(_row)
 
             def _num(v, fmt):
@@ -4971,6 +5104,8 @@ with tab_address:
                 ("Screening result", top.get("BERDO Status"), "Calculated"),
                 ("Est. annual ACP (2025–29)",
                  f"Not estimated ({_gov.lower()} record)" if _gov else
+                 "Not applicable (not yet covered)" if (_cov["known"] and not period_covered(_cov, 0)) else
+                 "Not estimated (coverage year not reported)" if not _cov["known"] else
                  (f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0"),
                  "Estimated"),
             ]
@@ -4980,6 +5115,11 @@ with tab_address:
                 if use_mix_limits else
                 f"Limits shown are the default for the building's largest use ({_bl_ctx['label']})."
             )
+            if _cov["known"] and not period_covered(_cov, 0):
+                _limit_basis = (f"No emissions limit applies until {_cov['applies_from']} emissions; "
+                                "earlier periods are shown for reference only. " + _limit_basis)
+            if _cov["city"]:
+                _limit_basis += " City building: the ordinance's daily fines don't apply."
             if _gov:
                 _limit_basis = (f"Reference only: the City's data marks this as a {_gov.lower()} "
                                 "building, and BERDO's treatment of it is unconfirmed. " + _limit_basis)
@@ -5039,6 +5179,7 @@ with tab_address:
                 "berdo_category": berdo_cat,
                 "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
                 "limits":        use_mix_limits,
+                "coverage":      _cov,
                 "elec_share":    bldg_share,
                 "elec_share_year": selected_year or None,
             }
@@ -5051,7 +5192,7 @@ with tab_address:
             ):
                 limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
                 gap = float(ghg_val) - limit_2025
-                if gap > 0 and not _gov:
+                if gap > 0 and period_covered(_cov, 0):
                     excess_tons = gap * float(sqft_val) / 1000
                     opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
                     opt_prefill["ghg_intensity"] = float(ghg_val)
@@ -5065,6 +5206,7 @@ with tab_address:
                 "sqft":             opt_prefill.get("sqft", 50_000),
                 "berdo_category":   berdo_cat,
                 "limits":           use_mix_limits,
+                "coverage":         _cov,
                 "elec_share":       bldg_share,
                 "elec_share_year":  selected_year or None,
                 "data_year":        (selected_year - 1) if selected_year else None,
