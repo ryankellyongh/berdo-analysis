@@ -4418,13 +4418,20 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                 return i
         return 0
 
-    #Cumulative project reductions by period
-    period_reductions_kg = [0.0] * len(COMPLIANCE_PERIODS)
-    for proj in st.session_state.get("ep_projects", []):
-        if proj.get("reduction_kg", 0) > 0:
-            start_period = period_for_year(proj["year"])
-            for p in range(start_period, len(COMPLIANCE_PERIODS)):
-                period_reductions_kg[p] += proj["reduction_kg"]
+    #Project reductions count from the implementation year onward, never earlier.
+    #BERDO compliance is annual, so each five-year period is modeled year by year;
+    #"2050+" is modeled as the single year 2050.
+    PERIOD_YEARS = [list(range(s, s + 5)) for s in period_start_years[:-1]] + [[period_start_years[-1]]]
+    _active_projects = [p for p in st.session_state.get("ep_projects", []) if p.get("reduction_kg", 0) > 0]
+
+    def reduction_in_year(y):
+        """Annual kg CO2e avoided in year y by projects implemented in or before y."""
+        return sum(p["reduction_kg"] for p in _active_projects if p["year"] <= y)
+
+    #Average annual reduction within each period (a 2033 project counts for 2 of 5 years)
+    period_reductions_kg = [
+        sum(reduction_in_year(y) for y in yrs) / len(yrs) for yrs in PERIOD_YEARS
+    ]
 
     has_projects = any(r > 0 for r in period_reductions_kg)
     has_grid     = apply_grid
@@ -4435,6 +4442,16 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     _ep_cov = coverage_from_prefill(prefill)
     _covered = [period_covered(_ep_cov, i) for i in range(len(COMPLIANCE_PERIODS))]
+
+    def _yearly_acp(base_kg, i):
+        """ACP in each year of period i, given the period's baseline and projects in place that year."""
+        limit_kg = limits[i] * sqft
+        return [max(base_kg - reduction_in_year(y) - limit_kg, 0) / 1000 * ACP_RATE
+                for y in PERIOD_YEARS[i]]
+
+    def _avg_yearly_acp(base_kg, i):
+        vals = _yearly_acp(base_kg, i)
+        return sum(vals) / len(vals)
     if not all(_covered):
         st.caption(
             (f"This building isn't subject to an emissions limit until {_ep_cov['applies_from']} "
@@ -4460,8 +4477,8 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         _c = 1 if _covered[i] else 0
         fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0) * _c
         fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0) * _c
-        fine_proj     = round(max(gap_proj,     0) / 1000 * ACP_RATE, 0) * _c
-        fine_combined = round(max(gap_combined, 0) / 1000 * ACP_RATE, 0) * _c
+        fine_proj     = round(_avg_yearly_acp(baseline_kg, i), 0) * _c
+        fine_combined = round(_avg_yearly_acp(grid_kg, i), 0) * _c
 
         def _ou(gap):
             if gap < 0:   return f"{abs(gap)/1000:,.0f} MT Under"
@@ -4505,6 +4522,9 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     #Table 1: Emissions
     st.markdown("#### Projected emissions vs. BERDO limit (kg CO₂e/yr)")
+    if has_projects:
+        st.caption("Project columns show the average year in each period: a project counts only "
+                   "from its implementation year, so a 2033 project counts for 2 of the 5 years in 2030–34.")
     st.dataframe(pd.DataFrame(emissions_rows), use_container_width=True, hide_index=True)
 
     #Table 2: ACP fines
@@ -4528,9 +4548,18 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         )
 
     baseline_fines_cumul = _cumulative_fine([total_emissions_kg] * len(COMPLIANCE_PERIODS))
-    proj_fines_cumul     = _cumulative_fine([max(total_emissions_kg - period_reductions_kg[i], 0) for i in range(len(COMPLIANCE_PERIODS))])
+    def _cumulative_fine_yearly(base_by_period):
+        #Sum ACP for every year 2025-2049 in covered periods, with projects counted
+        #only from their implementation year.
+        return sum(
+            sum(_yearly_acp(base_by_period[i], i))
+            for i in range(len(COMPLIANCE_PERIODS))
+            if COMPLIANCE_PERIODS[i] != "2050+" and _covered[i]
+        )
+
+    proj_fines_cumul     = _cumulative_fine_yearly([total_emissions_kg] * len(COMPLIANCE_PERIODS))
     grid_fines_cumul     = _cumulative_fine(grid_emissions_kg)
-    combined_fines_cumul = _cumulative_fine([max(grid_emissions_kg[i] - period_reductions_kg[i], 0) for i in range(len(COMPLIANCE_PERIODS))])
+    combined_fines_cumul = _cumulative_fine_yearly(grid_emissions_kg)
 
     st.markdown("---")
     num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
@@ -4574,12 +4603,12 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         )
         
         if has_projects:
-            total_reduction_mt = period_reductions_kg[0] / 1000
+            total_reduction_mt = reduction_in_year(2050) / 1000   #all projects in place
             gap_mt = max(total_emissions_kg - limits[0] * sqft, 0) / 1000
             if gap_mt > 0:
                 pct = total_reduction_mt / gap_mt * 100
                 st.caption(
-                    f"Your projects reduce ~{total_reduction_mt:,.0f} MT/yr, about {pct:.1f}% of the "
+                    f"Once in place, your projects reduce ~{total_reduction_mt:,.0f} MT/yr, about {pct:.1f}% of the "
                     f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
                     + ("Nowhere near enough to affect compliance." if pct < 5 else
                        "Still short of compliance." if pct < 100 else
@@ -4587,9 +4616,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                 )
 
     compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
-    compliant_periods_proj      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(total_emissions_kg - period_reductions_kg[i], 0) <= limits[i] * sqft) if has_projects else None
+    def _all_years_ok(base_kg, i):
+        return all(base_kg - reduction_in_year(y) <= limits[i] * sqft for y in PERIOD_YEARS[i])
+    compliant_periods_proj      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if _all_years_ok(total_emissions_kg, i)) if has_projects else None
     compliant_periods_grid      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if grid_emissions_kg[i] <= limits[i] * sqft) if has_grid else None
-    compliant_periods_combined  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if max(grid_emissions_kg[i] - period_reductions_kg[i], 0) <= limits[i] * sqft) if (has_projects and has_grid) else None
+    compliant_periods_combined  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if _all_years_ok(grid_emissions_kg[i], i)) if (has_projects and has_grid) else None
 
     _all_compliant = [v for v in [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined] if v is not None]
     st.caption(
@@ -4675,10 +4706,11 @@ any retrofit.
 
 **How project reductions work**
 
-Each project's annual emission reduction (calculated from fuel type, unit, and quantity using 
-EPA Portfolio Manager emissions factors) is applied cumulatively from the BERDO compliance 
-period containing its implementation year onwards. A project implemented in 2033 applies to 
-the 2030–34 period and all subsequent periods.
+Each project's annual emission reduction (calculated from fuel type, unit, and quantity using
+the BERDO emissions factors) counts from its implementation year onward, never earlier. BERDO
+compliance is annual, so each five-year period is modeled year by year: a project implemented
+in 2033 reduces emissions in 2033 and 2034, and the 2030–34 row shows the average of those five
+years. Cumulative ACP with projects is summed year by year rather than multiplying one year by five.
 
 **ACP fines**
 
