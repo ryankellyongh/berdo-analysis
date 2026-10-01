@@ -18,7 +18,7 @@ A Streamlit app with four tabs.
 
 Enter a Boston address and get:
 
-- **Two independent status flags** — Data Status and BERDO Status (see below)
+- **Two independent status flags** : Data Status and BERDO Status (see below)
 - **A compliance gap estimate** across all six BERDO periods (2025–29 through 2050+), showing how far the building sits from its sector limit and what the Alternative Compliance Payment would cost annually and cumulatively
 - **A year-over-year trend view** tracking GHG intensity and Site EUI across available reporting years, with delta metrics and a dual-axis chart
 - **A grid decarbonization scenario** projecting how a cleaner ISO New England grid moves the building's compliance position through 2050
@@ -30,7 +30,7 @@ Enter a property owner name to group their buildings under BERDO's Building Port
 
 ### Retrofit & Incentives
 
-Condition-adjusted retrofit cost ranges across eight scopes, with a Boston labor multiplier applied to national RSMeans baselines. Matches the project against eight federal, state, and utility incentive programs, ranks them by estimated value, and sequences them in the order they must be claimed — utility rebates reduce your 179D basis, so order matters.
+Condition-adjusted retrofit cost ranges across eight scopes, with a Boston labor multiplier applied to national RSMeans baselines. Matches the project against eight federal, state, and utility incentive programs, ranks them by estimated value, and sequences them in the order they must be claimed, utility rebates reduce your 179D basis, so order matters.
 
 Then compares **three paths** to closing a gap:
 
@@ -38,15 +38,15 @@ Then compares **three paths** to closing a gap:
 2. Retire MA Class I RECs to offset electricity emissions
 3. Pay the Alternative Compliance Payment
 
-The REC comparison reports a break-even price: RECs beat the ACP below **$58.27/REC** at the 2025 grid factor, falling to **$35.10 by 2050** as the grid cleans up and each REC avoids less CO₂e. RECs offset electricity emissions only — any fossil-fuel residual still pays ACP.
+The REC comparison reports a break-even price: RECs beat the ACP below **$58.27/REC** at the 2025 grid factor, falling to **$35.10 by 2050** as the grid cleans up and each REC avoids less CO₂e. RECs offset electricity emissions only. Any fossil-fuel residual still pays ACP.
 
 ### Emissions Planner
 
-Model planned emission reduction projects — fuel type, quantity, and implementation year — and see their effect on compliance and cumulative ACP exposure across every period through 2050. Compares four scenarios: baseline, with projects, grid decarbonization alone, and combined.
+Model planned emission reduction projects : fuel type, quantity, and implementation year and see their effect on compliance and cumulative ACP exposure across every period through 2050. Compares four scenarios: baseline, with projects, grid decarbonization alone, and combined.
 
 ### Who it's for
 
-City sustainability staff, outreach coordinators, community organizations, and retrofit planners triaging a large portfolio with limited resources — and building owners who want to understand their exposure, estimate fine risk, and evaluate whether grouping buildings into a portfolio reduces their obligations.
+City sustainability staff, outreach coordinators, community organizations, and retrofit planners triaging a large portfolio with limited resources, and building owners who want to understand their exposure, estimate fine risk, and evaluate whether grouping buildings into a portfolio reduces their obligations.
 
 This is a screening tool, not an official City of Boston compliance determination.
 
@@ -60,9 +60,9 @@ No publicly available City tool currently provides multi-year trend analysis, bl
 
 ## How buildings are evaluated
 
-Each building receives **two independent flags** rather than one blended score, because a building that didn't report needs a different intervention than one that reported and is over its limit — outreach versus retrofit capital.
+Each building receives **two independent flags** rather than one blended score, because a building that didn't report needs a different intervention than one that reported and is over its limit, outreach versus retrofit capital.
 
-**Data Status** — whether data was submitted, and whether property type, floor area, and GHG intensity are present and mappable to a BERDO category.
+**Data Status** : whether data was submitted, and whether property type, floor area, and GHG intensity are present and mappable to a BERDO category.
 
 | Value | Meaning |
 |---|---|
