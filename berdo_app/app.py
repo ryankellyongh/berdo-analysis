@@ -795,6 +795,8 @@ def reporting_status_label(raw) -> str:
     labels = {
         "in compliance":     "Submitted and accepted (City status: in compliance)",
         "not submitted":     "Not submitted (City status: not submitted)",
+        "not reported":      "Not submitted (City status: not reported)",
+        "extension":         "Extension granted (City status: extension)",
         "pending revisions": "Submitted, awaiting City acceptance (City status: pending revisions)",
         "state":             "City status: state (verify BERDO treatment)",
         "federal":           "City status: federal (verify BERDO treatment)",
@@ -993,6 +995,11 @@ def build_building_summary_pdf(s: dict) -> bytes:
 
 #Mixed-use editor
 
+def _bl_default_limits(top):
+    """Default (largest-use) limits for a lookup row, or None."""
+    return building_limits(top.get("Property Type"), top.get("All Property Types"))["limits"]
+
+
 def render_use_mix_editor(top):
     """
     Shows floor area by use and lets the owner correct it. Pre-fills from the
@@ -1129,6 +1136,7 @@ def render_compliance_section(
     projected_intensities=None,
     base_year=2025,
     limits=None,
+    limits_label=None,
 ):
     """
     projected_intensities: list of 6 floats (one per compliance period) from
@@ -1164,7 +1172,7 @@ def render_compliance_section(
     cov = coverage_for(row.get("First Compliance Year"), row.get("Compliance Status"),
                        row.get("Property Owner Name"))
     gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=limits, coverage=cov)
-    category_label = "Blended Emissions Standard" if limits is not None else berdo_category
+    category_label = (limits_label or "Blended Emissions Standard") if limits is not None else berdo_category
 
     #Projected gaps (for grid decarb scenario metric cards)
     if projected_intensities is not None:
@@ -1467,6 +1475,17 @@ COLUMN_RENAME_MAP = {
     "Estimated Total GHG Emissions e(kgCO2e)": "ghg_emissions",
     "Reporting Compliance Status": "compliance_status",
     "First Emissions Compliance Year (Projected)": "compliance_year",
+    #2026 disclosure (2025 data) names
+    "All Property Types and GFAs (sq ft)": "all_property_types",
+    "Gross Floor Area (sq ft)": "gross_floor_area",
+    "Total GHG Emissions (kgCO2e)": "ghg_emissions",
+    "Parcel Owner Name": "Property Owner Name",
+    "First Emissions Compliance Year": "compliance_year",
+    "Total Site Energy Usage (kBtu)": "total_site_energy_kbtu",
+    "Emissions Compliance Status": "emissions_status",
+    "Applicable Emissions Compliance Standard (kgCO2e/sq ft)": "official_standard",
+    "Flexibility Measures": "flexibility_measures",
+    "Corresponding Portfolio ID": "portfolio_id",
     
     #Fuel usage columns (all in kBtu except Electricity which is kWh)
     
@@ -1633,7 +1652,51 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
     df["compliance_status"] = (
         df["compliance_status"].astype(str).str.lower().str.strip()
     )
+
+    #Site EUI: in the 2026 disclosure the City's Site EUI column repeats the GHG
+    #intensity for most buildings, so calculate it from total site energy instead.
+    if "total_site_energy_kbtu" in df.columns:
+        energy = pd.to_numeric(df["total_site_energy_kbtu"], errors="coerce")
+        ok = energy.notna() & df["gross_floor_area"].notna() & (df["gross_floor_area"] > 0)
+        df.loc[ok, "site_eui"] = energy[ok] / df.loc[ok, "gross_floor_area"]
+
+    #The City's own emissions compliance results (2026 disclosure onward)
+    if "emissions_status" in df.columns:
+        df["emissions_status"] = df["emissions_status"].where(df["emissions_status"].notna(), None)
+        df["emissions_status"] = df["emissions_status"].map(
+            lambda v: str(v).strip() if isinstance(v, str) and v.strip() else None)
+        #"State" moved from reporting status to emissions status in 2026; keep one rule
+        is_state = df["emissions_status"].fillna("").str.lower().eq("state")
+        df.loc[is_state, "compliance_status"] = "state"
+    if "official_standard" in df.columns:
+        df["official_standard"] = pd.to_numeric(df["official_standard"], errors="coerce")
     return df
+
+
+def detect_data_year(df: pd.DataFrame):
+    """
+    Year of energy use a dataset covers, read from the data itself.
+    The City calculates electricity emissions as kWh x (1 - RPS Class I) x that year's
+    projected grid factor, so the most common emissions-per-MWh value identifies the
+    year (2025 file: 194.56 = 2024; 2026 file: 181.77 = 2025). Buildings that bought
+    renewables have other values, but the year's factor is still the most common.
+    Returns None for files without electricity emissions (2022 and 2023 disclosures).
+    """
+    if "elec_emissions_kg" not in df.columns or "fuel_electricity_kwh" not in df.columns:
+        return None
+    kwh = pd.to_numeric(df["fuel_electricity_kwh"], errors="coerce")
+    kg = pd.to_numeric(df["elec_emissions_kg"], errors="coerce")
+    factor = (kg / (kwh / 1000))[(kwh > 100_000) & (kg > 0)].round(2)
+    if len(factor) < 50:
+        return None
+    counts = factor.value_counts()
+    if counts.iloc[0] < 0.15 * len(factor):
+        return None
+    most_common = counts.index[0]
+    for yr in sorted(PROJECTED_GRID_EF):
+        if abs(effective_grid_ef(yr) - most_common) < 0.05:
+            return yr
+    return None
 
 
 @st.cache_data(show_spinner=False)
@@ -1661,9 +1724,21 @@ def load_all_years() -> dict[int, pd.DataFrame]:
         except (IndexError, ValueError):
             continue
         #Datasets are labeled by reporting year and cover the prior calendar year's energy
-        #use (the City's estimated electricity emissions in the "2025" file use 2024 grid
-        #factors exactly). data_year is the year of energy use.
-        year_map[year] = _load_single_csv(fp).assign(data_year=year - 1)
+        #use. The energy-use year is read from the data when possible (see
+        #detect_data_year), so a misnamed file is still labeled correctly; otherwise it
+        #comes from the file name (reporting year - 1).
+        df_year = _load_single_csv(fp)
+        detected = detect_data_year(df_year)
+        reporting_year = detected + 1 if detected else year
+        df_year = df_year.assign(data_year=reporting_year - 1, source_file=fp.name)
+        if reporting_year in year_map:
+            #Two files cover the same year: keep the one whose name matches it
+            kept = year_map[reporting_year]
+            if kept["source_file"].iat[0] == f"berdo_{reporting_year}.csv":
+                year_map[reporting_year] = kept.assign(duplicate_file=fp.name)
+                continue
+            df_year = df_year.assign(duplicate_file=kept["source_file"].iat[0])
+        year_map[reporting_year] = df_year
 
     if not year_map:
         #Fallback: single legacy file
@@ -1695,6 +1770,58 @@ GOVERNMENT_STATUSES = {"state": "State", "federal": "Federal"}
 def government_status(raw):
     """Return 'State' or 'Federal' for those City statuses, otherwise None."""
     return GOVERNMENT_STATUSES.get(str(raw or "").strip().lower())
+
+
+def official_emissions_result(row, official, ghg, sqft, limits, scoreable):
+    """
+    Translate the City's "Emissions Compliance Status" into the tool's status label,
+    an ACP estimate (only for "Action Needed"), and notes. Returns (label, acp, notes).
+    """
+    key = official.strip().lower()
+    std = pd.to_numeric(row.get("official_standard"), errors="coerce")
+    notes = [f"City emissions compliance status: {official}"]
+    acp = 0.0
+    if key == "in compliance":
+        label = "Meets 2025 limit (City)"
+    elif key == "action needed":
+        label = "Action needed (City)"
+        limit = float(std) if pd.notna(std) else (limits[0] if limits else None)
+        if scoreable and limit is not None and ghg > limit:
+            excess_t = round((ghg - limit) * sqft / 1000, 1)
+            acp = round(excess_t * ACP_RATE, 0)
+            notes.append(f"Over the applicable standard of {limit:.2f} kg/sf/yr by {ghg - limit:.2f} "
+                         f"({excess_t:,.0f} excess MT); estimated ACP shown at USD {ACP_RATE}/MT")
+        else:
+            notes.append("The City's applicable standard or emissions data isn't published, so ACP isn't estimated")
+    elif key == "pending review from berdo team":
+        label = "Under City review"
+        notes.append("Per the City, buildings under review are not considered out of compliance at this time")
+    elif key == "pending reporting":
+        label = "Pending reporting (City)"
+    elif key == "emissions compliance at portfolio level":
+        label = "Assessed in a Building Portfolio"
+        pid = row.get("portfolio_id")
+        notes.append(f"Compliance is assessed for the whole portfolio{f' ({pid})' if isinstance(pid, str) else ''}, "
+                     "not this building alone")
+    elif key == "emissions compliance at campus level":
+        label = "Assessed at campus level"
+    elif key == "campus - share water only":
+        label = "Campus member (water only)"
+    elif key == "n/a until 2030":
+        label = "Not yet covered"
+        notes.append("Not subject to a BERDO emissions limit until 2030 emissions")
+    elif key == "vacant":
+        label = "Vacant (exempt)"
+    elif key == "state":
+        label = "Not assessed (state)"
+    else:
+        label = f"{official} (City)"
+    flex = row.get("flexibility_measures")
+    if isinstance(flex, str) and flex.strip():
+        notes.append(f"Flexibility measures on file: {flex}")
+    if pd.notna(std) and key not in ("emissions compliance at portfolio level",):
+        notes.append(f"City's applicable standard: {float(std):.2f} kg/sf/yr")
+    return label, acp, notes
 
 
 def evaluate_building(row):
@@ -1746,9 +1873,12 @@ def evaluate_building(row):
         return data_status, f"Not assessed ({gov.lower()})", 0.0, notes
 
     #Flag 1: data status
-    if row["compliance_status"] == "not submitted":
+    if row["compliance_status"] in ("not submitted", "not reported"):
         data_status = "Not submitted"
         notes.append("Did not report by the deadline; daily reporting fines may apply")
+    elif row["compliance_status"] == "extension":
+        data_status = "Extension granted"
+        notes.append("Reporting extension granted; energy and emissions data not yet published")
     elif not scoreable:
         data_status = "Incomplete data"
         if limits is None:
@@ -1760,7 +1890,16 @@ def evaluate_building(row):
     else:
         data_status = "Reported"
 
-    #Flag 2: BERDO compliance status
+    #Flag 2: the City's own emissions compliance result, when published (2026 onward)
+    official = row.get("emissions_status")
+    if isinstance(official, str) and official:
+        label, acp_off, extra = official_emissions_result(row, official, ghg, sqft, limits, scoreable)
+        notes.extend(extra)
+        if pd.notna(sqft) and sqft >= 100_000:
+            notes.append("Over 100,000 sq ft: longer retrofit lead time")
+        return data_status, label, acp_off, notes
+
+    #Flag 2: BERDO compliance status (tool's screening estimate)
     cov = coverage_for(row.get("compliance_year"), row.get("compliance_status"),
                        row.get("Property Owner Name"))
     subject_now = period_covered(cov, 0)
@@ -1992,6 +2131,10 @@ def lookup_building_priority(df, address):
             "BERDO ID":                    row.get("berdo_id"),
             "Tax Parcel ID":               row.get("tax_parcel_id"),
             "First Compliance Year":       row.get("compliance_year"),
+            "City Emissions Status":       row.get("emissions_status"),
+            "Official Standard":           row.get("official_standard"),
+            "Flexibility Measures":        row.get("flexibility_measures"),
+            "Portfolio ID":                row.get("portfolio_id"),
             "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
             "City Note":                   row.get("city_notes"),
             "Property Type":               row.get("property_type"),
@@ -2051,6 +2194,10 @@ def lookup_owner_portfolio(df, owner_name):
             "BERDO ID":                    row.get("berdo_id"),
             "Tax Parcel ID":               row.get("tax_parcel_id"),
             "First Compliance Year":       row.get("compliance_year"),
+            "City Emissions Status":       row.get("emissions_status"),
+            "Official Standard":           row.get("official_standard"),
+            "Flexibility Measures":        row.get("flexibility_measures"),
+            "Portfolio ID":                row.get("portfolio_id"),
             "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
             "City Note":                   row.get("city_notes"),
             "Property Type":               row.get("property_type"),
@@ -2139,14 +2286,14 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
             continue
         if missing_ghg or missing_sqft:
             if missing_ghg and missing_sqft:
-                if status == "not submitted":
+                if status in ("not submitted", "not reported"):
                     reason = "Did not report: no GHG data or floor area submitted"
                 elif status == "pending revisions":
                     reason = "Pending revisions: GHG data and floor area incomplete"
                 else:
                     reason = "Missing GHG emissions and floor area"
             elif missing_ghg:
-                if status == "not submitted":
+                if status in ("not submitted", "not reported"):
                     reason = "Did not report: no GHG data submitted"
                 elif status == "pending revisions":
                     reason = "Pending revisions: GHG data incomplete"
@@ -4787,6 +4934,21 @@ multi_year_mode = len(years_sorted) >= 2
 #Sidebar: year selector -
 if multi_year_mode:
     st.sidebar.header("Data year")
+    #Flag files whose name doesn't match the year their data covers
+    for _yr, _df in all_years.items():
+        if "source_file" not in _df.columns or _yr == 0:
+            continue
+        _fname = _df["source_file"].iat[0]
+        if _fname != f"berdo_{_yr}.csv":
+            st.sidebar.warning(
+                f"{_fname} contains {_yr - 1} energy use, so it's shown as reporting year {_yr}. "
+                f"Rename it berdo_{_yr}.csv to avoid confusion."
+            )
+        if "duplicate_file" in _df.columns:
+            st.sidebar.warning(
+                f"{_df['duplicate_file'].iat[0]} covers the same year as {_fname} and isn't shown. "
+                "Remove or rename one of them."
+            )
     selected_year = st.sidebar.radio(
         "Select reporting year to screen:",
         options=years_sorted,
@@ -4937,7 +5099,14 @@ with tab_address:
             )
 
             st.subheader("Building Result")
-            if selected_year:
+            if selected_year and selected_year >= 2026:
+                st.caption(
+                    f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
+                    "Statuses marked (City) are the City's own emissions compliance results. The City "
+                    "describes this disclosure as provisional: buildings with extensions or under review "
+                    "have no energy or emissions data yet, and an update is planned after October 15, 2026."
+                )
+            elif selected_year:
                 st.caption(
                     f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
                     "BERDO's first emissions compliance year is 2025 energy use, reported in 2026, so "
@@ -5119,6 +5288,18 @@ with tab_address:
                 )
 
             use_mix_limits = render_use_mix_editor(top)
+            _limits_source = "blend" if use_mix_limits is not None else None
+            #When the City publishes a building's applicable standard (it already reflects
+            #blended standards), use it as the 2025-29 limit; later periods use the default.
+            _off_std = pd.to_numeric(top.get("Official Standard"), errors="coerce")
+            if use_mix_limits is None and pd.notna(_off_std) and _bl_default_limits(top):
+                use_mix_limits = [float(_off_std)] + list(_bl_default_limits(top))[1:]
+                _limits_source = "official"
+                st.caption(f"2025–29 limit uses the City's applicable standard for this building "
+                           f"({float(_off_std):.2f} kg/sf/yr). Later periods use the default standards.")
+            _city_status = top.get("City Emissions Status")
+            if isinstance(_city_status, str) and _city_status:
+                st.info(f"**City emissions compliance status (2025 energy use):** {_city_status}")
 
             render_compliance_section(
                 top,
@@ -5127,6 +5308,7 @@ with tab_address:
                 projected_intensities=projected_intensities,
                 base_year=(selected_year - 1) if selected_year else 2025,
                 limits=use_mix_limits,
+                limits_label=("City's applicable standard" if _limits_source == "official" else None),
             )
 
             #Compliance pathways
@@ -5177,7 +5359,8 @@ with tab_address:
 
             _facts = [
                 ("BERDO category", _bl_ctx["label"] or "Not mappable", "Calculated"),
-                ("Reported property type", top.get("Property Type") or "Not reported", "Reported"),
+                ("Reported property type", top.get("Property Type") if isinstance(top.get("Property Type"), str)
+                 and top.get("Property Type").strip() else "Not reported", "Reported"),
                 ("Gross floor area", _num(top.get("Gross Floor Area"), "{:,.0f} sq ft"), "Reported"),
                 ("Total GHG emissions", _num(pd.to_numeric(top.get("GHG Emissions (kgCO2e)"),
                                                            errors="coerce") / 1000,
@@ -5196,6 +5379,9 @@ with tab_address:
                  "Estimated"),
             ]
             _limit_basis = (
+                "The 2025–29 limit is the City's applicable standard for this building; later "
+                "periods use the default standards."
+                if _limits_source == "official" else
                 "Limits shown use the Blended Emissions Standard, an option the owner may adopt "
                 "(estimated by this tool from floor area by use)."
                 if use_mix_limits else
@@ -5278,7 +5464,8 @@ with tab_address:
             ):
                 limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
                 gap = float(ghg_val) - limit_2025
-                if gap > 0 and period_covered(_cov, 0):
+                _portfolio_level = str(top.get("City Emissions Status") or "").lower().startswith("emissions compliance at portfolio")
+                if gap > 0 and period_covered(_cov, 0) and not _portfolio_level:
                     excess_tons = gap * float(sqft_val) / 1000
                     opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
                     opt_prefill["ghg_intensity"] = float(ghg_val)
