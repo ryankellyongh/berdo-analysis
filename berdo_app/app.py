@@ -5,20 +5,20 @@ import streamlit as st
 from pathlib import Path
 
 #FILE MAP: where to find things in this file
-#  Official tables and constants: BERDO_STANDARDS, PROJECTED_GRID_EF, RPS_CLASS_I,
-#      FUEL_EF_KG_PER_KBTU, FUEL_UNIT_OPTIONS, INCENTIVE_STACK, BERDO_LINKS,
-#      SOURCES_REGISTER (search for the name)
-#  Rules and calculations: building_limits, coverage_for, calculate_compliance_gap,
-#      evaluate_building, official_emissions_result, project_ghg_intensities,
-#      rec_pathway, planner_model
-#  Data loading and search: _load_single_csv, load_all_years, detect_data_year,
-#      lookup_building_priority, lookup_owner_portfolio, find_building_in_year
-#  Address Lookup tab: render_address_lookup_tab and its _lookup_* sections
-#  Owner Portfolio tab: render_portfolio_section and its _portfolio_* sections
-#  Retrofit & Incentives tab: render_retrofit_optimizer_tab and its _retrofit_* sections
-#  Emissions Planner tab: render_emissions_planner_tab and its _planner_* sections
-#  PDF summary: build_building_summary_pdf
-#  Page layout (sidebar, title, tabs): after "#App layout" near the end
+#Official tables and constants: BERDO_STANDARDS, PROJECTED_GRID_EF, RPS_CLASS_I,
+#FUEL_EF_KG_PER_KBTU, FUEL_UNIT_OPTIONS, INCENTIVE_STACK, BERDO_LINKS,
+#SOURCES_REGISTER (search for the name)
+#Rules and calculations: building_limits, coverage_for, calculate_compliance_gap,
+#evaluate_building, official_emissions_result, project_ghg_intensities,
+#rec_pathway, planner_model
+#Data loading and search: _load_single_csv, load_all_years, detect_data_year,
+#lookup_building_priority, lookup_owner_portfolio, find_building_in_year
+#Address Lookup tab: render_address_lookup_tab and its _lookup_* sections
+#Owner Portfolio tab: render_portfolio_section and its _portfolio_* sections
+#Retrofit & Incentives tab: render_retrofit_optimizer_tab and its _retrofit_* sections
+#Emissions Planner tab: render_emissions_planner_tab and its _planner_* sections
+#PDF summary: build_building_summary_pdf
+#Page layout (sidebar, title, tabs): after "#App layout" near the end
 
 #Page config
 
