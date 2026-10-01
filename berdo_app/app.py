@@ -4,6 +4,22 @@ import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 
+#FILE MAP: where to find things in this file
+#  Official tables and constants: BERDO_STANDARDS, PROJECTED_GRID_EF, RPS_CLASS_I,
+#      FUEL_EF_KG_PER_KBTU, FUEL_UNIT_OPTIONS, INCENTIVE_STACK, BERDO_LINKS,
+#      SOURCES_REGISTER (search for the name)
+#  Rules and calculations: building_limits, coverage_for, calculate_compliance_gap,
+#      evaluate_building, official_emissions_result, project_ghg_intensities,
+#      rec_pathway, planner_model
+#  Data loading and search: _load_single_csv, load_all_years, detect_data_year,
+#      lookup_building_priority, lookup_owner_portfolio, find_building_in_year
+#  Address Lookup tab: render_address_lookup_tab and its _lookup_* sections
+#  Owner Portfolio tab: render_portfolio_section and its _portfolio_* sections
+#  Retrofit & Incentives tab: render_retrofit_optimizer_tab and its _retrofit_* sections
+#  Emissions Planner tab: render_emissions_planner_tab and its _planner_* sections
+#  PDF summary: build_building_summary_pdf
+#  Page layout (sidebar, title, tabs): after "#App layout" near the end
+
 #Page config
 
 st.set_page_config(
@@ -327,6 +343,118 @@ def resolve_elec_share(prefill, sidebar_share, use_reported=True):
     if sidebar_share is not None:
         return sidebar_share, "sidebar estimate"
     return 0.5, "default estimate; no reported breakdown available"
+
+
+#Emissions Planner model (pure: no Streamlit), so it can be tested directly
+PLANNER_PERIOD_START_YEARS = [2025, 2030, 2035, 2040, 2045, 2050]
+#BERDO compliance is annual: each five-year period is modeled year by year;
+#"2050+" is modeled as the single year 2050.
+PLANNER_PERIOD_YEARS = ([list(range(s, s + 5)) for s in PLANNER_PERIOD_START_YEARS[:-1]]
+                        + [[PLANNER_PERIOD_START_YEARS[-1]]])
+
+
+def planner_period_for_year(y: int) -> int:
+    for i in range(len(PLANNER_PERIOD_START_YEARS) - 1, -1, -1):
+        if y >= PLANNER_PERIOD_START_YEARS[i]:
+            return i
+    return 0
+
+
+def planner_model(baseline_intensity, sqft, limits, projects, covered,
+                  apply_grid=False, elec_share=0.5, base_year=2025):
+    """
+    Every number the Emissions Planner shows, computed without Streamlit.
+
+    baseline_intensity  kg CO2e/sf/yr (the planner's editable field)
+    limits              six period limits (kg CO2e/sf/yr)
+    projects            dicts with year, reduction_kg (first-year kg), elec_mwh (MWh/yr, 0 if not electricity)
+    covered             six booleans: whether an emissions limit applies in each period
+    apply_grid          grid decarbonization scenario on/off
+    elec_share          share of baseline emissions from grid electricity
+    base_year           year of the baseline energy use (grid factor the baseline reflects)
+
+    Rules:
+      - Projects count from their implementation year onward, never earlier.
+      - Fossil savings are fixed; electricity savings are MWh x that year's grid factor
+        (the same factor the baseline uses), capped at the building's electricity emissions.
+      - ACP only in covered periods. Cumulative totals are summed year by year when
+        projects are involved; "2050+" is excluded from cumulative totals (no end date).
+    """
+    n = len(COMPLIANCE_PERIODS)
+    E = baseline_intensity * sqft
+    if apply_grid:
+        grid_kg = [pi * sqft for pi in project_ghg_intensities(baseline_intensity, elec_share, base_year)]
+    else:
+        grid_kg = [E] * n
+    active = [p for p in projects if p.get("reduction_kg", 0) > 0]
+    capped_years = set()
+    base_ef = effective_grid_ef(base_year)
+
+    def grid_ef_for_year(y):
+        if apply_grid:
+            return effective_grid_ef(PERIOD_REPRESENTATIVE_YEARS[planner_period_for_year(y)])
+        return base_ef
+
+    def reduction_in_year(y):
+        live = [p for p in active if p["year"] <= y]
+        fossil = sum(p["reduction_kg"] for p in live if not p.get("elec_mwh"))
+        ef = grid_ef_for_year(y)
+        elec = sum(p["elec_mwh"] for p in live if p.get("elec_mwh")) * ef
+        elec_cap = E * elec_share * ef / base_ef
+        if elec > elec_cap:
+            capped_years.add(y)
+            elec = elec_cap
+        return fossil + elec
+
+    def yearly_acp(base_kg, i):
+        limit_kg = limits[i] * sqft
+        return [max(base_kg - reduction_in_year(y) - limit_kg, 0) / 1000 * ACP_RATE
+                for y in PLANNER_PERIOD_YEARS[i]]
+
+    def avg_yearly_acp(base_kg, i):
+        vals = yearly_acp(base_kg, i)
+        return sum(vals) / len(vals)
+
+    period_reductions = [sum(reduction_in_year(y) for y in yrs) / len(yrs) for yrs in PLANNER_PERIOD_YEARS]
+    has_projects = any(r > 0 for r in period_reductions)
+    finite = [i for i in range(n) if COMPLIANCE_PERIODS[i] != "2050+" and covered[i]]
+
+    def flat_acp(base_kg, i):
+        return max(base_kg - limits[i] * sqft, 0) / 1000 * ACP_RATE
+
+    def all_years_ok(base_kg, i):
+        return all(base_kg - reduction_in_year(y) <= limits[i] * sqft for y in PLANNER_PERIOD_YEARS[i])
+
+    fines = {
+        "baseline": [round(flat_acp(E, i), 0) * covered[i] for i in range(n)],
+        "grid":     [round(flat_acp(grid_kg[i], i), 0) * covered[i] for i in range(n)],
+        "projects": [round(avg_yearly_acp(E, i), 0) * covered[i] for i in range(n)],
+        "combined": [round(avg_yearly_acp(grid_kg[i], i), 0) * covered[i] for i in range(n)],
+    }
+    cumulative = {
+        "baseline": sum(flat_acp(E, i) * 5 for i in finite),
+        "grid":     sum(flat_acp(grid_kg[i], i) * 5 for i in finite),
+        "projects": sum(sum(yearly_acp(E, i)) for i in finite),
+        "combined": sum(sum(yearly_acp(grid_kg[i], i)) for i in finite),
+    }
+    compliant = {
+        "baseline": sum(1 for i in range(n) if E <= limits[i] * sqft),
+        "projects": sum(1 for i in range(n) if all_years_ok(E, i)),
+        "grid":     sum(1 for i in range(n) if grid_kg[i] <= limits[i] * sqft),
+        "combined": sum(1 for i in range(n) if all_years_ok(grid_kg[i], i)),
+    }
+    return {
+        "total_emissions_kg": E,
+        "grid_emissions_kg": grid_kg,
+        "period_reductions_kg": period_reductions,
+        "has_projects": has_projects,
+        "reduction_in_year": reduction_in_year,
+        "elec_capped_years": capped_years,
+        "fines": fines,
+        "cumulative": cumulative,
+        "current_annual_fine": flat_acp(E, 0) if covered[0] else 0.0,
+        "compliant_periods": compliant,
+    }
 
 
 def map_property_type(raw_type):
@@ -1129,83 +1257,8 @@ def render_use_mix_editor(top):
 
 #Compliance gap display
 
-def render_compliance_section(
-    row,
-    prior_year_ghg_intensity=None,
-    prior_year_label=None,
-    projected_intensities=None,
-    base_year=2025,
-    limits=None,
-    limits_label=None,
-):
-    """
-    projected_intensities: list of 6 floats (one per compliance period) from
-    project_ghg_intensities(), or None to skip the grid decarb overlay.
-    """
-    ghg_intensity = row.get("GHG Intensity (kgCO2e/sqft)")
-    sqft = row.get("Gross Floor Area")
-    raw_type = row.get("Property Type")
-    berdo_category = map_property_type(raw_type)
-
-    st.subheader("Compliance Gap Analysis")
-
-    if pd.isna(ghg_intensity) or ghg_intensity == 0:
-        st.warning(
-            "GHG intensity is missing or zero for this building, "
-            "so the compliance gap can't be calculated. Check that GHG emissions "
-            "and floor area are reported in the dataset."
-        )
-        return
-
-    if pd.isna(sqft) or sqft <= 0:
-        st.warning("Floor area is missing, so fine exposure can't be calculated.")
-        return
-
-    if berdo_category is None and limits is None:
-        st.warning(
-            f"Property type **{raw_type}** could not be mapped to a BERDO "
-            "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
-            "gap calculations."
-        )
-        return
-
-    cov = coverage_for(row.get("First Compliance Year"), row.get("Compliance Status"),
-                       row.get("Property Owner Name"))
-    gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=limits, coverage=cov)
-    category_label = (limits_label or "Blended Emissions Standard") if limits is not None else berdo_category
-
-    #Projected gaps (for grid decarb scenario metric cards)
-    if projected_intensities is not None:
-        proj_gaps = [
-            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits, coverage=cov)
-            for pi in projected_intensities
-        ]
-        #proj_gaps[i] is a list of 6 period gaps for the projected intensity at period i
-        #We only need the gap for each period against its own limit, i.e. proj_gaps[i][i]
-        proj_gap_for_period = [proj_gaps[i][i] for i in range(len(COMPLIANCE_PERIODS))]
-    else:
-        proj_gap_for_period = None
-
-    if cov["known"] and cov["applies_from"] > 2025:
-        st.caption(
-            f"This building isn't subject to an emissions limit until {cov['applies_from']} "
-            "emissions. Earlier periods are shown for reference, with no ACP."
-        )
-    elif not cov["known"] and not cov["gov"]:
-        st.caption(
-            "The first compliance year isn't reported, so the tool doesn't estimate ACP. "
-            "Gaps are shown for reference."
-        )
-    if cov["city"]:
-        st.caption("City building: the ordinance's daily fines don't apply; emissions standards and "
-                   "the ACP option still do.")
-
-    st.caption(
-        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
-        f"Floor area: **{int(sqft):,} sq ft** · "
-        f"BERDO category: **{category_label}**"
-    )
-
+def _compliance_cards(gaps, cov, proj_gap_for_period):
+    """Status, ACP, and gap cards for the first three periods."""
     #Metric cards (first 3 periods)
     cols = st.columns(3)
     period_labels = ["2025–2029", "2030–2034", "2035–2039"]
@@ -1256,6 +1309,9 @@ def render_compliance_section(
 
     st.markdown("---")
 
+
+def _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg_intensity, prior_year_label, sqft, berdo_category, cov):
+    """Limits vs. intensity chart, with grid scenario and prior-year overlays."""
     #Chart
     limits = [g["limit"] for g in gaps]
     fines  = [g["annual_fine_usd"] for g in gaps]
@@ -1354,6 +1410,9 @@ def render_compliance_section(
 
     st.plotly_chart(fig, use_container_width=True)
 
+
+def _compliance_exposure_summary(gaps, projected_intensities, proj_gap_for_period):
+    """Cumulative ACP exposure under the conservative and grid scenarios."""
     #Fine exposure summary
     non_compliant_periods = [g for g in gaps if g["covered"] and not g["compliant"]]
     if non_compliant_periods:
@@ -1389,6 +1448,9 @@ def render_compliance_section(
                 msg += "\n\n**Grid decarbonization scenario:** building achieves compliance in all periods from grid cleaning alone."
         st.info(msg)
 
+
+def _compliance_caption(base_year, projected_intensities):
+    """Method caption and the About this tool expander."""
     #Caption
     base_ef = effective_grid_ef(base_year)
     caption = (
@@ -1458,6 +1520,89 @@ Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v5 (S
 Appendix B; 225 CMR 14.07. See "Sources & verification" in the sidebar.
 Not an official City of Boston compliance determination.
 """)
+
+
+def render_compliance_section(
+    row,
+    prior_year_ghg_intensity=None,
+    prior_year_label=None,
+    projected_intensities=None,
+    base_year=2025,
+    limits=None,
+    limits_label=None,
+):
+    """
+    projected_intensities: list of 6 floats (one per compliance period) from
+    project_ghg_intensities(), or None to skip the grid decarb overlay.
+    """
+    ghg_intensity = row.get("GHG Intensity (kgCO2e/sqft)")
+    sqft = row.get("Gross Floor Area")
+    raw_type = row.get("Property Type")
+    berdo_category = map_property_type(raw_type)
+
+    st.subheader("Compliance Gap Analysis")
+
+    if pd.isna(ghg_intensity) or ghg_intensity == 0:
+        st.warning(
+            "GHG intensity is missing or zero for this building, "
+            "so the compliance gap can't be calculated. Check that GHG emissions "
+            "and floor area are reported in the dataset."
+        )
+        return
+
+    if pd.isna(sqft) or sqft <= 0:
+        st.warning("Floor area is missing, so fine exposure can't be calculated.")
+        return
+
+    if berdo_category is None and limits is None:
+        st.warning(
+            f"Property type **{raw_type}** could not be mapped to a BERDO "
+            "emissions category. Add it to the PROPERTY_TYPE_MAP to enable "
+            "gap calculations."
+        )
+        return
+
+    cov = coverage_for(row.get("First Compliance Year"), row.get("Compliance Status"),
+                       row.get("Property Owner Name"))
+    gaps = calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=limits, coverage=cov)
+    category_label = (limits_label or "Blended Emissions Standard") if limits is not None else berdo_category
+
+    #Projected gaps (for grid decarb scenario metric cards)
+    if projected_intensities is not None:
+        proj_gaps = [
+            calculate_compliance_gap(pi, sqft, berdo_category, limits=limits, coverage=cov)
+            for pi in projected_intensities
+        ]
+        #proj_gaps[i] is a list of 6 period gaps for the projected intensity at period i
+        #We only need the gap for each period against its own limit, i.e. proj_gaps[i][i]
+        proj_gap_for_period = [proj_gaps[i][i] for i in range(len(COMPLIANCE_PERIODS))]
+    else:
+        proj_gap_for_period = None
+
+    if cov["known"] and cov["applies_from"] > 2025:
+        st.caption(
+            f"This building isn't subject to an emissions limit until {cov['applies_from']} "
+            "emissions. Earlier periods are shown for reference, with no ACP."
+        )
+    elif not cov["known"] and not cov["gov"]:
+        st.caption(
+            "The first compliance year isn't reported, so the tool doesn't estimate ACP. "
+            "Gaps are shown for reference."
+        )
+    if cov["city"]:
+        st.caption("City building: the ordinance's daily fines don't apply; emissions standards and "
+                   "the ACP option still do.")
+
+    st.caption(
+        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
+        f"Floor area: **{int(sqft):,} sq ft** · "
+        f"BERDO category: **{category_label}**"
+    )
+
+    _compliance_cards(gaps, cov, proj_gap_for_period)
+    _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg_intensity, prior_year_label, sqft, berdo_category, cov)
+    _compliance_exposure_summary(gaps, projected_intensities, proj_gap_for_period)
+    _compliance_caption(base_year, projected_intensities)
 
 #Data loading. Supports single file (berdo.csv) or multi-year files
 #(berdo_2022.csv, berdo_2023.csv, …) in the data/ folder.
@@ -1659,6 +1804,7 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
         energy = pd.to_numeric(df["total_site_energy_kbtu"], errors="coerce")
         ok = energy.notna() & df["gross_floor_area"].notna() & (df["gross_floor_area"] > 0)
         df.loc[ok, "site_eui"] = energy[ok] / df.loc[ok, "gross_floor_area"]
+        df["site_eui_calculated"] = ok
 
     #The City's own emissions compliance results (2026 disclosure onward)
     if "emissions_status" in df.columns:
@@ -2091,6 +2237,54 @@ def find_building_in_year(df: pd.DataFrame, berdo_id=None, parcel_id=None, addre
     return None
 
 
+FUEL_USAGE_COLUMNS = [
+    "fuel_natural_gas_kbtu", "fuel_electricity_kwh", "fuel_district_steam_kbtu",
+    "fuel_district_hot_water_kbtu", "fuel_oil1_kbtu", "fuel_oil2_kbtu", "fuel_oil4_kbtu",
+    "fuel_oil56_kbtu", "fuel_propane_kbtu", "fuel_diesel_kbtu", "fuel_kerosene_kbtu",
+]
+
+
+def lookup_result_row(row, include_fuel=True) -> dict:
+    """
+    One lookup result: the building's fields plus its screening result.
+    Used by both the address lookup (with fuel detail) and the owner lookup.
+    """
+    data_status, berdo_status, acp_2025, notes = evaluate_building(row)
+    out = {
+        "Building Address":            row.get("Building Address"),
+        "Property Owner Name":         row.get("Property Owner Name"),
+        "BERDO ID":                    row.get("berdo_id"),
+        "Tax Parcel ID":               row.get("tax_parcel_id"),
+        "First Compliance Year":       row.get("compliance_year"),
+        "City Emissions Status":       row.get("emissions_status"),
+        "Official Standard":           row.get("official_standard"),
+        "Flexibility Measures":        row.get("flexibility_measures"),
+        "Portfolio ID":                row.get("portfolio_id"),
+        "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
+        "City Note":                   row.get("city_notes"),
+        "Property Type":               row.get("property_type"),
+        "All Property Types":          row.get("all_property_types"),
+        "Gross Floor Area":            row.get("gross_floor_area"),
+        "Site EUI":                    row.get("site_eui"),
+        "Site EUI Calculated":         bool(row.get("site_eui_calculated", False)),
+        "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
+        "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
+        "Electricity Emissions (kgCO2e)": row.get("elec_emissions_kg"),
+    }
+    if include_fuel:
+        out["Primary Fuel"] = infer_primary_fuel(row)
+        for col in FUEL_USAGE_COLUMNS:
+            out[col] = row.get(col)
+    out.update({
+        "Compliance Status":           row.get("compliance_status"),
+        "Data Status":                 data_status,
+        "BERDO Status":                berdo_status,
+        "Est. ACP (2025–29)":          acp_2025,
+        "Notes":                       "; ".join(notes),
+    })
+    return out
+
+
 def lookup_building_priority(df, address):
     if not address or not isinstance(address, str):
         return None
@@ -2124,44 +2318,7 @@ def lookup_building_priority(df, address):
     results = []
 
     for _, row in matches.iterrows():
-        data_status, berdo_status, acp_2025, notes = evaluate_building(row)
-        results.append({
-            "Building Address":             row.get("Building Address"),
-            "Property Owner Name":         row.get("Property Owner Name"),
-            "BERDO ID":                    row.get("berdo_id"),
-            "Tax Parcel ID":               row.get("tax_parcel_id"),
-            "First Compliance Year":       row.get("compliance_year"),
-            "City Emissions Status":       row.get("emissions_status"),
-            "Official Standard":           row.get("official_standard"),
-            "Flexibility Measures":        row.get("flexibility_measures"),
-            "Portfolio ID":                row.get("portfolio_id"),
-            "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
-            "City Note":                   row.get("city_notes"),
-            "Property Type":               row.get("property_type"),
-            "All Property Types":          row.get("all_property_types"),
-            "Gross Floor Area":            row.get("gross_floor_area"),
-            "Site EUI":                    row.get("site_eui"),
-            "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
-            "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
-            "Electricity Emissions (kgCO2e)": row.get("elec_emissions_kg"),
-            "Primary Fuel":                infer_primary_fuel(row),
-            "fuel_natural_gas_kbtu":       row.get("fuel_natural_gas_kbtu"),
-            "fuel_electricity_kwh":        row.get("fuel_electricity_kwh"),
-            "fuel_district_steam_kbtu":    row.get("fuel_district_steam_kbtu"),
-            "fuel_district_hot_water_kbtu":row.get("fuel_district_hot_water_kbtu"),
-            "fuel_oil1_kbtu":              row.get("fuel_oil1_kbtu"),
-            "fuel_oil2_kbtu":              row.get("fuel_oil2_kbtu"),
-            "fuel_oil4_kbtu":              row.get("fuel_oil4_kbtu"),
-            "fuel_oil56_kbtu":             row.get("fuel_oil56_kbtu"),
-            "fuel_propane_kbtu":           row.get("fuel_propane_kbtu"),
-            "fuel_diesel_kbtu":            row.get("fuel_diesel_kbtu"),
-            "fuel_kerosene_kbtu":          row.get("fuel_kerosene_kbtu"),
-            "Compliance Status":           row.get("compliance_status"),
-            "Data Status":                 data_status,
-            "BERDO Status":                berdo_status,
-            "Est. ACP (2025–29)":          acp_2025,
-            "Notes":                       "; ".join(notes),
-        })
+        results.append(lookup_result_row(row, include_fuel=True))
 
     return pd.DataFrame(results)
 
@@ -2187,32 +2344,7 @@ def lookup_owner_portfolio(df, owner_name):
 
     results = []
     for _, row in matches.iterrows():
-        data_status, berdo_status, acp_2025, notes = evaluate_building(row)
-        results.append({
-            "Building Address":            row.get("Building Address"),
-            "Property Owner Name":         row.get("Property Owner Name"),
-            "BERDO ID":                    row.get("berdo_id"),
-            "Tax Parcel ID":               row.get("tax_parcel_id"),
-            "First Compliance Year":       row.get("compliance_year"),
-            "City Emissions Status":       row.get("emissions_status"),
-            "Official Standard":           row.get("official_standard"),
-            "Flexibility Measures":        row.get("flexibility_measures"),
-            "Portfolio ID":                row.get("portfolio_id"),
-            "Campus ID":                   row.get("campus_id") if row.get("is_campus_member") else None,
-            "City Note":                   row.get("city_notes"),
-            "Property Type":               row.get("property_type"),
-            "All Property Types":          row.get("all_property_types"),
-            "Gross Floor Area":            row.get("gross_floor_area"),
-            "Site EUI":                    row.get("site_eui"),
-            "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
-            "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
-            "Electricity Emissions (kgCO2e)": row.get("elec_emissions_kg"),
-            "Compliance Status":           row.get("compliance_status"),
-            "Data Status":                 data_status,
-            "BERDO Status":                berdo_status,
-            "Est. ACP (2025–29)":          acp_2025,
-            "Notes":                       "; ".join(notes),
-        })
+        results.append(lookup_result_row(row, include_fuel=False))
     return pd.DataFrame(results)
 
 
@@ -2245,15 +2377,8 @@ def calculate_blended_standard(buildings_df):
 
 #Portfolio compliance section
 
-def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy,
-                             use_reported_share=True):
-    """
-    Renders BERDO compliance analysis for a multi-building owner portfolio.
-    Shows portfolio-level blended standard, aggregate gap, fine exposure,
-    and a per-building surplus/deficit breakdown table.
-    """
-    st.subheader("Portfolio Compliance Analysis")
-
+def _portfolio_classify(buildings_df):
+    """Split buildings into those included and those excluded, with reasons."""
     #Classify buildings: valid vs excluded (with reason)
     
     excluded_rows = []
@@ -2332,8 +2457,12 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         if excluded_rows:
             with st.expander(f"Excluded buildings ({skipped})", expanded=True):
                 st.dataframe(pd.DataFrame(excluded_rows), use_container_width=True, hide_index=True)
-        return
+        raise _EndTab
+    return excluded_rows, skipped, total_buildings, usable_buildings, valid
 
+
+def _portfolio_totals(valid):
+    """Portfolio intensity, blended standard, and the plain-English summary."""
     #Portfolio-level aggregates
     
     valid = valid.copy()
@@ -2350,7 +2479,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
             "Could not calculate a blended standard. Check that property types "
             "are mapped for all buildings in the portfolio."
         )
-        return
+        raise _EndTab
 
     #Determine current-period compliance status
     current_limit     = blended_limits[0]
@@ -2413,7 +2542,11 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
                 f"{indefinite_annual_fine:,.0f}/year applies indefinitely."
             )
         st.error(error_msg)
-       
+    return blended_limits, current_compliant, current_fine, current_limit, portfolio_intensity, total_emissions, total_sqft, valid
+
+
+def _portfolio_metrics(usable_buildings, total_sqft, total_emissions, portfolio_intensity, valid, blended_limits):
+    """Headline metrics, vacancy warning, and period cards."""
     #Summary header metrics
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Buildings in portfolio", usable_buildings)
@@ -2473,6 +2606,9 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
 
     st.markdown("---")
 
+
+def _portfolio_chart(blended_limits, portfolio_intensity, elec_share, use_reported_share, total_emissions, valid, selected_year, total_sqft):
+    """Blended limit vs. portfolio intensity chart."""
     #Compliance chart
     fig = go.Figure()
 
@@ -2575,6 +2711,9 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
         "Not an official City of Boston compliance determination."
     )
 
+
+def _portfolio_guidance(current_compliant, current_limit, valid, current_fine):
+    """Guidance for owners and policymakers."""
     #What should I do? expander
     with st.expander("What should I do?"):
         if current_compliant:
@@ -2625,7 +2764,10 @@ marked "Did not report" in the excluded table represent additional unknown expos
 
     st.markdown("---")
 
-    #Per-building surplus/deficit table (sorted by 2025 gap, worst first) ---
+
+def _portfolio_breakdown(valid):
+    """Each building's surplus or deficit against its own limit."""
+    #Per-building surplus/deficit table (sorted by 2025 gap, worst first)
     st.markdown("#### Per-Building Surplus / Deficit")
     st.caption(
         "Sorted by largest deficit first. "
@@ -2677,6 +2819,9 @@ marked "Did not report" in the excluded table represent additional unknown expos
             "Negative = surplus that can offset other buildings in the portfolio."
         )
 
+
+def _portfolio_exclusions(excluded_rows, skipped, total_buildings):
+    """Excluded buildings and the application deadline note."""
     #Excluded buildings
     if excluded_rows:
         not_reported = sum(
@@ -2717,6 +2862,27 @@ marked "Did not report" in the excluded table represent additional unknown expos
         "All buildings must have the same owner and no vacant properties may be included. "
         "Approval from the BERDO Review Board is required."
     )
+
+
+def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy,
+                             use_reported_share=True):
+    """
+    Renders BERDO compliance analysis for a multi-building owner portfolio.
+    Shows portfolio-level blended standard, aggregate gap, fine exposure,
+    and a per-building surplus/deficit breakdown table.
+    """
+    st.subheader("Portfolio Compliance Analysis")
+
+    try:
+        excluded_rows, skipped, total_buildings, usable_buildings, valid = _portfolio_classify(buildings_df)
+        blended_limits, current_compliant, current_fine, current_limit, portfolio_intensity, total_emissions, total_sqft, valid = _portfolio_totals(valid)
+        _portfolio_metrics(usable_buildings, total_sqft, total_emissions, portfolio_intensity, valid, blended_limits)
+        _portfolio_chart(blended_limits, portfolio_intensity, elec_share, use_reported_share, total_emissions, valid, selected_year, total_sqft)
+        _portfolio_guidance(current_compliant, current_limit, valid, current_fine)
+        _portfolio_breakdown(valid)
+        _portfolio_exclusions(excluded_rows, skipped, total_buildings)
+    except _EndTab:
+        return
 
 
 
@@ -2998,21 +3164,36 @@ def rec_connector_price(n_recs) -> float:
     return REC_CONNECTOR_TIERS[-1][1]
 
 #Convenient billing unit → kBtu conversions (EPA Portfolio Manager)
-FUEL_UNIT_TO_KBTU = {
-    "therms":   100.0,      #natural gas
-    "ccf":      102.6,      #natural gas (hundred cubic feet)
-    "mcf":      1026.0,     #natural gas, thousand cubic feet (Portfolio Manager calls this "Kcf")
-    "gallons_oil2":  138.0, #fuel oil #2
-    "gallons_oil4":  146.0, #fuel oil #4
-    "gallons_oil56": 150.0,  #fuel oil #5/#6
-    "gallons_propane": 92.0,
-    "gallons_diesel":  138.0,
-    "gallons_kerosene": 135.0,
-    "kbtu":     1.0,
-    "mmbtu":    1000.0,
-    "kwh":      3.412,      #electricity
-    "mwh":      3412.0,     #electricity
+#Units offered for each fuel, and conversions to kBtu
+#(Portfolio Manager Technical Reference: Thermal Energy Conversions, Figure 3).
+#"Mcf" here means thousand cubic feet, as on most gas bills (Portfolio Manager calls it Kcf).
+FUEL_UNIT_OPTIONS = {
+    "Natural gas":    ["therms", "ccf", "Mcf (thousand cu ft)", "kBtu", "MMBtu"],
+    "Fuel oil #1":    ["gallons", "kBtu", "MMBtu"],
+    "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
+    "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
+    "Fuel oil #5/#6": ["gallons", "kBtu", "MMBtu"],
+    "Propane":        ["gallons", "kBtu", "MMBtu"],
+    "Diesel":         ["gallons", "kBtu", "MMBtu"],
+    "Kerosene":       ["gallons", "kBtu", "MMBtu"],
+    "Electricity":    ["kWh", "MWh", "kBtu", "MMBtu"],
+    "District steam": ["kBtu", "MMBtu", "therms"],
 }
+UNIT_TO_KBTU = {
+    "therms": 100.0, "ccf": 102.6, "Mcf (thousand cu ft)": 1026.0,
+    "kBtu": 1.0, "MMBtu": 1000.0, "kWh": 3.412, "MWh": 3412.0,
+}
+GALLON_TO_KBTU = {
+    "Fuel oil #1": 139.0, "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
+    "Fuel oil #5/#6": 150.0, "Propane": 92.0, "Diesel": 138.0, "Kerosene": 135.0,
+}
+
+
+def fuel_to_kbtu(fuel: str, unit: str, amount: float) -> float:
+    """Convert an amount of fuel in a billing unit to kBtu."""
+    if unit == "gallons":
+        return amount * GALLON_TO_KBTU.get(fuel, 138.0)
+    return amount * UNIT_TO_KBTU.get(unit, 1.0)
 
 def _fmt_dollars(val):
     """Format a dollar value with commas, no decimals."""
@@ -3284,47 +3465,37 @@ def _estimate_incentive_value(inc, sqft):
         round(inc["amount_psf_high"] * sqft * f, 0),
     )
 
-def render_retrofit_optimizer_tab(prefill: dict = None):
-    """
-    Tab 3: Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer).
-    Collects building inputs once, then shows condition-adjusted cost estimates,
-    matched incentives ranked by value, stacking order, and payback.
-    Pre-fills from address lookup session state where available.
-    """
-    if prefill is None:
-        prefill = {}
+class _EndTab(Exception):
+    """Raised inside a tab section to stop drawing the rest of the tab (like an early return)."""
 
-    st.write(
-        "Estimate retrofit costs and find the right incentives in one place. "
-        "Enter your building details and the scopes you're considering to see "
-        "condition-adjusted cost ranges, matched funding programs, stacking order, and payback."
-    )
-    st.info(
-        "**Federal tax rules and state grant caps verified September 22, 2026.** "
-        "Mass Save dollar figures and retrofit costs are unverified estimates. "
-        "Always confirm amounts at the source links before advising a client."
-    )
 
+def apply_prefill_once(marker_key: str, building_key: str, values: dict):
+    """
+    Write a looked-up building's values into a tab's input fields, but only when a
+    different building (or data year) arrives, so a user's edits survive reruns.
+    Values that are None are skipped.
+    """
+    if building_key and building_key != st.session_state.get(marker_key, ""):
+        for key, value in values.items():
+            if value is not None:
+                st.session_state[key] = value
+        st.session_state[marker_key] = building_key
+
+
+def _retrofit_inputs(prefill):
+    """Building inputs, pre-fill from Address Lookup, and retrofit scope selection."""
     #Inputs
     
     #Inject prefill into session state when a new address lookup arrives.
     #We detect a "fresh" prefill by comparing the prefill address to the
     #last address we injected: if different, overwrite widget state.
     
-    prefill_addr_key = prefill.get("address", "")
-    last_injected    = st.session_state.get("opt_last_injected_addr", "")
-
-    if prefill_addr_key and prefill_addr_key != last_injected:
-        if prefill.get("sqft"):
-            st.session_state["opt_sqft"] = int(prefill["sqft"])
-        if prefill.get("berdo_category"):
-            type_options_init = ["Select a type"] + sorted(BERDO_STANDARDS.keys())
-            if prefill["berdo_category"] in type_options_init:
-                st.session_state["opt_btype"] = prefill["berdo_category"]
-        if prefill.get("primary_fuel"):
-            if prefill["primary_fuel"] in FUEL_TYPES_OPT:
-                st.session_state["opt_fuel"] = prefill["primary_fuel"]
-        st.session_state["opt_last_injected_addr"] = prefill_addr_key
+    apply_prefill_once("opt_last_injected_key",
+                       prefill.get("building_key") or prefill.get("address", ""), {
+        "opt_sqft":  int(prefill["sqft"]) if prefill.get("sqft") else None,
+        "opt_btype": prefill.get("berdo_category") if prefill.get("berdo_category") in BERDO_STANDARDS else None,
+        "opt_fuel":  prefill.get("primary_fuel") if prefill.get("primary_fuel") in FUEL_TYPES_OPT else None,
+    })
 
     st.subheader("Building inputs")
     col1, col2 = st.columns(2)
@@ -3393,8 +3564,12 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
 
     if not scopes_selected:
         st.warning("Select at least one retrofit scope above to see incentive matches.")
-        return
+        raise _EndTab
+    return berdo_category, fuel, ownership, prefill_fine, scopes_selected, sqft
 
+
+def _retrofit_cost_estimate(scopes_selected, sqft):
+    """Condition-adjusted cost ranges for the selected scopes."""
     #Estimated retrofit cost (folded in from the former Retrofit Estimator)
     st.markdown("---")
     st.subheader("Estimated retrofit cost")
@@ -3473,7 +3648,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
          if apply_boston else "National RSMeans baselines (no Boston multiplier). ") +
         "Adjusted estimate uses the low end with an audit on file, mid-range without one."
     )
+    return total_cost_high, total_cost_low
 
+
+def _retrofit_planned_project(sqft, prefill, berdo_category):
+    """Whether a planned energy reduction closes the 2025-29 gap."""
     #Planned project, emissions reduction calculator
     st.markdown("---")
     st.subheader("Planned project: will it close the compliance gap?")
@@ -3486,25 +3665,12 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
     with proj_cols[0]:
         proj_fuel = st.selectbox(
             "Fuel type being reduced",
-            options=["Natural gas", "Fuel oil #1", "Fuel oil #2", "Fuel oil #4", "Fuel oil #5/#6",
-                     "Propane", "Diesel", "Kerosene", "Electricity", "District steam"],
+            options=list(FUEL_UNIT_OPTIONS),
             key="proj_fuel_type",
             help="Select the fuel your retrofit will reduce or eliminate.",
         )
     with proj_cols[1]:
-        unit_options = {
-            "Natural gas":    ["therms", "ccf", "Mcf (thousand cu ft)", "kBtu", "MMBtu"],
-            "Fuel oil #1":     ["gallons", "kBtu", "MMBtu"],
-            "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
-            "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
-            "Fuel oil #5/#6": ["gallons", "kBtu", "MMBtu"],
-            "Propane":        ["gallons", "kBtu", "MMBtu"],
-            "Diesel":         ["gallons", "kBtu", "MMBtu"],
-            "Kerosene":       ["gallons", "kBtu", "MMBtu"],
-            "Electricity":    ["kWh", "MWh", "kBtu", "MMBtu"],
-            "District steam": ["kBtu", "MMBtu", "therms"],
-        }
-        units = unit_options.get(proj_fuel, ["kBtu", "MMBtu"])
+        units = FUEL_UNIT_OPTIONS.get(proj_fuel, ["kBtu", "MMBtu"])
         proj_unit = st.selectbox(
             "Unit",
             options=units,
@@ -3521,24 +3687,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
         )
 
     if proj_amount > 0:
-        #Convert to kBtu
-        unit_map = {
-            "therms": 100.0, "ccf": 102.6, "Mcf (thousand cu ft)": 1026.0,
-            "gallons": 138.0,  #default for oil; overridden below
-            "kBtu": 1.0, "MMBtu": 1000.0,
-            "kWh": 3.412, "MWh": 3412.0,
-        }
-        #Override gallon factor by fuel type
-        if proj_unit == "gallons":
-            gal_factor = {
-                "Fuel oil #1": 139.0,   #Portfolio Manager Thermal Energy Conversions, Fig. 3
-                "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
-                "Fuel oil #5/#6": 150.0, "Propane": 92.0,
-                "Diesel": 138.0, "Kerosene": 135.0,
-            }.get(proj_fuel, 138.0)
-            proj_kbtu = proj_amount * gal_factor
-        else:
-            proj_kbtu = proj_amount * unit_map.get(proj_unit, 1.0)
+        proj_kbtu = fuel_to_kbtu(proj_fuel, proj_unit, proj_amount)
 
         #Calculate emissions reduction
         if proj_fuel == "Electricity":
@@ -3616,6 +3765,9 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             "Enter a planned annual energy reduction above to see its compliance impact."
         )
 
+
+def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill):
+    """Matched incentives: headline, summary, ranking, stacking order, and checklist."""
     #Match incentives
     matched = [
         inc for inc in INCENTIVE_STACK
@@ -3628,7 +3780,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             "Try adjusting ownership type, fuel, or scope, "
             "or check masssave.com and mass.gov directly."
         )
-        return
+        raise _EndTab
 
     #Dollar estimates
     for inc in matched:
@@ -3766,7 +3918,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             for step in inc["checklist"]:
                 st.checkbox(step, key=f"chk_{inc['short']}_{step[:20]}")
             st.markdown(f"[Source / apply →]({inc['source']})")
+    return matched, net_high, net_low
 
+
+def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
+    """Payback from avoided ACP and energy savings, with the cash flow chart."""
     #Cash flow & payback
     st.markdown("---")
     st.subheader("Cash flow & payback")
@@ -3987,7 +4143,11 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 "and the cost trajectory of fines as BERDO limits tighten toward 2050. "
                 "Adjust the energy savings input above to model the full return."
             )
+    return annual_fine
 
+
+def _retrofit_three_paths(annual_fine, berdo_category, prefill, sqft, net_low, net_high):
+    """Retrofit vs. RECs vs. ACP, with a recommendation and the fine escalation table."""
     #Retrofit vs. compliance decision
     st.subheader("Three paths: retrofit, RECs, or pay the ACP")
     st.caption(
@@ -4238,6 +4398,9 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
             "Select a building type above to see the retrofit vs. fine comparison."
         )
 
+
+def _retrofit_phasing_and_notes(matched):
+    """Incentives available in each compliance period, the disclaimer, and sources."""
     #Phasing by BERDO period
     st.markdown("---")
     st.subheader("Phasing by BERDO compliance period")
@@ -4293,41 +4456,54 @@ Incentive values are estimated using $/sqft proxies derived from published progr
 Actual awards depend on application outcome, project documentation, and contractor certification.
 """)
 
-#EMISSIONS PLANNER, Tab 5
 
-def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None,
-                                 use_reported_share: bool = True):
+def render_retrofit_optimizer_tab(prefill: dict = None):
     """
-    Tab 5: Emissions Planner.
-    Shows compliance projection table across all BERDO periods,
-    allows users to enter planned emission reduction projects,
-    and recalculates compliance and ACP fines with and without projects.
-    Pre-fills from Address Lookup session state where available.
+    Tab 3: Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer).
+    Collects building inputs once, then shows condition-adjusted cost estimates,
+    matched incentives ranked by value, stacking order, and payback.
+    Pre-fills from address lookup session state where available.
     """
     if prefill is None:
         prefill = {}
 
     st.write(
-        "Model your path to BERDO compliance. Enter planned emission reduction projects "
-        "to see how they affect your compliance status and fine exposure across all periods through 2050."
+        "Estimate retrofit costs and find the right incentives in one place. "
+        "Enter your building details and the scopes you're considering to see "
+        "condition-adjusted cost ranges, matched funding programs, stacking order, and payback."
+    )
+    st.info(
+        "**Federal tax rules and state grant caps verified September 22, 2026.** "
+        "Mass Save dollar figures and retrofit costs are unverified estimates. "
+        "Always confirm amounts at the source links before advising a client."
     )
 
+    try:
+        berdo_category, fuel, ownership, prefill_fine, scopes_selected, sqft = _retrofit_inputs(prefill)
+        total_cost_high, total_cost_low = _retrofit_cost_estimate(scopes_selected, sqft)
+        _retrofit_planned_project(sqft, prefill, berdo_category)
+        matched, net_high, net_low = _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill)
+        annual_fine = _retrofit_payback(prefill_fine, sqft, net_low, net_high)
+        _retrofit_three_paths(annual_fine, berdo_category, prefill, sqft, net_low, net_high)
+        _retrofit_phasing_and_notes(matched)
+    except _EndTab:
+        return
+
+#EMISSIONS PLANNER, Tab 5
+
+def _planner_inputs(prefill):
+    """Floor area, building type, and GHG intensity, pre-filled from Address Lookup."""
     #Building inputs
     st.subheader("Building inputs")
 
     #Pre-fill the fields only when a different building (or data year) is looked up.
     #This is the only place planner fields are set, so edits survive reruns.
     prefill_addr_key = prefill.get("address", "")
-    _bkey         = prefill.get("building_key") or prefill_addr_key
-    last_injected = st.session_state.get("ep_last_injected_key", "")
-    if _bkey and _bkey != last_injected:
-        if prefill.get("sqft"):
-            st.session_state["ep_sqft"] = int(prefill["sqft"])
-        if prefill.get("berdo_category"):
-            st.session_state["ep_btype"] = prefill["berdo_category"]
-        if prefill.get("ghg_intensity"):
-            st.session_state["ep_ghg"] = float(prefill["ghg_intensity"])
-        st.session_state["ep_last_injected_key"] = _bkey
+    apply_prefill_once("ep_last_injected_key", prefill.get("building_key") or prefill_addr_key, {
+        "ep_sqft":  int(prefill["sqft"]) if prefill.get("sqft") else None,
+        "ep_btype": prefill.get("berdo_category") or None,
+        "ep_ghg":   float(prefill["ghg_intensity"]) if prefill.get("ghg_intensity") else None,
+    })
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -4370,8 +4546,12 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             "Enter your building type and current GHG intensity above to see the compliance projection. "
             "Look up your building in the Address Lookup tab to pre-fill automatically."
         )
-        return
+        raise _EndTab
+    return berdo_category, ghg_intensity, prefill_addr_key, sqft
 
+
+def _planner_projects():
+    """The table where users add, edit, and remove planned projects."""
     #Emission Reduction Projects
     st.markdown("---")
     st.subheader("Emission Reduction Projects")
@@ -4397,40 +4577,10 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
             })
 
     #Project entry table
-    fuel_unit_options = {
-        "Natural gas":    ["therms", "ccf", "Mcf (thousand cu ft)", "kBtu", "MMBtu"],
-        "Fuel oil #1":    ["gallons", "kBtu", "MMBtu"],
-        "Fuel oil #2":    ["gallons", "kBtu", "MMBtu"],
-        "Fuel oil #4":    ["gallons", "kBtu", "MMBtu"],
-        "Fuel oil #5/#6": ["gallons", "kBtu", "MMBtu"],
-        "Propane":        ["gallons", "kBtu", "MMBtu"],
-        "Diesel":         ["gallons", "kBtu", "MMBtu"],
-        "Kerosene":       ["gallons", "kBtu", "MMBtu"],
-        "Electricity":    ["kWh", "MWh", "kBtu", "MMBtu"],
-        "District steam": ["kBtu", "MMBtu", "therms"],
-    }
-    unit_to_kbtu = {
-        "therms": 100.0, "ccf": 102.6, "Mcf (thousand cu ft)": 1026.0,
-        "kBtu": 1.0, "MMBtu": 1000.0,
-        "kWh": 3.412, "MWh": 3412.0,
-        "gallons": 138.0,  #overridden per fuel below
-    }
-    gallon_kbtu = {
-        "Fuel oil #1": 139.0,   #Portfolio Manager Thermal Energy Conversions, Fig. 3
-        "Fuel oil #2": 138.0, "Fuel oil #4": 146.0,
-        "Fuel oil #5/#6": 150.0, "Propane": 92.0,
-        "Diesel": 138.0, "Kerosene": 135.0,
-    }
-
-    def calc_kbtu(fuel, unit, amount):
-        if unit == "gallons":
-            return amount * gallon_kbtu.get(fuel, 138.0)
-        return amount * unit_to_kbtu.get(unit, 1.0)
-
     def calc_reduction_kg(fuel, unit, amount, year=2025):
         """First-year reduction, shown in the project table. The projection recalculates
         electricity savings each year from the MWh saved (see reduction_in_year)."""
-        kbtu = calc_kbtu(fuel, unit, amount)
+        kbtu = fuel_to_kbtu(fuel, unit, amount)
         if fuel == "Electricity":
             ef = effective_grid_ef(year) / 1000 / 3.412  #kg/kBtu
         else:
@@ -4470,7 +4620,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                     key=f"ep_proj_year_{idx}", label_visibility="collapsed"
                 )
             with row[2]:
-                fuel_list = list(fuel_unit_options.keys())
+                fuel_list = list(FUEL_UNIT_OPTIONS)
                 curr_fuel = proj.get("fuel", "Natural gas")
                 f_idx = fuel_list.index(curr_fuel) if curr_fuel in fuel_list else 0
                 proj["fuel"] = st.selectbox(
@@ -4483,7 +4633,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                     step=100.0, key=f"ep_proj_amt_{idx}", label_visibility="collapsed"
                 )
             with row[4]:
-                unit_list = fuel_unit_options.get(proj["fuel"], ["kBtu"])
+                unit_list = FUEL_UNIT_OPTIONS.get(proj["fuel"], ["kBtu"])
                 curr_unit = proj.get("unit", unit_list[0])
                 u_idx = unit_list.index(curr_unit) if curr_unit in unit_list else 0
                 proj["unit"] = st.selectbox(
@@ -4492,7 +4642,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                 )
             with row[5]:
                 proj["reduction_kg"] = calc_reduction_kg(proj["fuel"], proj["unit"], proj["amount"], proj["year"])
-                proj["elec_mwh"] = (calc_kbtu(proj["fuel"], proj["unit"], proj["amount"]) / 3412.0
+                proj["elec_mwh"] = (fuel_to_kbtu(proj["fuel"], proj["unit"], proj["amount"]) / 3412.0
                                     if proj["fuel"] == "Electricity" else 0.0)
                 st.metric(
                     "Reduction", f"{proj['reduction_kg']:,.1f}",
@@ -4506,6 +4656,9 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
+
+def _planner_projection(berdo_category, show_grid_decarb, prefill, elec_share, use_reported_share, ghg_intensity, sqft, prefill_addr_key):
+    """Baseline, grid scenario, and project reductions year by year, as table rows."""
     #Grid decarbonization, read from sidebar
      
     st.markdown("---")
@@ -4513,7 +4666,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     if berdo_category not in BERDO_STANDARDS:
         st.warning("Select a valid building type above to see the compliance projection.")
-        return
+        raise _EndTab
 
     apply_grid = show_grid_decarb
     elec_share_val, elec_share_src = resolve_elec_share(prefill, elec_share, use_reported_share)
@@ -4558,85 +4711,23 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                 f"{int(_rep_sqft or 0):,} sq ft."
             )
 
-    #Grid decarbonization, project intensities per period
-    if apply_grid:
-        projected_intensities = project_ghg_intensities(
-            ghg_intensity=baseline_intensity,
-            elec_share=elec_share_val,
-            base_year=_ep_base,
-        )
-        grid_emissions_kg = [pi * sqft for pi in projected_intensities]
-    else:
-        grid_emissions_kg = [total_emissions_kg] * len(COMPLIANCE_PERIODS)
-
-    #Period mapping
-    period_start_years = [2025, 2030, 2035, 2040, 2045, 2050]
-
-    def period_for_year(y):
-        for i in range(len(period_start_years) - 1, -1, -1):
-            if y >= period_start_years[i]:
-                return i
-        return 0
-
-    #Project reductions count from the implementation year onward, never earlier.
-    #BERDO compliance is annual, so each five-year period is modeled year by year;
-    #"2050+" is modeled as the single year 2050.
-    PERIOD_YEARS = [list(range(s, s + 5)) for s in period_start_years[:-1]] + [[period_start_years[-1]]]
+    #All planner numbers come from planner_model (tested in tests/test_planner.py)
+    _ep_cov = coverage_from_prefill(prefill)
+    _covered = [period_covered(_ep_cov, i) for i in range(len(COMPLIANCE_PERIODS))]
     _active_projects = [p for p in st.session_state.get("ep_projects", []) if p.get("reduction_kg", 0) > 0]
-
-    def grid_ef_for_year(y):
-        """
-        Effective grid factor (kg/MWh) the baseline uses in year y, so savings and baseline
-        stay consistent: with the grid scenario off, the baseline assumes the base-year grid;
-        with it on, each period uses its projected factor.
-        """
-        if apply_grid:
-            return effective_grid_ef(PERIOD_REPRESENTATIVE_YEARS[period_for_year(y)])
-        return effective_grid_ef(_ep_base)
-
-    _elec_capped_years = set()
-
-    def reduction_in_year(y):
-        """
-        Annual kg CO2e avoided in year y by projects implemented in or before y.
-        Fossil fuel savings are fixed per unit of fuel. Electricity savings are MWh saved
-        times that year's grid factor, capped at the building's electricity emissions
-        (a project can't avoid more electricity emissions than the building produces).
-        """
-        live = [p for p in _active_projects if p["year"] <= y]
-        fossil = sum(p["reduction_kg"] for p in live if not p.get("elec_mwh"))
-        ef = grid_ef_for_year(y)
-        elec = sum(p["elec_mwh"] for p in live if p.get("elec_mwh")) * ef
-        elec_cap = total_emissions_kg * elec_share_val * ef / effective_grid_ef(_ep_base)
-        if elec > elec_cap:
-            _elec_capped_years.add(y)
-            elec = elec_cap
-        return fossil + elec
-
-    #Average annual reduction within each period (a 2033 project counts for 2 of 5 years)
-    period_reductions_kg = [
-        sum(reduction_in_year(y) for y in yrs) / len(yrs) for yrs in PERIOD_YEARS
-    ]
-
-    has_projects = any(r > 0 for r in period_reductions_kg)
+    _m = planner_model(baseline_intensity, sqft, limits, _active_projects, _covered,
+                       apply_grid=apply_grid, elec_share=elec_share_val, base_year=_ep_base)
+    grid_emissions_kg    = _m["grid_emissions_kg"]
+    period_reductions_kg = _m["period_reductions_kg"]
+    reduction_in_year    = _m["reduction_in_year"]
+    _elec_capped_years   = _m["elec_capped_years"]
+    has_projects = _m["has_projects"]
     has_grid     = apply_grid
 
     #Build two stacked tables
     emissions_rows = []
     fines_rows     = []
 
-    _ep_cov = coverage_from_prefill(prefill)
-    _covered = [period_covered(_ep_cov, i) for i in range(len(COMPLIANCE_PERIODS))]
-
-    def _yearly_acp(base_kg, i):
-        """ACP in each year of period i, given the period's baseline and projects in place that year."""
-        limit_kg = limits[i] * sqft
-        return [max(base_kg - reduction_in_year(y) - limit_kg, 0) / 1000 * ACP_RATE
-                for y in PERIOD_YEARS[i]]
-
-    def _avg_yearly_acp(base_kg, i):
-        vals = _yearly_acp(base_kg, i)
-        return sum(vals) / len(vals)
     if not all(_covered):
         st.caption(
             (f"This building isn't subject to an emissions limit until {_ep_cov['applies_from']} "
@@ -4659,11 +4750,10 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         gap_proj     = proj_kg      - limit_kg
         gap_combined = combined_kg  - limit_kg
 
-        _c = 1 if _covered[i] else 0
-        fine_baseline = round(max(gap_baseline, 0) / 1000 * ACP_RATE, 0) * _c
-        fine_grid     = round(max(gap_grid,     0) / 1000 * ACP_RATE, 0) * _c
-        fine_proj     = round(_avg_yearly_acp(baseline_kg, i), 0) * _c
-        fine_combined = round(_avg_yearly_acp(grid_kg, i), 0) * _c
+        fine_baseline = _m["fines"]["baseline"][i]
+        fine_grid     = _m["fines"]["grid"][i]
+        fine_proj     = _m["fines"]["projects"][i]
+        fine_combined = _m["fines"]["combined"][i]
 
         def _ou(gap):
             if gap < 0:   return f"{abs(gap)/1000:,.0f} MT Under"
@@ -4704,7 +4794,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         if has_projects and has_grid:
             frow["ACP (grid + projects)"] = _fmt_fine(fine_combined)
         fines_rows.append(frow)
+    return _active_projects, _elec_capped_years, _m, apply_grid, elec_share_val, emissions_rows, fines_rows, grid_emissions_kg, has_grid, has_projects, limits, period_reductions_kg, reduction_in_year, total_emissions_kg
 
+
+def _planner_tables(has_projects, emissions_rows, _elec_capped_years, elec_share_val, _active_projects, apply_grid, fines_rows):
+    """The emissions and ACP tables."""
     #Table 1: Emissions
     st.markdown("#### Projected emissions vs. BERDO limit (kg CO₂e/yr)")
     if has_projects:
@@ -4735,36 +4829,20 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         "Not an official City of Boston BERDO compliance determination."
     )
 
+
+def _planner_summary(_m, has_projects, has_grid, reduction_in_year, total_emissions_kg, limits, sqft):
+    """Cumulative ACP metrics and compliant-period counts."""
     #Summary metrics
-    def _cumulative_fine(emissions_by_period):
-        #"2050+" has no end date, so it can't be annualized ×5 like the
-        #five-year periods. Sum only the finite periods.
-        return sum(
-            max(emissions_by_period[i] - limits[i] * sqft, 0) / 1000 * ACP_RATE * 5
-            for i in range(len(COMPLIANCE_PERIODS))
-            if COMPLIANCE_PERIODS[i] != "2050+" and _covered[i]
-        )
-
-    baseline_fines_cumul = _cumulative_fine([total_emissions_kg] * len(COMPLIANCE_PERIODS))
-    def _cumulative_fine_yearly(base_by_period):
-        #Sum ACP for every year 2025-2049 in covered periods, with projects counted
-        #only from their implementation year.
-        return sum(
-            sum(_yearly_acp(base_by_period[i], i))
-            for i in range(len(COMPLIANCE_PERIODS))
-            if COMPLIANCE_PERIODS[i] != "2050+" and _covered[i]
-        )
-
-    proj_fines_cumul     = _cumulative_fine_yearly([total_emissions_kg] * len(COMPLIANCE_PERIODS))
-    grid_fines_cumul     = _cumulative_fine(grid_emissions_kg)
-    combined_fines_cumul = _cumulative_fine_yearly(grid_emissions_kg)
+    baseline_fines_cumul = _m["cumulative"]["baseline"]
+    proj_fines_cumul     = _m["cumulative"]["projects"]
+    grid_fines_cumul     = _m["cumulative"]["grid"]
+    combined_fines_cumul = _m["cumulative"]["combined"]
 
     st.markdown("---")
     num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
     s_cols = st.columns(max(num_cols, 2))
 
-    current_annual_fine = (max(total_emissions_kg - limits[0] * sqft, 0) / 1000 * ACP_RATE
-                           if _covered[0] else 0.0)
+    current_annual_fine = _m["current_annual_fine"]
     s_cols[0].metric(
         "Annual ACP: current period (2025–29)",
         f"${current_annual_fine:,.0f}",
@@ -4813,12 +4891,11 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
                        "Enough to reach compliance this period.")
                 )
 
-    compliant_periods_baseline  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if total_emissions_kg <= limits[i] * sqft)
-    def _all_years_ok(base_kg, i):
-        return all(base_kg - reduction_in_year(y) <= limits[i] * sqft for y in PERIOD_YEARS[i])
-    compliant_periods_proj      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if _all_years_ok(total_emissions_kg, i)) if has_projects else None
-    compliant_periods_grid      = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if grid_emissions_kg[i] <= limits[i] * sqft) if has_grid else None
-    compliant_periods_combined  = sum(1 for i in range(len(COMPLIANCE_PERIODS)) if _all_years_ok(grid_emissions_kg[i], i)) if (has_projects and has_grid) else None
+    _cp = _m["compliant_periods"]
+    compliant_periods_baseline  = _cp["baseline"]
+    compliant_periods_proj      = _cp["projects"] if has_projects else None
+    compliant_periods_grid      = _cp["grid"] if has_grid else None
+    compliant_periods_combined  = _cp["combined"] if (has_projects and has_grid) else None
 
     _all_compliant = [v for v in [compliant_periods_baseline, compliant_periods_proj, compliant_periods_grid, compliant_periods_combined] if v is not None]
     st.caption(
@@ -4829,6 +4906,9 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         + f" (out of {len(COMPLIANCE_PERIODS)} periods)."
     )
 
+
+def _planner_chart(limits, sqft, total_emissions_kg, period_reductions_kg, grid_emissions_kg, has_projects, has_grid):
+    """Emissions vs. limit chart and the method explanation."""
     #Bar chart
     fig = go.Figure()
 
@@ -4924,6 +5004,34 @@ BERDO Emissions Factors List (September 18, 2026) for fuel factors; BERDO Polici
 Procedures v5, Appendix B, for projected grid factors.
 Not an official City of Boston BERDO compliance determination.
 """)
+
+
+def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = False, elec_share=None,
+                                 use_reported_share: bool = True):
+    """
+    Tab 5: Emissions Planner.
+    Shows compliance projection table across all BERDO periods,
+    allows users to enter planned emission reduction projects,
+    and recalculates compliance and ACP fines with and without projects.
+    Pre-fills from Address Lookup session state where available.
+    """
+    if prefill is None:
+        prefill = {}
+
+    st.write(
+        "Model your path to BERDO compliance. Enter planned emission reduction projects "
+        "to see how they affect your compliance status and fine exposure across all periods through 2050."
+    )
+
+    try:
+        berdo_category, ghg_intensity, prefill_addr_key, sqft = _planner_inputs(prefill)
+        _planner_projects()
+        _active_projects, _elec_capped_years, _m, apply_grid, elec_share_val, emissions_rows, fines_rows, grid_emissions_kg, has_grid, has_projects, limits, period_reductions_kg, reduction_in_year, total_emissions_kg = _planner_projection(berdo_category, show_grid_decarb, prefill, elec_share, use_reported_share, ghg_intensity, sqft, prefill_addr_key)
+        _planner_tables(has_projects, emissions_rows, _elec_capped_years, elec_share_val, _active_projects, apply_grid, fines_rows)
+        _planner_summary(_m, has_projects, has_grid, reduction_in_year, total_emissions_kg, limits, sqft)
+        _planner_chart(limits, sqft, total_emissions_kg, period_reductions_kg, grid_emissions_kg, has_projects, has_grid)
+    except _EndTab:
+        return
 
 #App layout
 
@@ -5080,138 +5188,133 @@ tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
 
 #Tab 1: single address lookup (unchanged behaviour)
 
-with tab_address:
-    address_input = st.text_input(
-        "Enter building address",
-        placeholder="Example: 20 Gillette Park"
+def _lookup_building_result(result, address_input):
+    """Building picker, results table, status metrics, notes, and campus panel."""
+    top = None
+    #Building result
+    result["Site EUI"] = result["Site EUI"].round(1)
+    result["GHG Intensity (kgCO2e/sqft)"] = (
+        pd.to_numeric(result["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
+        .round(3)
     )
 
-    if address_input:
-        result = lookup_building_priority(df_full, address_input)
-
-        if result is None:
-            st.warning("No matching address found in the dataset.")
-        else:
-            result["Site EUI"] = result["Site EUI"].round(1)
-            result["GHG Intensity (kgCO2e/sqft)"] = (
-                pd.to_numeric(result["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
-                .round(3)
-            )
-
-            st.subheader("Building Result")
-            if selected_year and selected_year >= 2026:
-                st.caption(
-                    f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
+    st.subheader("Building Result")
+    if selected_year and selected_year >= 2026:
+        st.caption(
+            f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
                     "Statuses marked (City) are the City's own emissions compliance results. The City "
                     "describes this disclosure as provisional: buildings with extensions or under review "
                     "have no energy or emissions data yet, and an update is planned after October 15, 2026."
-                )
-            elif selected_year:
-                st.caption(
-                    f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
+        )
+    elif selected_year:
+        st.caption(
+            f"Reporting year {selected_year}: energy use from calendar year {selected_year - 1}. "
                     "BERDO's first emissions compliance year is 2025 energy use, reported in 2026, so "
                     "flags based on earlier data are a preview."
-                )
+        )
 
-            display_cols = [
-                "Building Address", "Property Owner Name", "Property Type",
-                "Site EUI", "GHG Intensity (kgCO2e/sqft)",
-                "Data Status", "BERDO Status", "Est. ACP (2025–29)", "Notes",
-            ]
-            st.dataframe(result[display_cols], use_container_width=True, hide_index=True)
+    display_cols = [
+        "Building Address", "Property Owner Name", "Property Type",
+        "Site EUI", "GHG Intensity (kgCO2e/sqft)",
+        "Data Status", "BERDO Status", "Est. ACP (2025–29)", "Notes",
+    ]
+    st.dataframe(result[display_cols], use_container_width=True, hide_index=True)
 
-            if len(result) > 1:
-                def _label(r):
-                    owner = r.get("Property Owner Name")
-                    owner = owner if isinstance(owner, str) and owner.strip() else "owner not reported"
-                    bid = r.get("BERDO ID") or "no BERDO ID"
-                    return f"{r.get('Building Address')} · {owner} · BERDO ID {bid}"
-                _labels = [_label(r) for _, r in result.iterrows()]
-                _pick = st.selectbox(
-                    f"{len(result)} buildings match this search. Choose one:",
-                    options=list(range(len(result))),
-                    format_func=lambda i: _labels[i],
-                    key=f"lookup_pick_{address_input}",
-                )
-                top = result.iloc[_pick]
-            else:
-                top = result.iloc[0]
-            bldg_share, bldg_share_note = building_elec_share(
-                top.get("GHG Emissions (kgCO2e)"), top.get("Electricity Emissions (kgCO2e)"))
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Data status", top["Data Status"])
-            with col2:
-                st.metric("BERDO status", top["BERDO Status"])
-            with col3:
-                acp = top["Est. ACP (2025–29)"]
-                st.metric("Est. ACP (2025–29)", f"${acp:,.0f}/yr" if acp else "$0")
+    if len(result) > 1:
+        def _label(r):
+            owner = r.get("Property Owner Name")
+            owner = owner if isinstance(owner, str) and owner.strip() else "owner not reported"
+            bid = r.get("BERDO ID") or "no BERDO ID"
+            return f"{r.get('Building Address')} · {owner} · BERDO ID {bid}"
+        _labels = [_label(r) for _, r in result.iterrows()]
+        _pick = st.selectbox(
+            f"{len(result)} buildings match this search. Choose one:",
+            options=list(range(len(result))),
+            format_func=lambda i: _labels[i],
+            key=f"lookup_pick_{address_input}",
+        )
+        top = result.iloc[_pick]
+    else:
+        top = result.iloc[0]
+    bldg_share, bldg_share_note = building_elec_share(
+        top.get("GHG Emissions (kgCO2e)"), top.get("Electricity Emissions (kgCO2e)"))
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Data status", top["Data Status"])
+    with col2:
+        st.metric("BERDO status", top["BERDO Status"])
+    with col3:
+        acp = top["Est. ACP (2025–29)"]
+        st.metric("Est. ACP (2025–29)", f"${acp:,.0f}/yr" if acp else "$0")
 
-            st.write("**Notes:**", top["Notes"])
+    st.write("**Notes:**", top["Notes"])
 
-            _city_note = top.get("City Note")
-            if isinstance(_city_note, str) and _city_note.strip():
-                st.caption(f"**City note:** {_city_note.strip()}")
+    _city_note = top.get("City Note")
+    if isinstance(_city_note, str) and _city_note.strip():
+        st.caption(f"**City note:** {_city_note.strip()}")
 
-            if top.get("Campus ID"):
-                _ctx = campus_context(df_full, top.get("Campus ID"))
-                if _ctx:
-                    _s = _ctx["summary"]
-                    _row_i = pd.to_numeric(top.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
-                    _msg = (f"**Part of campus {_ctx['campus_id']}** with "
+    if top.get("Campus ID"):
+        _ctx = campus_context(df_full, top.get("Campus ID"))
+        if _ctx:
+            _s = _ctx["summary"]
+            _row_i = pd.to_numeric(top.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
+            _msg = (f"**Part of campus {_ctx['campus_id']}** with "
                             f"{len(_ctx['members'])} buildings in this year's data. The City says "
                             "campus rows may not reflect a building's full energy use, so this "
                             "building's emissions intensity, and any flag based on it, is less certain.")
-                    if _s and _s["intensity"] is not None:
-                        _msg += (f" Campus totals: {_s['gfa']:,.0f} sq ft, "
+            if _s and _s["intensity"] is not None:
+                _msg += (f" Campus totals: {_s['gfa']:,.0f} sq ft, "
                                  f"{_s['ghg'] / 1000:,.0f} metric tons CO₂e, "
                                  f"{_s['intensity']:.2f} kg CO₂e/sf/yr")
-                        if pd.notna(_row_i):
-                            _msg += f" (this building's row: {_row_i:.2f})"
-                        _msg += "."
-                    st.info(_msg)
-                    with st.expander(f"Buildings on campus {_ctx['campus_id']}"):
-                        _m = _ctx["members"]
-                        st.dataframe(pd.DataFrame({
-                            "Address": _m["Building Address"],
-                            "BERDO ID": _m.get("berdo_id"),
-                            "Floor area (sq ft)": pd.to_numeric(_m["gross_floor_area"], errors="coerce").round(0),
-                            "GHG intensity (kg/sf/yr)": pd.to_numeric(
-                                _m["ghg_intensity_kgco2e_sqft"], errors="coerce").round(2),
-                            "Property type": _m["property_type"],
-                        }), hide_index=True, use_container_width=True)
-                        st.caption("Rows as reported in the City's disclosure. Campus totals come "
+                if pd.notna(_row_i):
+                    _msg += f" (this building's row: {_row_i:.2f})"
+                _msg += "."
+            st.info(_msg)
+            with st.expander(f"Buildings on campus {_ctx['campus_id']}"):
+                _m = _ctx["members"]
+                st.dataframe(pd.DataFrame({
+                    "Address": _m["Building Address"],
+                    "BERDO ID": _m.get("berdo_id"),
+                    "Floor area (sq ft)": pd.to_numeric(_m["gross_floor_area"], errors="coerce").round(0),
+                    "GHG intensity (kg/sf/yr)": pd.to_numeric(
+                        _m["ghg_intensity_kgco2e_sqft"], errors="coerce").round(2),
+                    "Property type": _m["property_type"],
+                }), hide_index=True, use_container_width=True)
+                st.caption("Rows as reported in the City's disclosure. Campus totals come "
                                    "from the campus summary row in the same dataset.")
+    return bldg_share, bldg_share_note, top
 
 
-#Fuel breakdown
-            fuel_breakdown = get_fuel_breakdown(top)
-            primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
-            if fuel_breakdown:
-                n_cols = min(len(fuel_breakdown), 5)  #cap at 5 cols
-                st.markdown(f"**Energy usage by fuel ({selected_year} reported)**")
-                fuel_cols = st.columns(n_cols)
-                for i, (label, kbtu, pct) in enumerate(fuel_breakdown[:n_cols]):
-                    fuel_cols[i].metric(
-                        label,
-                        f"{kbtu/1_000:,.0f} MMBtu",
-                        delta=f"{pct:.0f}% of total",
-                    )
-                dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
-                st.caption(
-                    f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
+def _lookup_fuel_breakdown(top, bldg_share, bldg_share_note):
+    """Energy use by fuel and the field definitions."""
+    #Fuel breakdown
+    fuel_breakdown = get_fuel_breakdown(top)
+    primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
+    if fuel_breakdown:
+        n_cols = min(len(fuel_breakdown), 5)  #cap at 5 cols
+        st.markdown(f"**Energy usage by fuel ({selected_year} reported)**")
+        fuel_cols = st.columns(n_cols)
+        for i, (label, kbtu, pct) in enumerate(fuel_breakdown[:n_cols]):
+            fuel_cols[i].metric(
+                label,
+                f"{kbtu/1_000:,.0f} MMBtu",
+                delta=f"{pct:.0f}% of total",
+            )
+        dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
+        st.caption(
+            f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
                     "Used to pre-fill the Retrofit & Incentives tab."
-                )
-            if bldg_share is not None:
-                st.caption(
-                    f"Electricity accounts for **{fmt_share(bldg_share)}** of this building's "
+        )
+    if bldg_share is not None:
+        st.caption(
+            f"Electricity accounts for **{fmt_share(bldg_share)}** of this building's "
                     "reported emissions (City-reported electricity emissions ÷ total)."
-                )
-                if bldg_share_note:
-                    st.caption(bldg_share_note)
-                
-            with st.expander("What do these fields mean?"):
-                st.markdown(r"""
+        )
+        if bldg_share_note:
+            st.caption(bldg_share_note)
+
+    with st.expander("What do these fields mean?"):
+        st.markdown(r"""
 **Compliance Status**
 - **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
 - **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). For 2026, the City lists October 15 as the deadline for annual reporting with approved extensions. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
@@ -5239,270 +5342,320 @@ with tab_address:
 **Est. ACP (2025–29)**
 - Estimated annual Alternative Compliance Payment for the current period, at \$234 per metric ton CO₂e over the limit. Shows \$0 for compliant buildings and those not yet covered.""")    
 
-            st.markdown("---")
+    st.markdown("---")
 
-            #Year-over-year trend (multi-year mode only)
-            prior_ghg, prior_label = None, None
-            if show_yoy and multi_year_mode:
-                prior_ghg, prior_label = render_yoy_trend(top, all_years)
-                st.markdown("---")
 
-            #Grid decarbonization projection 
-            projected_intensities = None
-            if show_grid_decarb and elec_share is not None:
-                year_txt = f"{selected_year} data" if selected_year else "reported data"
-                if use_reported_share and bldg_share is not None:
-                    share_for_grid = bldg_share
-                    st.caption(
-                        f"Grid scenario uses this building's reported electricity share: "
+def _lookup_trend(top):
+    """Year-over-year trend, linked by BERDO ID."""
+    #Year-over-year trend (multi-year mode only)
+    prior_ghg, prior_label = None, None
+    if show_yoy and multi_year_mode:
+        prior_ghg, prior_label = render_yoy_trend(top, all_years)
+        st.markdown("---")
+    return prior_ghg, prior_label
+
+
+def _lookup_compliance(bldg_share, top, prior_ghg, prior_label):
+    """Grid scenario, building uses and limits, and the compliance gap analysis."""
+    #Grid decarbonization projection 
+    projected_intensities = None
+    if show_grid_decarb and elec_share is not None:
+        year_txt = f"{selected_year} data" if selected_year else "reported data"
+        if use_reported_share and bldg_share is not None:
+            share_for_grid = bldg_share
+            st.caption(
+                f"Grid scenario uses this building's reported electricity share: "
                         f"**{fmt_share(bldg_share)}** ({year_txt})."
-                    )
-                else:
-                    share_for_grid = elec_share
-                    why = ("the reported-share option is off in the sidebar"
-                           if not use_reported_share
-                           else "this year's data has no electricity breakdown for this building")
-                    st.caption(
-                        f"Grid scenario uses the sidebar estimate of **{fmt_share(elec_share)}** "
+            )
+        else:
+            share_for_grid = elec_share
+            why = ("the reported-share option is off in the sidebar"
+                   if not use_reported_share
+                   else "this year's data has no electricity breakdown for this building")
+            st.caption(
+                f"Grid scenario uses the sidebar estimate of **{fmt_share(elec_share)}** "
                         f"because {why}."
-                    )
-                ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
-                if pd.notna(ghg_val) and ghg_val > 0:
-                    projected_intensities = project_ghg_intensities(
-                        ghg_intensity=float(ghg_val),
-                        elec_share=share_for_grid,
-                        base_year=(selected_year - 1) if selected_year else 2025,
-                    )
+            )
+        ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
+        if pd.notna(ghg_val) and ghg_val > 0:
+            projected_intensities = project_ghg_intensities(
+                ghg_intensity=float(ghg_val),
+                elec_share=share_for_grid,
+                base_year=(selected_year - 1) if selected_year else 2025,
+            )
 
-            _gov = government_status(top.get("Compliance Status"))
-            _cov = coverage_for(top.get("First Compliance Year"), top.get("Compliance Status"),
-                                top.get("Property Owner Name"))
-            if _gov:
-                st.info(
-                    f"**{_gov} building.** The City's data marks this as a {_gov.lower()} building. "
+    _gov = government_status(top.get("Compliance Status"))
+    _cov = coverage_for(top.get("First Compliance Year"), top.get("Compliance Status"),
+                        top.get("Property Owner Name"))
+    if _gov:
+        st.info(
+            f"**{_gov} building.** The City's data marks this as a {_gov.lower()} building. "
                     "A city ordinance generally can't require state or federal agencies to comply "
                     "the way it requires private owners, and the City hasn't published how BERDO "
                     "applies to them. The analysis below compares its emissions to the BERDO limit "
                     "for reference only. It is not a finding of noncompliance, and ACP estimates "
                     "may not apply."
-                )
+        )
 
-            use_mix_limits = render_use_mix_editor(top)
-            _limits_source = "blend" if use_mix_limits is not None else None
-            #When the City publishes a building's applicable standard (it already reflects
-            #blended standards), use it as the 2025-29 limit; later periods use the default.
-            _off_std = pd.to_numeric(top.get("Official Standard"), errors="coerce")
-            if use_mix_limits is None and pd.notna(_off_std) and _bl_default_limits(top):
-                use_mix_limits = [float(_off_std)] + list(_bl_default_limits(top))[1:]
-                _limits_source = "official"
-                st.caption(f"2025–29 limit uses the City's applicable standard for this building "
+    use_mix_limits = render_use_mix_editor(top)
+    _limits_source = "blend" if use_mix_limits is not None else None
+    #When the City publishes a building's applicable standard (it already reflects
+    #blended standards), use it as the 2025-29 limit; later periods use the default.
+    _off_std = pd.to_numeric(top.get("Official Standard"), errors="coerce")
+    if use_mix_limits is None and pd.notna(_off_std) and _bl_default_limits(top):
+        use_mix_limits = [float(_off_std)] + list(_bl_default_limits(top))[1:]
+        _limits_source = "official"
+        st.caption(f"2025–29 limit uses the City's applicable standard for this building "
                            f"({float(_off_std):.2f} kg/sf/yr). Later periods use the default standards.")
-            _city_status = top.get("City Emissions Status")
-            if isinstance(_city_status, str) and _city_status:
-                st.info(f"**City emissions compliance status (2025 energy use):** {_city_status}")
+    _city_status = top.get("City Emissions Status")
+    if isinstance(_city_status, str) and _city_status:
+        st.info(f"**City emissions compliance status (2025 energy use):** {_city_status}")
 
-            render_compliance_section(
-                top,
-                prior_year_ghg_intensity=prior_ghg,
-                prior_year_label=prior_label,
-                projected_intensities=projected_intensities,
-                base_year=(selected_year - 1) if selected_year else 2025,
-                limits=use_mix_limits,
-                limits_label=("City's applicable standard" if _limits_source == "official" else None),
-            )
+    render_compliance_section(
+        top,
+        prior_year_ghg_intensity=prior_ghg,
+        prior_year_label=prior_label,
+        projected_intensities=projected_intensities,
+        base_year=(selected_year - 1) if selected_year else 2025,
+        limits=use_mix_limits,
+        limits_label=("City's applicable standard" if _limits_source == "official" else None),
+    )
+    return _cov, _gov, _limits_source, projected_intensities, use_mix_limits
 
-            #Compliance pathways
-            _bl_ctx = building_limits(top.get("Property Type"), top.get("All Property Types"))
-            _blend_fixes = False
-            _ghg_ctx  = pd.to_numeric(top.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
-            _sqft_ctx = pd.to_numeric(top.get("Gross Floor Area"), errors="coerce")
-            if _bl_ctx.get("blended") and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx):
-                _bg = calculate_compliance_gap(float(_ghg_ctx), float(_sqft_ctx), None,
-                                               limits=_bl_ctx["blended"])
-                _blend_fixes = (top["BERDO Status"] == "Over 2025–29 limit"
-                                and bool(_bg) and _bg[0]["compliant"])
-            _owner = str(top.get("Property Owner Name") or "").strip().lower()
-            _n_owned = 0
-            if _owner and _owner != "nan":
-                _n_owned = int((df_full["Property Owner Name"].astype(str)
-                                .str.strip().str.lower() == _owner).sum())
-            _pathways_ctx = {
-                "over_now":             top["BERDO Status"] == "Over 2025–29 limit",
-                "fails_later":          top["BERDO Status"] == "Fails 2030–34",
-                "blend_available":      _bl_ctx["basis"] != "largest_use",
-                "blend_fixes":          _blend_fixes,
-                "owner_building_count": _n_owned,
-                "elec_share":           bldg_share,
-            }
-            render_compliance_pathways(_pathways_ctx)
 
-            #One-page PDF summary for a board, lender, or consultant
-            _pdf_limits = use_mix_limits or _bl_ctx["limits"]
-            _periods = []
-            if _pdf_limits and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx) and _sqft_ctx > 0:
-                for _i, _g in enumerate(calculate_compliance_gap(
-                        float(_ghg_ctx), float(_sqft_ctx), None, limits=_pdf_limits, coverage=_cov)):
-                    _row = {"period": _g["period"], "limit": _g["limit"], "gap": _g["gap"],
-                            "status": (coverage_label(_cov, _i) if not _g["covered"]
-                                       else "Meets limit" if _g["compliant"] else "Over limit"),
-                            "acp": _g["annual_fine_usd"]}
-                    if projected_intensities is not None:
-                        _pg = calculate_compliance_gap(projected_intensities[_i], float(_sqft_ctx),
-                                                       None, limits=_pdf_limits, coverage=_cov)[_i]
-                        _row["grid_status"] = (coverage_label(_cov, _i) if not _pg["covered"]
-                                               else "Meets limit" if _pg["compliant"] else "Over limit")
-                    _periods.append(_row)
+def _lookup_pathways(top, bldg_share):
+    """BERDO compliance pathways for this building."""
+    #Compliance pathways
+    _bl_ctx = building_limits(top.get("Property Type"), top.get("All Property Types"))
+    _blend_fixes = False
+    _ghg_ctx  = pd.to_numeric(top.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
+    _sqft_ctx = pd.to_numeric(top.get("Gross Floor Area"), errors="coerce")
+    if _bl_ctx.get("blended") and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx):
+        _bg = calculate_compliance_gap(float(_ghg_ctx), float(_sqft_ctx), None,
+                                       limits=_bl_ctx["blended"])
+        _blend_fixes = (top["BERDO Status"] == "Over 2025–29 limit"
+                        and bool(_bg) and _bg[0]["compliant"])
+    _owner = str(top.get("Property Owner Name") or "").strip().lower()
+    _n_owned = 0
+    if _owner and _owner != "nan":
+        _n_owned = int((df_full["Property Owner Name"].astype(str)
+                        .str.strip().str.lower() == _owner).sum())
+    _pathways_ctx = {
+        "over_now":             top["BERDO Status"] == "Over 2025–29 limit",
+        "fails_later":          top["BERDO Status"] == "Fails 2030–34",
+        "blend_available":      _bl_ctx["basis"] != "largest_use",
+        "blend_fixes":          _blend_fixes,
+        "owner_building_count": _n_owned,
+        "elec_share":           bldg_share,
+    }
+    render_compliance_pathways(_pathways_ctx)
+    return _bl_ctx, _ghg_ctx, _pathways_ctx, _sqft_ctx
 
-            def _num(v, fmt):
-                v = pd.to_numeric(v, errors="coerce")
-                return fmt.format(v) if pd.notna(v) else "Not reported"
 
-            _facts = [
-                ("BERDO category", _bl_ctx["label"] or "Not mappable", "Calculated"),
-                ("Reported property type", top.get("Property Type") if isinstance(top.get("Property Type"), str)
-                 and top.get("Property Type").strip() else "Not reported", "Reported"),
-                ("Gross floor area", _num(top.get("Gross Floor Area"), "{:,.0f} sq ft"), "Reported"),
-                ("Total GHG emissions", _num(pd.to_numeric(top.get("GHG Emissions (kgCO2e)"),
-                                                           errors="coerce") / 1000,
-                                             "{:,.0f} metric tons CO2e"), "Reported (City estimate)"),
-                ("GHG intensity", _num(_ghg_ctx, "{:.2f} kg CO2e/sf/yr"), "Calculated"),
-                ("Electricity share of emissions",
-                 fmt_share(bldg_share), "Calculated"),
-                ("Site EUI", _num(top.get("Site EUI"), "{:.1f} kBtu/sf/yr"), "Reported"),
-                ("Annual reporting", reporting_status_label(top.get("Compliance Status")), "Reported"),
-                ("Screening result", top.get("BERDO Status"), "Calculated"),
-                ("Est. annual ACP (2025–29)",
-                 f"Not estimated ({_gov.lower()} record)" if _gov else
-                 "Not applicable (not yet covered)" if (_cov["known"] and not period_covered(_cov, 0)) else
-                 "Not estimated (coverage year not reported)" if not _cov["known"] else
-                 (f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0"),
-                 "Estimated"),
-            ]
-            _limit_basis = (
-                "The 2025–29 limit is the City's applicable standard for this building; later "
-                "periods use the default standards."
-                if _limits_source == "official" else
-                "Limits shown use the Blended Emissions Standard, an option the owner may adopt "
-                "(estimated by this tool from floor area by use)."
-                if use_mix_limits else
-                f"Limits shown are the default for the building's largest use ({_bl_ctx['label']})."
-            )
-            if _cov["known"] and not period_covered(_cov, 0):
-                _limit_basis = (f"No emissions limit applies until {_cov['applies_from']} emissions; "
-                                "earlier periods are shown for reference only. " + _limit_basis)
-            if _cov["city"]:
-                _limit_basis += " City building: the ordinance's daily fines don't apply."
-            if _gov:
-                _limit_basis = (f"Reference only: the City's data marks this as a {_gov.lower()} "
-                                "building, and BERDO's treatment of it is unconfirmed. " + _limit_basis)
-            _blend_note = ""
-            if not use_mix_limits and _bl_ctx.get("blended"):
-                _blend_note = (f"If the owner adopts a Blended Emissions Standard, the 2025–29 "
-                               f"limit would be about {_bl_ctx['blended'][0]:.2f} (estimated).")
-            _grid_note = ""
+def _lookup_pdf(use_mix_limits, _bl_ctx, _ghg_ctx, _sqft_ctx, _cov, projected_intensities, top, bldg_share, _gov, _limits_source, address_input, _pathways_ctx):
+    """The one-page PDF summary and its download button."""
+    #One-page PDF summary for a board, lender, or consultant
+    _pdf_limits = use_mix_limits or _bl_ctx["limits"]
+    _periods = []
+    if _pdf_limits and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx) and _sqft_ctx > 0:
+        for _i, _g in enumerate(calculate_compliance_gap(
+                float(_ghg_ctx), float(_sqft_ctx), None, limits=_pdf_limits, coverage=_cov)):
+            _row = {"period": _g["period"], "limit": _g["limit"], "gap": _g["gap"],
+                    "status": (coverage_label(_cov, _i) if not _g["covered"]
+                               else "Meets limit" if _g["compliant"] else "Over limit"),
+                    "acp": _g["annual_fine_usd"]}
             if projected_intensities is not None:
-                _grid_note = ("Grid scenario: projection assuming the electric grid gets cleaner "
+                _pg = calculate_compliance_gap(projected_intensities[_i], float(_sqft_ctx),
+                                               None, limits=_pdf_limits, coverage=_cov)[_i]
+                _row["grid_status"] = (coverage_label(_cov, _i) if not _pg["covered"]
+                                       else "Meets limit" if _pg["compliant"] else "Over limit")
+            _periods.append(_row)
+
+    def _num(v, fmt):
+        v = pd.to_numeric(v, errors="coerce")
+        return fmt.format(v) if pd.notna(v) else "Not reported"
+
+    _facts = [
+        ("BERDO category", _bl_ctx["label"] or "Not mappable", "Calculated"),
+        ("Reported property type", top.get("Property Type") if isinstance(top.get("Property Type"), str)
+         and top.get("Property Type").strip() else "Not reported", "Reported"),
+        ("Gross floor area", _num(top.get("Gross Floor Area"), "{:,.0f} sq ft"), "Reported"),
+        ("Total GHG emissions", _num(pd.to_numeric(top.get("GHG Emissions (kgCO2e)"),
+                                                   errors="coerce") / 1000,
+                                     "{:,.0f} metric tons CO2e"), "Reported (City estimate)"),
+        ("GHG intensity", _num(_ghg_ctx, "{:.2f} kg CO2e/sf/yr"), "Calculated"),
+        ("Electricity share of emissions",
+         fmt_share(bldg_share), "Calculated"),
+        ("Site EUI", _num(top.get("Site EUI"), "{:.1f} kBtu/sf/yr"),
+         "Calculated" if top.get("Site EUI Calculated") else "Reported"),
+        ("Annual reporting", reporting_status_label(top.get("Compliance Status")), "Reported"),
+        ("Screening result", top.get("BERDO Status"), "Calculated"),
+        ("Est. annual ACP (2025–29)",
+         f"Not estimated ({_gov.lower()} record)" if _gov else
+         "Not applicable (not yet covered)" if (_cov["known"] and not period_covered(_cov, 0)) else
+         "Not estimated (coverage year not reported)" if not _cov["known"] else
+         (f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0"),
+         "Estimated"),
+    ]
+    _limit_basis = (
+        "The 2025–29 limit is the City's applicable standard for this building; later "
+                "periods use the default standards."
+        if _limits_source == "official" else
+        "Limits shown use the Blended Emissions Standard, an option the owner may adopt "
+                "(estimated by this tool from floor area by use)."
+        if use_mix_limits else
+        f"Limits shown are the default for the building's largest use ({_bl_ctx['label']})."
+    )
+    if _cov["known"] and not period_covered(_cov, 0):
+        _limit_basis = (f"No emissions limit applies until {_cov['applies_from']} emissions; "
+                                "earlier periods are shown for reference only. " + _limit_basis)
+    if _cov["city"]:
+        _limit_basis += " City building: the ordinance's daily fines don't apply."
+    if _gov:
+        _limit_basis = (f"Reference only: the City's data marks this as a {_gov.lower()} "
+                                "building, and BERDO's treatment of it is unconfirmed. " + _limit_basis)
+    _blend_note = ""
+    if not use_mix_limits and _bl_ctx.get("blended"):
+        _blend_note = (f"If the owner adopts a Blended Emissions Standard, the 2025–29 "
+                               f"limit would be about {_bl_ctx['blended'][0]:.2f} (estimated).")
+    _grid_note = ""
+    if projected_intensities is not None:
+        _grid_note = ("Grid scenario: projection assuming the electric grid gets cleaner "
                               "per the City's projected emissions factors, with fossil fuel use "
                               "unchanged (Estimated).")
-            _notes = [n.strip() for n in str(top.get("Notes") or "").split(";") if n.strip()]
-            _cn = top.get("City Note")
-            if isinstance(_cn, str) and _cn.strip():
-                _cn = _cn.strip()
-                _notes.append("City note: " + (_cn if len(_cn) <= 240 else _cn[:237] + "..."))
+    _notes = [n.strip() for n in str(top.get("Notes") or "").split(";") if n.strip()]
+    _cn = top.get("City Note")
+    if isinstance(_cn, str) and _cn.strip():
+        _cn = _cn.strip()
+        _notes.append("City note: " + (_cn if len(_cn) <= 240 else _cn[:237] + "..."))
 
-            try:
-                _pdf_bytes = build_building_summary_pdf({
-                    "address":     top.get("Building Address", address_input),
-                    "owner":       top.get("Property Owner Name"),
-                    "data_year":   (f"{selected_year} reporting year ({selected_year - 1} energy use)"
-                                    if selected_year else None),
-                    "facts":       _facts,
-                    "periods":     _periods,
-                    "limit_basis": _limit_basis,
-                    "blend_note":  _blend_note,
-                    "grid_note":   _grid_note,
-                    "notes":       _notes,
-                    "pathways":    get_compliance_pathways(_pathways_ctx),
-                })
-                _slug = re.sub(r"[^A-Za-z0-9]+", "_", str(top.get("Building Address", "building"))).strip("_")
-                st.download_button(
-                    "Download one-page summary (PDF)",
-                    data=_pdf_bytes,
-                    file_name=f"BERDO_summary_{_slug}_{selected_year or 'data'}.pdf",
-                    mime="application/pdf",
-                    help="Status, limits by period, screening notes, and compliance options "
+    try:
+        _pdf_bytes = build_building_summary_pdf({
+            "address":     top.get("Building Address", address_input),
+            "owner":       top.get("Property Owner Name"),
+            "data_year":   (f"{selected_year} reporting year ({selected_year - 1} energy use)"
+                            if selected_year else None),
+            "facts":       _facts,
+            "periods":     _periods,
+            "limit_basis": _limit_basis,
+            "blend_note":  _blend_note,
+            "grid_note":   _grid_note,
+            "notes":       _notes,
+            "pathways":    get_compliance_pathways(_pathways_ctx),
+        })
+        _slug = re.sub(r"[^A-Za-z0-9]+", "_", str(top.get("Building Address", "building"))).strip("_")
+        st.download_button(
+            "Download one-page summary (PDF)",
+            data=_pdf_bytes,
+            file_name=f"BERDO_summary_{_slug}_{selected_year or 'data'}.pdf",
+            mime="application/pdf",
+            help="Status, limits by period, screening notes, and compliance options "
                          "on one page, for a board, lender, or consultant. Reflects the "
                          "settings currently shown (blended standard, grid scenario).",
-                )
-            except ImportError:
-                st.caption(
-                    "PDF export needs the reportlab package. Add `reportlab` to requirements.txt."
-                )
+        )
+    except ImportError:
+        st.caption(
+            "PDF export needs the reportlab package. Add `reportlab` to requirements.txt."
+        )
 
-            #Store prefill data for Incentive Optimizer tab
-            ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
-            sqft_val = top.get("Gross Floor Area")
-            raw_type = top.get("Property Type")
-            berdo_cat = map_property_type(raw_type)
 
-            opt_prefill = {
-                "address":       top.get("Building Address", address_input),
-                "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else 50_000,
-                "berdo_category": berdo_cat,
-                "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
-                "limits":        use_mix_limits,
-                "coverage":      _cov,
-                "elec_share":    bldg_share,
-                "elec_share_year": selected_year or None,
-            }
+def _lookup_prefill(top, address_input, use_mix_limits, _cov, bldg_share):
+    """Pass this building to the Retrofit & Incentives and Emissions Planner tabs."""
+    #Store prefill data for Incentive Optimizer tab
+    ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
+    sqft_val = top.get("Gross Floor Area")
+    raw_type = top.get("Property Type")
+    berdo_cat = map_property_type(raw_type)
 
-            #Calculate fine for 2025–29 period if possible
-            if (
-                pd.notna(ghg_val) and ghg_val > 0
-                and pd.notna(sqft_val) and sqft_val > 0
-                and (use_mix_limits is not None or berdo_cat in BERDO_STANDARDS)
-            ):
-                limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
-                gap = float(ghg_val) - limit_2025
-                _portfolio_level = str(top.get("City Emissions Status") or "").lower().startswith("emissions compliance at portfolio")
-                if gap > 0 and period_covered(_cov, 0) and not _portfolio_level:
-                    excess_tons = gap * float(sqft_val) / 1000
-                    opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
-                    opt_prefill["ghg_intensity"] = float(ghg_val)
+    opt_prefill = {
+        "address":       top.get("Building Address", address_input),
+        "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else 50_000,
+        "berdo_category": berdo_cat,
+        "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
+        "building_key":  f"{top.get('BERDO ID') or ''}|{top.get('Building Address', address_input)}|{selected_year}",
+        "limits":        use_mix_limits,
+        "coverage":      _cov,
+        "elec_share":    bldg_share,
+        "elec_share_year": selected_year or None,
+    }
 
-            st.session_state["optimizer_prefill"] = opt_prefill
-           
-            #Also pre-fill the Emissions Planner tab
-            ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
-            planner_prefill = {
-                "address":          opt_prefill.get("address", address_input),
-                "sqft":             opt_prefill.get("sqft", 50_000),
-                "berdo_category":   berdo_cat,
-                "limits":           use_mix_limits,
-                "coverage":         _cov,
-                "elec_share":       bldg_share,
-                "elec_share_year":  selected_year or None,
-                "data_year":        (selected_year - 1) if selected_year else None,
-                #Full-precision intensity from reported totals, so the planner's editable
-                #field reproduces the reported baseline exactly
-                "ghg_intensity":    (float(ghg_emissions_raw) / float(sqft_val)
-                                     if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0
-                                     and pd.notna(sqft_val) and sqft_val > 0
-                                     else float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0),
-                "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
-                #Identifies this building and data year; the planner pre-fills its fields
-                #only when this changes, so user edits aren't overwritten on reruns
-                "building_key":     f"{top.get('BERDO ID') or ''}|{top.get('Building Address', address_input)}|{selected_year}",
-            }
-            st.session_state["planner_prefill"] = planner_prefill
+    #Calculate fine for 2025–29 period if possible
+    if (
+        pd.notna(ghg_val) and ghg_val > 0
+        and pd.notna(sqft_val) and sqft_val > 0
+        and (use_mix_limits is not None or berdo_cat in BERDO_STANDARDS)
+    ):
+        limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
+        gap = float(ghg_val) - limit_2025
+        _portfolio_level = str(top.get("City Emissions Status") or "").lower().startswith("emissions compliance at portfolio")
+        if gap > 0 and period_covered(_cov, 0) and not _portfolio_level:
+            excess_tons = gap * float(sqft_val) / 1000
+            opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
+            opt_prefill["ghg_intensity"] = float(ghg_val)
 
-            st.info(
-                "Building data saved: open the **Retrofit & Incentives** or **Emissions Planner** tabs "
+    st.session_state["optimizer_prefill"] = opt_prefill
+
+    #Also pre-fill the Emissions Planner tab
+    ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
+    planner_prefill = {
+        "address":          opt_prefill.get("address", address_input),
+        "sqft":             opt_prefill.get("sqft", 50_000),
+        "berdo_category":   berdo_cat,
+        "limits":           use_mix_limits,
+        "coverage":         _cov,
+        "elec_share":       bldg_share,
+        "elec_share_year":  selected_year or None,
+        "data_year":        (selected_year - 1) if selected_year else None,
+        #Full-precision intensity from reported totals, so the planner's editable
+        #field reproduces the reported baseline exactly
+        "ghg_intensity":    (float(ghg_emissions_raw) / float(sqft_val)
+                             if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0
+                             and pd.notna(sqft_val) and sqft_val > 0
+                             else float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0),
+        "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
+        #Identifies this building and data year; the planner pre-fills its fields
+        #only when this changes, so user edits aren't overwritten on reruns
+        "building_key":     f"{top.get('BERDO ID') or ''}|{top.get('Building Address', address_input)}|{selected_year}",
+    }
+    st.session_state["planner_prefill"] = planner_prefill
+
+    st.info(
+        "Building data saved: open the **Retrofit & Incentives** or **Emissions Planner** tabs "
                 "to model funding programs and compliance trajectory for this building."
-            )
+    )
 
 
-#Tab 2: owner portfolio lookup
+def render_address_lookup_tab():
+    """Address Lookup tab: search, building result, trend, compliance, pathways, PDF, and pre-fill."""
+    address_input = st.text_input(
+        "Enter building address",
+        placeholder="Example: 20 Gillette Park"
+    )
+
+    if not address_input:
+        return
+
+    result = lookup_building_priority(df_full, address_input)
+
+    if result is None:
+        st.warning("No matching address found in the dataset.")
+        return
+
+    bldg_share, bldg_share_note, top = _lookup_building_result(result, address_input)
+    _lookup_fuel_breakdown(top, bldg_share, bldg_share_note)
+    prior_ghg, prior_label = _lookup_trend(top)
+    _cov, _gov, _limits_source, projected_intensities, use_mix_limits = _lookup_compliance(bldg_share, top, prior_ghg, prior_label)
+    _bl_ctx, _ghg_ctx, _pathways_ctx, _sqft_ctx = _lookup_pathways(top, bldg_share)
+    _lookup_pdf(use_mix_limits, _bl_ctx, _ghg_ctx, _sqft_ctx, _cov, projected_intensities, top, bldg_share, _gov, _limits_source, address_input, _pathways_ctx)
+    _lookup_prefill(top, address_input, use_mix_limits, _cov, bldg_share)
+
+
+    #Tab 2: owner portfolio lookup
+
+
+with tab_address:
+    render_address_lookup_tab()
+
 
 with tab_portfolio:
     st.write(
