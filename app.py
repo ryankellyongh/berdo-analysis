@@ -32,6 +32,25 @@ from ui.planner import (
     render_emissions_planner_tab,
 )
 
+#PROJECT MAP: where to find things
+#  berdo/regulations.py   Official tables: limits, grid factors, RPS, fuel factors, links,
+#                         deadlines, REC prices, incentives, units, Sources & verification
+#  berdo/schema.py        The City's column names by field (add new names here)
+#  berdo/emissions.py     Rules and calculations: limits, blended standards, coverage,
+#                         compliance gaps, City statuses, screening, grid, RECs, planner model
+#  berdo/data.py          Loading and preparing data, year detection, campus rows,
+#                         linking buildings across years, lookups
+#  berdo/portfolio.py     Building Portfolio calculations
+#  berdo/retrofit.py      Retrofit, incentive, payback, and ACP schedule calculations
+#  berdo/pdf_export.py    The one-page PDF summary
+#  ui/address_lookup.py   Address Lookup tab
+#  ui/portfolio.py        Owner Portfolio tab
+#  ui/retrofit.py         Retrofit & Incentives tab
+#  ui/planner.py          Emissions Planner tab
+#  ui/common.py           Small helpers the tabs share
+#  app.py (this file)     Page setup, cached data loading, sidebar, and tabs
+#  tests/                 Run with: python run_tests.py
+
 #Page config
 
 st.set_page_config(
