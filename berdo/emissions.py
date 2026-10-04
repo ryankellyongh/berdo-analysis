@@ -945,3 +945,69 @@ def _estimate_incentive_value(inc, sqft):
         round(inc["amount_psf_low"]  * sqft * f, 0),
         round(inc["amount_psf_high"] * sqft * f, 0),
     )
+
+
+#Address Lookup calculations
+
+def acp_exposure(gaps) -> dict:
+    """
+    Cumulative ACP exposure from a gap schedule (calculate_compliance_gap), counting
+    only covered, non-compliant periods. Five-year periods through 2049 are summed
+    (annual ACP x 5); 2050+ is reported as an open-ended annual amount.
+    """
+    over = [g for g in gaps if g["covered"] and not g["compliant"]]
+    finite = [g for g in over if g["period"] != "2050+"]
+    indefinite = next((g for g in over if g["period"] == "2050+"), None)
+    return {"any": bool(over), "periods_over": len(finite),
+            "total_5yr": sum(g["annual_fine_usd"] * 5 for g in finite),
+            "annual_2050": indefinite["annual_fine_usd"] if indefinite else None}
+
+
+def is_portfolio_level(city_status) -> bool:
+    """True when the City assesses this building as part of a Building Portfolio."""
+    return str(city_status or "").lower().startswith("emissions compliance at portfolio")
+
+
+def current_period_acp(ghg_intensity, sqft, limit_2025, coverage, city_status=None):
+    """
+    Estimated annual ACP for 2025-29, or None when there's no ACP to estimate: under
+    the limit, not covered yet, or assessed as part of a Building Portfolio.
+    """
+    gap = float(ghg_intensity) - limit_2025
+    if gap > 0 and period_covered(coverage, 0) and not is_portfolio_level(city_status):
+        return round(gap * float(sqft) / 1000 * ACP_RATE, 0)
+    return None
+
+
+def limits_with_city_standard(default_limits, city_standard):
+    """
+    Use the City's applicable standard (which already reflects blended standards and
+    other flexibility measures) for 2025-29, and the default standards afterward.
+    Returns None when either input is missing.
+    """
+    std = pd.to_numeric(city_standard, errors="coerce")
+    if default_limits is None or std is None or pd.isna(std):
+        return None
+    return [float(std)] + list(default_limits)[1:]
+
+
+def period_status_rows(intensity, sqft, limits, coverage, projected_intensities=None):
+    """
+    One row per compliance period for the PDF: limit, gap, status, estimated ACP, and
+    (when given) the status under the grid scenario.
+    """
+    def status(g, i):
+        if not g["covered"]:
+            return coverage_label(coverage, i)
+        return "Meets limit" if g["compliant"] else "Over limit"
+    rows = []
+    for i, g in enumerate(calculate_compliance_gap(float(intensity), float(sqft), None,
+                                                   limits=limits, coverage=coverage)):
+        row = {"period": g["period"], "limit": g["limit"], "gap": g["gap"],
+               "status": status(g, i), "acp": g["annual_fine_usd"]}
+        if projected_intensities is not None:
+            pg = calculate_compliance_gap(projected_intensities[i], float(sqft), None,
+                                          limits=limits, coverage=coverage)[i]
+            row["grid_status"] = status(pg, i)
+        rows.append(row)
+    return rows

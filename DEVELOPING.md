@@ -14,18 +14,27 @@
 | `berdo/schema.py` | The City's column names, by field | No |
 | `berdo/emissions.py` | Rules and calculations, including the City's official statuses and the Emissions Planner model | No |
 | `berdo/data.py` | Preparing and searching the City's data | No |
+| `berdo/portfolio.py` | Building Portfolio calculations: included buildings, blended standard, ACP exposure, per-building gaps | No |
+| `berdo/retrofit.py` | Retrofit calculations: cost estimate, project impact, incentives, net cost, payback, ACP schedule, recommendation | No |
 | `berdo/pdf_export.py` | The one-page PDF summary | No |
 | `tests/` | Tests for official values and calculation rules | No |
 
 Rule of thumb: if it's a number or a rule, it belongs in `berdo/` and should have a test.
 The `ui/` files only display what `berdo/` calculates.
 
-Each layer only uses the layers below it: `regulations` and `schema` -> `emissions` -> `data` and `pdf_export` -> `ui` -> `app.py`.
+Each layer only uses the layers below it: `regulations` and `schema` -> `emissions` -> `data`, `portfolio`, `retrofit`, and `pdf_export` -> `ui` -> `app.py`.
+
+The `ui/` files contain no ACP or emissions calculations; they call `berdo/` and format the results.
 
 ## Running tests
 
-    python run_tests.py        # no extra installs needed
-    pytest                     # if you've installed requirements-dev.txt
+    python run_tests.py                 # no extra installs needed
+    pytest                              # if you've installed requirements-dev.txt
+    python check_function_coverage.py   # which berdo/ functions the tests exercise
+
+Expected values in the tests are worked out by hand in comments next to each test,
+so a failure means either the code or the official numbers changed. Every function
+in `berdo/` should be exercised; add a test with each new function.
 
 ## Updating for a new year of data
 

@@ -7,7 +7,6 @@ import streamlit as st
 from berdo.regulations import (
     BERDO_STANDARDS,
     COMPLIANCE_PERIODS,
-    FUEL_EF_KG_PER_KBTU,
     FUEL_UNIT_OPTIONS,
 )
 from berdo.emissions import (
@@ -19,6 +18,9 @@ from berdo.emissions import (
     period_covered,
     planner_model,
     resolve_elec_share,
+)
+from berdo.retrofit import (
+    first_year_reduction_kg,
 )
 from ui.common import (
     _EndTab,
@@ -117,12 +119,7 @@ def _planner_projects():
     def calc_reduction_kg(fuel, unit, amount, year=2025):
         """First-year reduction, shown in the project table. The projection recalculates
         electricity savings each year from the MWh saved (see reduction_in_year)."""
-        kbtu = fuel_to_kbtu(fuel, unit, amount)
-        if fuel == "Electricity":
-            ef = effective_grid_ef(year) / 1000 / 3.412  #kg/kBtu
-        else:
-            ef = FUEL_EF_KG_PER_KBTU[fuel]  
-        return round(kbtu * ef, 2)
+        return round(first_year_reduction_kg(fuel, unit, amount, year), 2)
 
     projects_to_remove = []
     projects = st.session_state["ep_projects"]

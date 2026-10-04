@@ -465,3 +465,34 @@ def lookup_owner_portfolio(df, owner_name):
     for _, row in matches.iterrows():
         results.append(lookup_result_row(row, include_fuel=False))
     return pd.DataFrame(results)
+
+
+#Assigning each data file its year
+
+def year_from_filename(file_name: str):
+    """The reporting year in a file name like 'berdo_2026.csv', or None."""
+    m = re.match(r"^berdo_(\d{4})(?:\D|$)", file_name)
+    return int(m.group(1)) if m else None
+
+
+def add_year_file(year_map: dict, file_name: str, file_year: int, df: pd.DataFrame) -> dict:
+    """
+    Add one prepared dataset to year_map (reporting year -> DataFrame).
+
+    Datasets are labeled by reporting year and cover the prior calendar year's energy
+    use. The energy-use year is read from the data when possible (detect_data_year),
+    so a misnamed file is still labeled correctly; otherwise it comes from the file
+    name. When two files cover the same year, the one named for that year is kept and
+    the other is recorded in a duplicate_file column.
+    """
+    detected = detect_data_year(df)
+    reporting_year = detected + 1 if detected else file_year
+    df = df.assign(data_year=reporting_year - 1, source_file=file_name)
+    if reporting_year in year_map:
+        kept = year_map[reporting_year]
+        if kept["source_file"].iat[0] == f"berdo_{reporting_year}.csv":
+            year_map[reporting_year] = kept.assign(duplicate_file=file_name)
+            return year_map
+        df = df.assign(duplicate_file=kept["source_file"].iat[0])
+    year_map[reporting_year] = df
+    return year_map

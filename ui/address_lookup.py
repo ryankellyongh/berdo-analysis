@@ -6,13 +6,16 @@ import re
 import plotly.graph_objects as go
 import streamlit as st
 from berdo.regulations import (
-    ACP_RATE,
     BERDO_LINKS,
     BERDO_STANDARDS,
     COMPLIANCE_PERIODS,
     PATHWAYS_VERIFIED,
 )
 from berdo.emissions import (
+    acp_exposure,
+    current_period_acp,
+    limits_with_city_standard,
+    period_status_rows,
     _is_parking,
     blend_limits_by_area,
     building_elec_share,
@@ -372,35 +375,26 @@ def _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg
 def _compliance_exposure_summary(gaps, projected_intensities, proj_gap_for_period):
     """Cumulative ACP exposure under the conservative and grid scenarios."""
     #Fine exposure summary
-    non_compliant_periods = [g for g in gaps if g["covered"] and not g["compliant"]]
-    if non_compliant_periods:
-        finite     = [g for g in non_compliant_periods if g["period"] != "2050+"]
-        indefinite = next((g for g in non_compliant_periods if g["period"] == "2050+"), None)
-        total_5yr_fine = sum(g["annual_fine_usd"] * 5 for g in finite)
+    exposure = acp_exposure(gaps)
+    if exposure["any"]:
         msg = (
             f"**Conservative scenario:** if no emissions reductions are made, this building "
-            f"faces an estimated USD {total_5yr_fine:,.0f} in cumulative ACP payments across "
-            f"{len(finite)} five-year non-compliant period(s) through 2050 "
+            f"faces an estimated USD {exposure['total_5yr']:,.0f} in cumulative ACP payments across "
+            f"{exposure['periods_over']} five-year non-compliant period(s) through 2050 "
             f"(annual fine × 5 years per period)."
         )
-        if indefinite:
+        if exposure["annual_2050"] is not None:
             msg += (
                 f" From 2050 onward, an additional estimated USD "
-                f"{indefinite['annual_fine_usd']:,.0f}/year applies indefinitely if the "
+                f"{exposure['annual_2050']:,.0f}/year applies indefinitely if the "
                 f"building remains non-compliant."
             )
         if projected_intensities is not None:
-            proj_non_compliant = [
-                proj_gap_for_period[i]
-                for i in range(len(COMPLIANCE_PERIODS))
-                if proj_gap_for_period[i]["covered"] and not proj_gap_for_period[i]["compliant"]
-            ]
-            proj_finite = [g for g in proj_non_compliant if g["period"] != "2050+"]
-            total_proj_fine = sum(g["annual_fine_usd"] * 5 for g in proj_finite)
-            if proj_non_compliant:
+            proj_exposure = acp_exposure(proj_gap_for_period)
+            if proj_exposure["any"]:
                 msg += (
-                    f"\n\n**Grid decarbonization scenario:** estimated USD {total_proj_fine:,.0f} "
-                    f"across {len(proj_finite)} five-year non-compliant period(s) through 2050."
+                    f"\n\n**Grid decarbonization scenario:** estimated USD {proj_exposure['total_5yr']:,.0f} "
+                    f"across {proj_exposure['periods_over']} five-year non-compliant period(s) through 2050."
                 )
             else:
                 msg += "\n\n**Grid decarbonization scenario:** building achieves compliance in all periods from grid cleaning alone."
@@ -933,10 +927,11 @@ def _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label):
     _limits_source = "blend" if use_mix_limits is not None else None
     #When the City publishes a building's applicable standard (it already reflects
     #blended standards), use it as the 2025-29 limit; later periods use the default.
-    _off_std = pd.to_numeric(top.get("Official Standard"), errors="coerce")
-    if use_mix_limits is None and pd.notna(_off_std) and _bl_default_limits(top):
-        use_mix_limits = [float(_off_std)] + list(_bl_default_limits(top))[1:]
+    _city_limits = limits_with_city_standard(_bl_default_limits(top), top.get("Official Standard"))
+    if use_mix_limits is None and _city_limits:
+        use_mix_limits = _city_limits
         _limits_source = "official"
+        _off_std = _city_limits[0]
         st.caption(f"2025–29 limit uses the City's applicable standard for this building "
                            f"({float(_off_std):.2f} kg/sf/yr). Later periods use the default standards.")
     _city_status = top.get("City Emissions Status")
@@ -990,18 +985,7 @@ def _lookup_pdf(page, use_mix_limits, _bl_ctx, _ghg_ctx, _sqft_ctx, _cov, projec
     _pdf_limits = use_mix_limits or _bl_ctx["limits"]
     _periods = []
     if _pdf_limits and pd.notna(_ghg_ctx) and pd.notna(_sqft_ctx) and _sqft_ctx > 0:
-        for _i, _g in enumerate(calculate_compliance_gap(
-                float(_ghg_ctx), float(_sqft_ctx), None, limits=_pdf_limits, coverage=_cov)):
-            _row = {"period": _g["period"], "limit": _g["limit"], "gap": _g["gap"],
-                    "status": (coverage_label(_cov, _i) if not _g["covered"]
-                               else "Meets limit" if _g["compliant"] else "Over limit"),
-                    "acp": _g["annual_fine_usd"]}
-            if projected_intensities is not None:
-                _pg = calculate_compliance_gap(projected_intensities[_i], float(_sqft_ctx),
-                                               None, limits=_pdf_limits, coverage=_cov)[_i]
-                _row["grid_status"] = (coverage_label(_cov, _i) if not _pg["covered"]
-                                       else "Meets limit" if _pg["compliant"] else "Over limit")
-            _periods.append(_row)
+        _periods = period_status_rows(_ghg_ctx, _sqft_ctx, _pdf_limits, _cov, projected_intensities)
 
     def _num(v, fmt):
         v = pd.to_numeric(v, errors="coerce")
@@ -1118,11 +1102,9 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
         and (use_mix_limits is not None or berdo_cat in BERDO_STANDARDS)
     ):
         limit_2025 = (use_mix_limits or BERDO_STANDARDS[berdo_cat])[0]
-        gap = float(ghg_val) - limit_2025
-        _portfolio_level = str(top.get("City Emissions Status") or "").lower().startswith("emissions compliance at portfolio")
-        if gap > 0 and period_covered(_cov, 0) and not _portfolio_level:
-            excess_tons = gap * float(sqft_val) / 1000
-            opt_prefill["annual_fine_usd"] = round(excess_tons * ACP_RATE, 0)
+        _acp = current_period_acp(ghg_val, sqft_val, limit_2025, _cov, top.get("City Emissions Status"))
+        if _acp is not None:
+            opt_prefill["annual_fine_usd"] = _acp
             opt_prefill["ghg_intensity"] = float(ghg_val)
 
     st.session_state["optimizer_prefill"] = opt_prefill

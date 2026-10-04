@@ -5,19 +5,19 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from berdo.regulations import (
-    ACP_RATE,
     COMPLIANCE_PERIODS,
 )
 from berdo.emissions import (
     _fmt_deadline,
-    building_elec_share,
-    building_limits,
-    calculate_blended_standard,
-    coverage_for,
     fmt_share,
-    government_status,
-    period_covered,
     project_ghg_intensities,
+)
+from berdo.portfolio import (
+    building_surplus_deficit,
+    classify_portfolio_buildings,
+    portfolio_electricity_share,
+    portfolio_summary,
+    worst_building,
 )
 from ui.common import (
     _EndTab,
@@ -30,61 +30,7 @@ def _portfolio_classify(buildings_df):
     """Split buildings into those included and those excluded, with reasons."""
     #Classify buildings: valid vs excluded (with reason)
     
-    excluded_rows = []
-    valid_rows = []
-    for _, row in buildings_df.iterrows():
-        ghg   = pd.to_numeric(row.get("GHG Emissions (kgCO2e)"), errors="coerce")
-        sqft  = pd.to_numeric(row.get("Gross Floor Area"), errors="coerce")
-        missing_ghg  = pd.isna(ghg)
-        missing_sqft = pd.isna(sqft) or sqft <= 0
-
-        status = str(row.get("Compliance Status", "")).strip().lower()
-        gov = government_status(status)
-        if gov:
-            excluded_rows.append({
-                "Building Address":  row.get("Building Address"),
-                "Property Type":     row.get("Property Type"),
-                "Compliance Status": row.get("Compliance Status"),
-                "Exclusion Reason":  f"{gov} record: BERDO treatment unconfirmed, so left out of the portfolio",
-            })
-            continue
-        _pcov = coverage_for(row.get("First Compliance Year"), status, row.get("Property Owner Name"))
-        if not period_covered(_pcov, 0):
-            excluded_rows.append({
-                "Building Address":  row.get("Building Address"),
-                "Property Type":     row.get("Property Type"),
-                "Compliance Status": row.get("Compliance Status"),
-                "Exclusion Reason":  (f"Not yet covered: no emissions limit until {_pcov['applies_from']} emissions"
-                                      if _pcov["known"] else "First compliance year not reported"),
-            })
-            continue
-        if missing_ghg or missing_sqft:
-            if missing_ghg and missing_sqft:
-                if status in ("not submitted", "not reported"):
-                    reason = "Did not report: no GHG data or floor area submitted"
-                elif status == "pending revisions":
-                    reason = "Pending revisions: GHG data and floor area incomplete"
-                else:
-                    reason = "Missing GHG emissions and floor area"
-            elif missing_ghg:
-                if status in ("not submitted", "not reported"):
-                    reason = "Did not report: no GHG data submitted"
-                elif status == "pending revisions":
-                    reason = "Pending revisions: GHG data incomplete"
-                else:
-                    reason = "Missing GHG emissions data"
-            else:
-                reason = "Missing floor area"
-            excluded_rows.append({
-                "Building Address":  row.get("Building Address"),
-                "Property Type":     row.get("Property Type"),
-                "Compliance Status": row.get("Compliance Status"),
-                "Exclusion Reason":  reason,
-            })
-        else:
-            valid_rows.append(row)
-
-    valid = pd.DataFrame(valid_rows) if valid_rows else pd.DataFrame()
+    valid, excluded_rows = classify_portfolio_buildings(buildings_df)
     total_buildings  = len(buildings_df)
     usable_buildings = len(valid)
     skipped          = len(excluded_rows)
@@ -114,15 +60,12 @@ def _portfolio_totals(valid):
     """Portfolio intensity, blended standard, and the plain-English summary."""
     #Portfolio-level aggregates
     
-    valid = valid.copy()
-    valid["Gross Floor Area"]      = pd.to_numeric(valid["Gross Floor Area"], errors="coerce")
-    valid["GHG Emissions (kgCO2e)"] = pd.to_numeric(valid["GHG Emissions (kgCO2e)"], errors="coerce")
-
-    total_sqft          = valid["Gross Floor Area"].sum()
-    total_emissions     = valid["GHG Emissions (kgCO2e)"].sum()
-    portfolio_intensity = round(total_emissions / total_sqft, 4)
-
-    blended_limits = calculate_blended_standard(valid)
+    summary = portfolio_summary(valid)
+    valid               = summary["valid"]
+    total_sqft          = summary["total_sqft"]
+    total_emissions     = summary["total_emissions"]
+    portfolio_intensity = summary["intensity"]
+    blended_limits      = summary["blended_limits"]
     if blended_limits is None:
         st.error(
             "Could not calculate a blended standard. Check that property types "
@@ -130,32 +73,14 @@ def _portfolio_totals(valid):
         )
         raise _EndTab
 
-    #Determine current-period compliance status
-    current_limit     = blended_limits[0]
-    current_gap       = round(portfolio_intensity - current_limit, 4)
-    current_compliant = current_gap <= 0
-    current_excess_tons = 0.0 if current_compliant else round(current_gap * total_sqft / 1000, 1)
-    current_fine        = 0.0 if current_compliant else round(current_excess_tons * ACP_RATE, 0)
-
-    non_compliant_periods = [
-        (i, blended_limits[i])
-        for i in range(len(COMPLIANCE_PERIODS))
-        if portfolio_intensity > blended_limits[i]
-    ]
-    finite_non_compliant = [
-        (i, lim) for i, lim in non_compliant_periods if COMPLIANCE_PERIODS[i] != "2050+"
-    ]
-    indefinite_limit = next(
-        (lim for i, lim in non_compliant_periods if COMPLIANCE_PERIODS[i] == "2050+"), None
-    )
-    total_5yr = sum(
-        round(max(portfolio_intensity - lim, 0) * total_sqft / 1000, 1) * ACP_RATE * 5
-        for _, lim in finite_non_compliant
-    )
-    indefinite_annual_fine = (
-        round(max(portfolio_intensity - indefinite_limit, 0) * total_sqft / 1000, 1) * ACP_RATE
-        if indefinite_limit is not None else 0.0
-    )
+    current           = summary["periods"][0]
+    current_limit     = current["limit"]
+    current_compliant = current["compliant"]
+    current_fine      = current["annual_fine"]
+    non_compliant_periods  = summary["non_compliant_periods"]
+    finite_non_compliant   = summary["finite_non_compliant"]
+    total_5yr              = summary["total_5yr"]
+    indefinite_annual_fine = summary["indefinite_annual_fine"]
 
         #Plain-English summary
     if current_compliant:
@@ -191,11 +116,13 @@ def _portfolio_totals(valid):
                 f"{indefinite_annual_fine:,.0f}/year applies indefinitely."
             )
         st.error(error_msg)
-    return blended_limits, current_compliant, current_fine, current_limit, portfolio_intensity, total_emissions, total_sqft, valid
+    return summary
 
 
-def _portfolio_metrics(usable_buildings, total_sqft, total_emissions, portfolio_intensity, valid, blended_limits):
+def _portfolio_metrics(usable_buildings, summary):
     """Headline metrics, vacancy warning, and period cards."""
+    total_sqft, total_emissions = summary["total_sqft"], summary["total_emissions"]
+    portfolio_intensity, valid = summary["intensity"], summary["valid"]
     #Summary header metrics
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Buildings in portfolio", usable_buildings)
@@ -228,11 +155,9 @@ def _portfolio_metrics(usable_buildings, total_sqft, total_emissions, portfolio_
     cols = st.columns(3)
     period_labels = ["2025–2029", "2030–2034", "2035–2039"]
     for i, col in enumerate(cols):
-        limit     = blended_limits[i]
-        gap       = round(portfolio_intensity - limit, 4)
-        compliant = gap <= 0
-        excess_tons = 0.0 if compliant else round(gap * total_sqft / 1000, 1)
-        fine        = 0.0 if compliant else round(excess_tons * ACP_RATE, 0)
+        p = summary["periods"][i]
+        limit, gap, compliant = p["limit"], p["gap"], p["compliant"]
+        excess_tons, fine = p["excess_tons"], p["annual_fine"]
         with col:
             status   = "Compliant" if compliant else "Non-compliant"
             fine_str = "$0" if compliant else f"${fine:,.0f}/yr"
@@ -256,8 +181,9 @@ def _portfolio_metrics(usable_buildings, total_sqft, total_emissions, portfolio_
     st.markdown("---")
 
 
-def _portfolio_chart(blended_limits, portfolio_intensity, elec_share, use_reported_share, total_emissions, valid, selected_year, total_sqft):
+def _portfolio_chart(summary, elec_share, use_reported_share, selected_year):
     """Blended limit vs. portfolio intensity chart."""
+    blended_limits, portfolio_intensity = summary["blended_limits"], summary["intensity"]
     #Compliance chart
     fig = go.Figure()
 
@@ -282,22 +208,8 @@ def _portfolio_chart(blended_limits, portfolio_intensity, elec_share, use_report
     if elec_share is not None:
         #Emissions-weighted portfolio share: each building's reported share where
         #available, the sidebar estimate for the rest.
-        portfolio_share, share_src = elec_share, "sidebar estimate"
-        if use_reported_share and total_emissions > 0:
-            elec_kg, n_reported = 0.0, 0
-            for _, r in valid.iterrows():
-                s, _ = building_elec_share(
-                    r.get("GHG Emissions (kgCO2e)"), r.get("Electricity Emissions (kgCO2e)"))
-                if s is None:
-                    s = elec_share
-                else:
-                    n_reported += 1
-                elec_kg += s * float(r["GHG Emissions (kgCO2e)"])
-            if n_reported > 0:
-                portfolio_share = elec_kg / total_emissions
-                share_src = f"reported for {n_reported} of {len(valid)} buildings"
-                if n_reported < len(valid):
-                    share_src += "; sidebar estimate for the rest"
+        portfolio_share, share_src = portfolio_electricity_share(
+            summary["valid"], summary["total_emissions"], elec_share, use_reported_share)
         st.caption(
             f"Grid scenario electricity share: **{fmt_share(portfolio_share)}** ({share_src})."
         )
@@ -314,11 +226,7 @@ def _portfolio_chart(blended_limits, portfolio_intensity, elec_share, use_report
             marker=dict(size=7, symbol="diamond"),
         ))
 
-    portfolio_fines = []
-    for i, limit in enumerate(blended_limits):
-        gap = portfolio_intensity - limit
-        excess_tons = max(gap * total_sqft / 1000, 0)
-        portfolio_fines.append(round(excess_tons * ACP_RATE, 0))
+    portfolio_fines = summary["chart_fines"]
 
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS,
@@ -380,19 +288,7 @@ shows individual gaps.
         
             #Find the worst-gap building for owner-facing guidance
             
-            worst_addr = ""
-            worst_gap_tons = 0.0
-            for _, row in valid.iterrows():
-                intensity = pd.to_numeric(row.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
-                sqft_r    = pd.to_numeric(row.get("Gross Floor Area"), errors="coerce")
-                b_limits = building_limits(row.get("Property Type"), row.get("All Property Types"))["limits"]
-                if pd.isna(intensity) or pd.isna(sqft_r) or b_limits is None:
-                    continue
-                lim  = b_limits[0]
-                tons = round(max(intensity - lim, 0) * sqft_r / 1000, 1)
-                if tons > worst_gap_tons:
-                    worst_gap_tons = tons
-                    worst_addr     = str(row.get("Building Address", ""))
+            worst_addr, worst_gap_tons = worst_building(valid)
 
             st.markdown(f"""
 **For building owners:** This portfolio exceeds the blended 2025–2029 standard and faces an
@@ -423,45 +319,8 @@ def _portfolio_breakdown(valid):
         "Buildings with a surplus (negative gap) can offset those with a deficit at the portfolio level."
     )
 
-    breakdown_rows = []
-    for _, row in valid.iterrows():
-        sqft      = pd.to_numeric(row["Gross Floor Area"], errors="coerce")
-        intensity = pd.to_numeric(row["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
-        bl = building_limits(row.get("Property Type"), row.get("All Property Types"))
-
-        if pd.isna(sqft) or pd.isna(intensity) or bl["limits"] is None:
-            continue
-
-        limit_2025, limit_2030, limit_2035 = bl["limits"][:3]
-
-        def _gap_tons(lim):
-            return round((intensity - lim) * sqft / 1000, 1)
-
-        def _status(lim):
-            return "Pass" if intensity <= lim else "Fail"
-
-        breakdown_rows.append({
-            "Address":        row["Building Address"],
-            "Type":           bl["label"],
-            "Sq Ft":          f"{int(sqft):,}",
-            "GHG (kg/sf/yr)": round(intensity, 3),
-            "2025 Limit":     limit_2025,
-            "2025 Gap (MT)":  _gap_tons(limit_2025),
-            "2025":           _status(limit_2025),
-            "2030 Limit":     limit_2030,
-            "2030 Gap (MT)":  _gap_tons(limit_2030),
-            "2030":           _status(limit_2030),
-            "2035 Limit":     limit_2035,
-            "2035 Gap (MT)":  _gap_tons(limit_2035),
-            "2035":           _status(limit_2035),
-        })
-
-    if breakdown_rows:
-        breakdown_df = (
-            pd.DataFrame(breakdown_rows)
-            .sort_values("2025 Gap (MT)", ascending=False)
-            .reset_index(drop=True)
-        )
+    breakdown_df = building_surplus_deficit(valid)
+    if not breakdown_df.empty:
         st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
         st.caption(
             "Gap (MT) = metric tons CO₂e above (+) or below (−) the period limit. "
@@ -524,10 +383,12 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
 
     try:
         excluded_rows, skipped, total_buildings, usable_buildings, valid = _portfolio_classify(buildings_df)
-        blended_limits, current_compliant, current_fine, current_limit, portfolio_intensity, total_emissions, total_sqft, valid = _portfolio_totals(valid)
-        _portfolio_metrics(usable_buildings, total_sqft, total_emissions, portfolio_intensity, valid, blended_limits)
-        _portfolio_chart(blended_limits, portfolio_intensity, elec_share, use_reported_share, total_emissions, valid, selected_year, total_sqft)
-        _portfolio_guidance(current_compliant, current_limit, valid, current_fine)
+        summary = _portfolio_totals(valid)
+        valid = summary["valid"]
+        _portfolio_metrics(usable_buildings, summary)
+        _portfolio_chart(summary, elec_share, use_reported_share, selected_year)
+        p0 = summary["periods"][0]
+        _portfolio_guidance(p0["compliant"], p0["limit"], valid, p0["annual_fine"])
         _portfolio_breakdown(valid)
         _portfolio_exclusions(excluded_rows, skipped, total_buildings)
     except _EndTab:

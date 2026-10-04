@@ -14,9 +14,10 @@ from berdo.emissions import (
 )
 from berdo.data import (
     MissingColumnsError,
-    detect_data_year,
+    add_year_file,
     lookup_owner_portfolio,
     prepare_dataframe,
+    year_from_filename,
 )
 from ui.address_lookup import (
     render_address_lookup_tab,
@@ -39,6 +40,8 @@ from ui.planner import (
 #                         compliance gaps, City statuses, screening, grid, RECs, planner model
 #  berdo/data.py          Loading and preparing data, year detection, campus rows,
 #                         linking buildings across years, lookups
+#  berdo/portfolio.py     Building Portfolio calculations
+#  berdo/retrofit.py      Retrofit, incentive, payback, and ACP schedule calculations
 #  berdo/pdf_export.py    The one-page PDF summary
 #  ui/address_lookup.py   Address Lookup tab
 #  ui/portfolio.py        Owner Portfolio tab
@@ -86,27 +89,10 @@ def load_all_years() -> dict[int, pd.DataFrame]:
 
     year_map: dict[int, pd.DataFrame] = {}
     for fp in year_files:
-        stem = fp.stem  #e.g. "berdo_2023"
-        try:
-            year = int(stem.split("_")[1])
-        except (IndexError, ValueError):
+        year = year_from_filename(fp.name)   #e.g. "berdo_2023.csv" -> 2023
+        if year is None:
             continue
-        #Datasets are labeled by reporting year and cover the prior calendar year's energy
-        #use. The energy-use year is read from the data when possible (see
-        #detect_data_year), so a misnamed file is still labeled correctly; otherwise it
-        #comes from the file name (reporting year - 1).
-        df_year = _load_single_csv(fp)
-        detected = detect_data_year(df_year)
-        reporting_year = detected + 1 if detected else year
-        df_year = df_year.assign(data_year=reporting_year - 1, source_file=fp.name)
-        if reporting_year in year_map:
-            #Two files cover the same year: keep the one whose name matches it
-            kept = year_map[reporting_year]
-            if kept["source_file"].iat[0] == f"berdo_{reporting_year}.csv":
-                year_map[reporting_year] = kept.assign(duplicate_file=fp.name)
-                continue
-            df_year = df_year.assign(duplicate_file=kept["source_file"].iat[0])
-        year_map[reporting_year] = df_year
+        add_year_file(year_map, fp.name, year, _load_single_csv(fp))
 
     if not year_map:
         #Fallback: single legacy file

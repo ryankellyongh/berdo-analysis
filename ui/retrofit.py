@@ -5,34 +5,40 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from berdo.regulations import (
-    ACP_RATE,
     BERDO_STANDARDS,
-    BOSTON_LABOR_MULTIPLIER,
     COMPLIANCE_PERIODS,
-    FUEL_EF_KG_PER_KBTU,
     FUEL_TYPES_OPT,
     FUEL_UNIT_OPTIONS,
     INCENTIVE_STACK,
     OWNERSHIP_TYPES_OPT,
-    PERIOD_REPRESENTATIVE_YEARS,
-    PROJECTED_GRID_EF,
     REC_CONNECTOR_DEADLINE,
     REC_CONNECTOR_PRICES_VALID_THROUGH,
     REC_DEFAULT_PRICE,
     RETROFIT_COST_PER_SQFT,
 )
 from berdo.emissions import (
-    _estimate_incentive_value,
     _opt_incentive_applies,
     coverage_from_prefill,
-    effective_grid_ef,
     fmt_share,
-    fuel_to_kbtu,
     limits_for_category,
-    period_covered,
     rec_connector_price,
     rec_pathway,
     resolve_elec_share,
+)
+from berdo.retrofit import (
+    PAYBACK_CAP_YEARS,
+    acp_schedule,
+    acp_totals,
+    estimate_incentives,
+    first_year_reduction_kg,
+    headline_payback,
+    net_retrofit_cost,
+    payback_estimates,
+    planned_project_impact,
+    rec_break_even_price,
+    rec_inputs,
+    retrofit_cost_estimate,
+    retrofit_recommendation,
 )
 from ui.common import (
     _EndTab,
@@ -150,12 +156,8 @@ def _retrofit_cost_estimate(scopes_selected, sqft):
         ),
     )
     has_audit = "ASHRAE" in prior_audit
-    if has_audit:
-        position        = 0.20
-        condition_label = "Audit complete: estimate toward low end"
-    else:
-        position        = 0.55
-        condition_label = "No audit: mid-range estimate (actual scope may run higher)"
+    condition_label = ("Audit complete: estimate toward low end" if has_audit
+                       else "No audit: mid-range estimate (actual scope may run higher)")
 
     apply_boston = st.checkbox(
         "Apply Boston labor cost multiplier (1.25x)",
@@ -165,27 +167,18 @@ def _retrofit_cost_estimate(scopes_selected, sqft):
             "(RSMeans City Cost Index, 2024–2025). Uncheck to see national benchmark figures."
         ),
     )
-    multiplier = BOSTON_LABOR_MULTIPLIER if apply_boston else 1.0
-
-    cost_rows = []
-    total_cost_low = total_cost_high = total_cost_adjusted = 0.0
-    for scope in scopes_selected:
-        low_nat, high_nat, _ = RETROFIT_COST_PER_SQFT[scope]
-        low_psf  = low_nat  * multiplier
-        high_psf = high_nat * multiplier
-        adj_psf  = low_psf + position * (high_psf - low_psf)
-        cost_rows.append({
-            "Scope":             scope,
-            "Low ($/sqft)":      f"${low_psf:.2f}",
-            "Adjusted ($/sqft)": f"${adj_psf:.2f}",
-            "High ($/sqft)":     f"${high_psf:.2f}",
-            "Low total":         _fmt_dollars(low_psf * sqft),
-            "Adjusted total":    _fmt_dollars(adj_psf * sqft),
-            "High total":        _fmt_dollars(high_psf * sqft),
-        })
-        total_cost_low      += low_psf  * sqft
-        total_cost_high     += high_psf * sqft
-        total_cost_adjusted += adj_psf  * sqft
+    est = retrofit_cost_estimate(scopes_selected, sqft, has_audit, apply_boston)
+    cost_rows = [{
+        "Scope":             r["scope"],
+        "Low ($/sqft)":      f"${r['low_psf']:.2f}",
+        "Adjusted ($/sqft)": f"${r['adj_psf']:.2f}",
+        "High ($/sqft)":     f"${r['high_psf']:.2f}",
+        "Low total":         _fmt_dollars(r["low_total"]),
+        "Adjusted total":    _fmt_dollars(r["adj_total"]),
+        "High total":        _fmt_dollars(r["high_total"]),
+    } for r in est["rows"]]
+    total_cost_low, total_cost_high = est["total_low"], est["total_high"]
+    total_cost_adjusted = est["total_adjusted"]
 
     st.dataframe(pd.DataFrame(cost_rows), use_container_width=True, hide_index=True)
 
@@ -246,20 +239,9 @@ def _retrofit_planned_project(sqft, prefill, berdo_category):
         )
 
     if proj_amount > 0:
-        proj_kbtu = fuel_to_kbtu(proj_fuel, proj_unit, proj_amount)
-
-        #Calculate emissions reduction
-        if proj_fuel == "Electricity":
-            #BERDO-effective grid EF (Appendix B × (1 − RPS Class I)), kg/MWh → kg/kBtu.
-            #This section answers "does it close the 2025–29 gap?", so use that
-            #period's representative year to match the limit being compared against.
-            ef = effective_grid_ef(PERIOD_REPRESENTATIVE_YEARS[0]) / 1000 / 3.412
-        else:
-            ef = FUEL_EF_KG_PER_KBTU[proj_fuel]
-        
-        proj_emission_reduction_kg  = proj_kbtu * ef           #kg CO₂e/yr
-        proj_emission_reduction_mt  = proj_emission_reduction_kg / 1000  #metric tons
-        proj_intensity_reduction    = proj_emission_reduction_kg / sqft  #kg/sqft/yr
+        proj_emission_reduction_kg  = first_year_reduction_kg(proj_fuel, proj_unit, proj_amount)  #kg CO₂e/yr
+        proj_emission_reduction_mt  = proj_emission_reduction_kg / 1000                          #metric tons
+        proj_intensity_reduction    = proj_emission_reduction_kg / sqft                           #kg/sqft/yr
 
         res_cols = st.columns(3)
         res_cols[0].metric(
@@ -274,10 +256,10 @@ def _retrofit_planned_project(sqft, prefill, berdo_category):
         #Show compliance impact if we have the building's current GHG intensity
         prefill_ghg_proj = prefill.get("ghg_intensity")
         if prefill_ghg_proj and berdo_category and berdo_category in BERDO_STANDARDS:
-            new_intensity = max(prefill_ghg_proj - proj_intensity_reduction, 0)
             limit_2025 = limits_for_category(berdo_category, prefill)[0]
-            gap_before = prefill_ghg_proj - limit_2025
-            gap_after  = new_intensity - limit_2025
+            impact = planned_project_impact(proj_emission_reduction_kg, sqft, prefill_ghg_proj, limit_2025)
+            new_intensity = impact["new_intensity"]
+            gap_before, gap_after = impact["gap_before"], impact["gap_after"]
 
             with res_cols[2]:
                 if gap_after <= 0:
@@ -300,8 +282,7 @@ def _retrofit_planned_project(sqft, prefill, berdo_category):
                     f"{new_intensity:.3f} kg CO₂e/sqft/yr (limit: {limit_2025} kg)."
                 )
             elif gap_before > 0:
-                pct_closed = min(round((gap_before - gap_after) / gap_before * 100, 0), 100)
-                remaining_mt = round(gap_after * sqft / 1000, 1)
+                pct_closed, remaining_mt = impact["pct_closed"], impact["remaining_mt"]
                 st.info(
                     f"This project closes **{pct_closed:.0f}%** of the 2025–29 compliance gap. "
                     f"Remaining gap: {gap_after:.3f} kg CO₂e/sqft/yr "
@@ -342,11 +323,7 @@ def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft,
         raise _EndTab
 
     #Dollar estimates
-    for inc in matched:
-        inc["_est_low"], inc["_est_high"] = _estimate_incentive_value(inc, sqft)
-
-    total_incentive_low  = sum(i["_est_low"]  for i in matched)
-    total_incentive_high = sum(i["_est_high"] for i in matched)
+    matched, total_incentive_low, total_incentive_high = estimate_incentives(matched, sqft)
 
     #Gross retrofit cost. Reuse the Boston-multiplier + condition-adjusted totals
     #Computed in the "Estimated retrofit cost" section above, so the cost shown
@@ -355,8 +332,8 @@ def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft,
     #total_cost_low / total_cost_high already set above.
 
     #Net cost (incentives capped at gross cost)
-    net_low  = max(total_cost_low  - total_incentive_high, 0)
-    net_high = max(total_cost_high - total_incentive_low,  0)
+    net_low, net_high = net_retrofit_cost(total_cost_low, total_cost_high,
+                                          total_incentive_low, total_incentive_high)
 
     #Headline summary card
     st.markdown("---")
@@ -365,17 +342,12 @@ def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft,
     incentive_str   = _fmt_dollars(total_incentive_high).replace("$", "USD ")
     net_low_display = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
     prefill_fine_val = prefill.get("annual_fine_usd", 0) or 0
-    default_energy   = 1.0 * sqft  #$1/sqft default energy savings
-    total_return     = prefill_fine_val + default_energy
-
-    #Cap headline payback. Don't show absurd numbers for large buildings
-    if prefill_fine_val > 0 and total_return > 0 and net_low > 0:
-        headline_payback_raw = net_low / total_return
-        if headline_payback_raw <= 50:
-            payback_str = f", with an estimated {round(headline_payback_raw, 1)}-year payback including energy savings"
-        else:
-            payback_str = ". Energy savings are the primary return driver for a building this size"
-    elif prefill_fine_val > 0 and net_low == 0:
+    _kind, _years = headline_payback(net_low, prefill_fine_val, sqft)
+    if _kind == "years":
+        payback_str = f", with an estimated {_years}-year payback including energy savings"
+    elif _kind == "energy_driven":
+        payback_str = ". Energy savings are the primary return driver for a building this size"
+    elif _kind == "covered":
         payback_str = ", with the retrofit fully covered by incentives"
     else:
         payback_str = ""
@@ -539,15 +511,13 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
             )
 
         #Combined annual benefit
-        total_annual_benefit = annual_fine + energy_savings_annual
+        pb = payback_estimates(net_low, net_high, annual_fine, energy_savings_annual)
+        total_annual_benefit = pb["total_annual_benefit"]
 
-        #Payback metrics: cap at 50 years; beyond that fine avoidance is the wrong frame
-        PAYBACK_CAP = 50
-
-        payback_low_fine_only  = round(net_low  / annual_fine, 1) if net_low  > 0 else 0.0
-        payback_high_fine_only = round(net_high / annual_fine, 1) if net_high > 0 else 0.0
-        payback_low_combined   = round(net_low  / total_annual_benefit, 1) if net_low  > 0 else 0.0
-        payback_high_combined  = round(net_high / total_annual_benefit, 1) if net_high > 0 else 0.0
+        #Payback metrics: cap at 50 years; beyond that avoided ACP is the wrong frame
+        PAYBACK_CAP = PAYBACK_CAP_YEARS
+        payback_low_fine_only, payback_high_fine_only = pb["low_acp_only"], pb["high_acp_only"]
+        payback_low_combined, payback_high_combined = pb["low_combined"], pb["high_combined"]
 
         def _fmt_payback(yrs):
             if yrs == 0:
@@ -592,11 +562,9 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
             )
 
         #Cash flow chart
-        years = list(range(0, 16))
-        cumulative_low_fine   = [-net_low  + annual_fine * y for y in years]
-        cumulative_high_fine  = [-net_high + annual_fine * y for y in years]
-        cumulative_low_total  = [-net_low  + total_annual_benefit * y for y in years]
-        cumulative_high_total = [-net_high + total_annual_benefit * y for y in years]
+        years = pb["years"]
+        cumulative_low_fine, cumulative_high_fine = pb["cash_low_acp"], pb["cash_high_acp"]
+        cumulative_low_total, cumulative_high_total = pb["cash_low_total"], pb["cash_high_total"]
 
         fig = go.Figure()
 
@@ -722,26 +690,13 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
         )
     elif berdo_category and berdo_category in BERDO_STANDARDS:
     
-        #Cost of paying the fine across each compliance period
-        fine_5yr  = annual_fine * 5
-
-        #Future period fines: limits tighten each period
+        #ACP across each compliance period, if emissions stay flat
         limits = limits_for_category(berdo_category, prefill)
         prefill_ghg_val = prefill.get("ghg_intensity")
-
-        period_fines = []
-        _rcov = coverage_from_prefill(prefill)
-        if prefill_ghg_val:
-            for i, period in enumerate(COMPLIANCE_PERIODS[:5]):
-                limit = limits[i]
-                gap = max(prefill_ghg_val - limit, 0) if period_covered(_rcov, i) else 0
-                excess_tons = gap * sqft / 1000
-                period_fines.append({
-                    "period": period,
-                    "limit": limit,
-                    "annual_fine": round(excess_tons * ACP_RATE, 0),
-                    "5yr_fine": round(excess_tons * ACP_RATE * 5, 0),
-                })
+        period_fines = (acp_schedule(prefill_ghg_val, sqft, limits, coverage_from_prefill(prefill))
+                        if prefill_ghg_val else [])
+        _totals = acp_totals(annual_fine, period_fines, net_low)
+        fine_5yr = _totals["fine_5yr"]
 
         #Decision matrix
         st.markdown("Cost comparison. Retrofit now vs. pay escalating fines")
@@ -750,8 +705,8 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
             "The comparison below uses cumulative fines through 2050, not just the current period."
         )
 
-        cumulative_fine_all = sum(r["5yr_fine"] for r in period_fines) if period_fines else fine_5yr
-        cum_fine_10yr = sum(r["5yr_fine"] for r in period_fines[:2]) if len(period_fines) >= 2 else fine_5yr
+        cumulative_fine_all = _totals["cumulative_all"]
+        cum_fine_10yr = _totals["cumulative_10yr"]
 
         d1, d2, d3 = st.columns(3)
         d1.metric(
@@ -778,9 +733,8 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
             "RECs cannot offset fossil fuel emissions."
         )
         rc1, rc2 = st.columns([1, 3])
-        _rec_gap_kg  = max(prefill_ghg_val - limits[0], 0) * sqft if prefill_ghg_val else 0
         _rec_share, _rec_share_src = resolve_elec_share(prefill, page.elec_share, page.use_reported_share)
-        _rec_elec_kg = (prefill_ghg_val or 0) * sqft * _rec_share
+        _rec_gap_kg, _rec_elec_kg = rec_inputs(prefill_ghg_val, sqft, limits[0], _rec_share)
         #RECs needed doesn't depend on price, so size the purchase first, then price it
         _rec_sizing = rec_pathway(_rec_gap_kg, _rec_elec_kg, 2025, 0.0)
         _recs_needed = _rec_sizing["recs_needed"] if _rec_sizing else 0
@@ -821,7 +775,7 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
                     f"saving {_fmt_dollars(rec['acp_only'] - rec['total_cost'])}/yr. "
                     f"Break-even is **{rec['breakeven_price']:.2f} USD/REC** at the 2025 grid factor. "
                     f"RECs buy time, not compliance: they must be repurchased every year, and the "
-                    f"break-even falls to {ACP_RATE * PROJECTED_GRID_EF[2050] / 1000:.2f} USD/REC by 2050 "
+                    f"break-even falls to {rec_break_even_price(2050):.2f} USD/REC by 2050 "
                     f"as the grid cleans up and each REC avoids less CO2e."
                 )
             else:
@@ -856,20 +810,15 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
 
         #Key insight: fines escalate, so compare retrofit against cumulative fines
         #not just one period. Also compute crossover period.
-        running = 0
-        crossover_period = None
-        crossover_yr = None
-        for r in period_fines:
-            running += r["5yr_fine"]
-            if running >= net_low and crossover_period is None:
-                crossover_period = r["period"]
+        crossover_period = _totals["crossover_period"]
+        _rec_choice = retrofit_recommendation(net_low, fine_5yr, cum_fine_10yr, cumulative_fine_all)
 
         net_low_str      = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
         fine_5yr_str     = _fmt_dollars(fine_5yr).replace("$", "USD ")
         cum_str          = _fmt_dollars(cumulative_fine_all).replace("$", "USD ")
         cum_10yr_str     = _fmt_dollars(cum_fine_10yr).replace("$", "USD ")
 
-        if net_low == 0 or net_low <= fine_5yr:
+        if _rec_choice == "retrofit_now":
             #Retrofit cost is zero or cheaper than even one period of fines
             st.success(
                 f"**Retrofit now: clear financial case.** The net retrofit cost "
@@ -878,7 +827,7 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
                 "And fines only grow from here. Each period the limit tightens and the "
                 "gap widens. Retrofitting eliminates all future fine exposure permanently."
             )
-        elif net_low <= cum_fine_10yr:
+        elif _rec_choice == "retrofit_soon":
             #Retrofit pays back within 2 periods (10 years) of escalating fines
             st.success(
                 f"**Retrofit soon: strong case once fines escalate.** "
@@ -887,7 +836,7 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
                 f"Fines increase each period as the BERDO limit tightens, "
                 "so waiting means paying more before you eventually retrofit anyway."
             )
-        elif net_low <= cumulative_fine_all:
+        elif _rec_choice == "phase":
             #Retrofit is cheaper than total lifetime fines, crossover at some period
             st.warning(
                 f"**Consider phasing: fines will exceed retrofit cost by {crossover_period or 'a future period'}.** "
