@@ -353,7 +353,7 @@ def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft,
         payback_str = ""
 
     headline = (
-        f"For this building, you qualify for up to {incentive_str} "
+        f"For this building, you may be eligible for up to {incentive_str} "
         f"in incentives, reducing your estimated net retrofit cost to {net_low_display}"
         f"{payback_str}."
     )
