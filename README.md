@@ -10,7 +10,7 @@ This project analyzes Boston's BERDO public reporting data and includes a live s
 
 ## Interactive tool
 
-**Live app:** https://berdo-building-priority-screening-tool.streamlit.app
+**Live app:** https://berdo-priority-screening-tool.streamlit.app
 
 A Streamlit app with four tabs.
 
