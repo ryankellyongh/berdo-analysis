@@ -231,7 +231,7 @@ def _portfolio_chart(summary, elec_share, use_reported_share, selected_year):
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS,
         y=portfolio_fines,
-        name="Annual ACP fine, portfolio (USD)",
+        name="Annual ACP, portfolio (USD)",
         mode="lines+markers",
         yaxis="y2",
         line=dict(color="#BA7517", width=1.5, dash="dot"),
@@ -245,7 +245,7 @@ def _portfolio_chart(summary, elec_share, use_reported_share, selected_year):
         xaxis_title="Compliance period",
         yaxis=dict(title="kg CO₂e / sf / yr", range=[0, y_max]),
         yaxis2=dict(
-            title="Annual ACP fine (USD)",
+            title="Annual ACP (USD)",
             overlaying="y",
             side="right",
             showgrid=False,
