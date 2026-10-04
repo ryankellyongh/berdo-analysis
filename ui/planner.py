@@ -527,10 +527,10 @@ compliance is annual, so each five-year period is modeled year by year: a projec
 in 2033 reduces emissions in 2033 and 2034, and the 2030–34 row shows the average of those five
 years. Cumulative ACP with projects is summed year by year rather than multiplying one year by five.
 
-**ACP fines**
+**ACP**
 
 Alternative Compliance Payments are assessed at \$234 per metric ton of CO₂e above the 
-building's emissions limit. The table shows annual fines; the summary metrics multiply by 
+building's emissions limit. The table shows annual ACP. The summary metrics multiply by 
 5 years per period for cumulative exposure.
 
 Sources: BERDO ordinance Table 1 and ACP rate; ENERGY STAR Portfolio Manager
@@ -546,7 +546,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
     Tab 5: Emissions Planner.
     Shows compliance projection table across all BERDO periods,
     allows users to enter planned emission reduction projects,
-    and recalculates compliance and ACP fines with and without projects.
+    and recalculates compliance and ACP with and without projects.
     Pre-fills from Address Lookup session state where available.
     """
     if prefill is None:
@@ -554,7 +554,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
 
     st.write(
         "Model your path to BERDO compliance. Enter planned emission reduction projects "
-        "to see how they affect your compliance status and fine exposure across all periods through 2050."
+        "to see how they affect your compliance status and ACP exposure across all periods through 2050."
     )
 
     try:
