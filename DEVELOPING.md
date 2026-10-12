@@ -6,6 +6,7 @@
 |---|---|---|
 | `app.py` | Page setup, cached data loading, sidebar, and the four tabs | Yes |
 | `ui/address_lookup.py` | Address Lookup tab | Yes |
+| `ui/outlook.py` | Citywide Outlook tab: saved predictions, map, filters, track record | Yes |
 | `ui/portfolio.py` | Owner Portfolio tab | Yes |
 | `ui/retrofit.py` | Retrofit & Incentives tab | Yes |
 | `ui/planner.py` | Emissions Planner tab | Yes |
@@ -16,6 +17,7 @@
 | `berdo/data.py` | Preparing and searching the City's data | No |
 | `berdo/portfolio.py` | Building Portfolio calculations: included buildings, blended standard, ACP exposure, per-building gaps | No |
 | `berdo/retrofit.py` | Retrofit calculations: cost estimate, project impact, incentives, net cost, payback, ACP schedule, recommendation | No |
+| `berdo/predictions.py` | Reading and summarizing the saved predictions in `analysis/predictions_2026/` | No |
 | `berdo/pdf_export.py` | The one-page PDF summary | No |
 | `tests/` | Tests for official values and calculation rules | No |
 
@@ -65,3 +67,10 @@ Dates to watch:
 - Campus summary rows (whole-campus totals) are excluded from searches.
 - From 2026, the City's emissions compliance status takes precedence over the tool's own screening.
 - The 2026 Site EUI column repeats GHG intensity for most buildings, so Site EUI is recalculated from total energy.
+
+## Predictions
+
+The Citywide Outlook tab reads `analysis/predictions_2026/predictions_2026_pending.csv`. Don't edit
+or re-save that file: its fingerprint in `prediction_hash.txt` shows it hasn't changed since
+October 12, 2026. When the City publishes updated results, score the predictions with
+`python3 analysis/predictions_2026/check_after_update.py path/to/new_2026.csv`.
