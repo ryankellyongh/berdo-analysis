@@ -110,7 +110,6 @@ def _retrofit_inputs(prefill):
     if prefill_fine and prefill_fine > 0:
         st.info(
             f"Pre-filled from **{prefill_addr}**: "
-            f"estimated annual BERDO fine USD {prefill_fine:,.0f}/yr "
             f"(2025–29 period, at {prefill_ghg:.3f} kg CO₂e/sqft/yr). "
             "Use the payback section below to compare against net retrofit cost."
         )
@@ -463,10 +462,10 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
     if annual_fine is None:
         st.caption(
             "Look up your building in the Address Lookup tab to pre-fill your "
-            "estimated annual BERDO fine, or enter it manually below."
+            "estimated annual ACP, or enter it manually below."
         )
         annual_fine_input = st.number_input(
-            "Estimated annual BERDO fine ($/yr)",
+            "Estimated annual ACP ($/yr)",
             min_value=0, value=0, step=1_000,
             key="opt_fine_manual",
         )
@@ -478,7 +477,7 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
         #Energy savings input 
         st.caption(
             "Energy cost savings from a retrofit are typically the largest financial return, "
-            "often larger than avoided ACP. Enter an estimate below to include them."
+            "often larger than avoided ACP alone. Enter an estimate below to include them."
         )
         energy_cols = st.columns([1, 1, 2])
         with energy_cols[0]:
@@ -491,7 +490,7 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
                     "Typical range for Boston commercial buildings: "
                     "USD 0.50–1.50/sqft/yr for HVAC upgrades; "
                     "USD 1.00–2.50/sqft/yr for deep retrofits. "
-                    "Set to 0 to see fine avoidance only."
+                    "Set to 0 to see avoided ACP only."
                 ),
             )
         with energy_cols[1]:
@@ -507,7 +506,7 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
                 "USD 0.50–1.00/sqft/yr for controls and lighting, "
                 "USD 1.00–2.00/sqft/yr for HVAC replacement, and "
                 "USD 1.50–3.00/sqft/yr for deep retrofits. "
-                "Use 0 to see a conservative fine-avoidance-only view."
+                "Use 0 to see a conservative avoided-ACP-only view."
             )
 
         #Combined annual benefit
@@ -523,29 +522,29 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
             if yrs == 0:
                 return "< 1 yr"
             if yrs > PAYBACK_CAP:
-                return "Fine avoidance insufficient"
+                return "Avoided ACP alone doesn't pay back"
             return f"{yrs} yrs"
 
         fine_only_impractical = payback_low_fine_only > PAYBACK_CAP
 
         pb_cols = st.columns(4)
         pb_cols[0].metric(
-            "Payback: fine only (low)",
+            "Payback: avoided ACP only (low)",
             _fmt_payback(payback_low_fine_only),
         )
         pb_cols[1].metric(
-            "Payback: fine only (high)",
+            "Payback: avoided ACP only (high)",
             _fmt_payback(payback_high_fine_only),
         )
         pb_cols[2].metric(
-            "Payback: fine + energy (low)",
+            "Payback: avoided ACP + energy (low)",
             _fmt_payback(payback_low_combined),
             delta=f"{round(payback_low_fine_only - payback_low_combined, 1)} yrs faster"
                   if 0 < payback_low_fine_only <= PAYBACK_CAP and payback_low_combined <= PAYBACK_CAP and payback_low_fine_only > payback_low_combined
                   else None,
         )
         pb_cols[3].metric(
-            "Payback: fine + energy (high)",
+            "Payback: avoided ACP + energy (high)",
             _fmt_payback(payback_high_combined),
             delta=f"{round(payback_high_fine_only - payback_high_combined, 1)} yrs faster"
                   if 0 < payback_high_fine_only <= PAYBACK_CAP and payback_high_combined <= PAYBACK_CAP and payback_high_fine_only > payback_high_combined
@@ -554,9 +553,9 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
 
         if fine_only_impractical:
             st.warning(
-                f"For a building this size ({sqft:,} sqft), ACP alone does not justify "
+                f"For a building this size ({sqft:,} sqft), avoided ACP alone does not justify "
                 "the retrofit cost. This is normal for large commercial buildings: "
-                "the financial case rests on **energy cost savings** and **asset value**, not fine avoidance. "
+                "the financial case rests on **energy cost savings** and **asset value**, not avoided ACP. "
                 f"At {energy_savings_psf:.2f}/sqft/yr in energy savings, the combined payback is "
                 f"**{_fmt_payback(payback_low_combined)}** at the low estimate."
             )
@@ -582,12 +581,12 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
             ))
             fig.add_trace(go.Scatter(
                 x=years, y=cumulative_low_fine,
-                name="Low cost, fine avoidance only",
+                name="Low cost, avoided ACP only",
                 mode="lines", line=dict(color="#3266ad", width=1.5, dash="dash"),
             ))
             fig.add_trace(go.Scatter(
                 x=years, y=cumulative_high_fine,
-                name="High cost, fine avoidance only",
+                name="High cost, avoided ACP only",
                 mode="lines", line=dict(color="#9B59B6", width=1.5, dash="dash"),
             ))
         else:
@@ -623,7 +622,7 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
 
         energy_note = (
             f"Green lines include {_fmt_dollars(energy_savings_annual)}/yr in energy savings "
-            f"at {energy_savings_psf:.2f}/sqft/yr. Dashed lines show fine avoidance only. "
+            f"at {energy_savings_psf:.2f}/sqft/yr. Dashed lines show avoided ACP only. "
             if energy_savings_psf > 0 else
             "Set energy savings above zero to see how savings shorten payback. "
         )
@@ -639,12 +638,12 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
         if best_payback == 0:
             st.success(
                 "At the low net cost estimate, the retrofit is fully covered by incentives, "
-                "so any energy savings and fine avoidance are pure return from day one."
+                "so any energy savings and avoided ACP are pure return from day one."
             )
         elif best_payback <= 7:
             st.success(
                 f"Strong financial case: best-case payback is **{best_payback} years** "
-                f"({'fine avoidance + energy savings' if energy_savings_psf > 0 else 'fine avoidance alone'}). "
+                f"({'avoided ACP + energy savings' if energy_savings_psf > 0 else 'avoided ACP alone'}). "
                 "This is well within typical commercial real estate investment horizons."
             )
         elif best_payback <= 12:
@@ -660,12 +659,12 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
                 "improves the near-term economics."
             )
         else:
-            #Large building: fine avoidance is the wrong frame entirely
+            #Large building: avoided ACP is the wrong frame entirely
             energy_annual_str = _fmt_dollars(energy_savings_annual).replace("$", "USD ")
             st.info(
                 "For a building this size, the primary financial drivers are **energy cost savings** "
                 f"({energy_annual_str}/yr at current assumptions) and **asset value protection**, "
-                "not fine avoidance alone. Consider: lender and investor ESG requirements, "
+                "not avoided ACP alone. Consider: lender and investor ESG requirements, "
                 "tenant retention in a market increasingly sensitive to building performance, "
                 "and the cost trajectory of ACP as BERDO limits tighten toward 2050. "
                 "Adjust the energy savings input above to model the full return."
@@ -674,18 +673,20 @@ def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
 
 
 def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_low, net_high):
-    """Retrofit vs. RECs vs. ACP, with a recommendation and the fine escalation table."""
+    """Retrofit vs. RECs vs. ACP, with a recommendation and the ACP table."""
     #Retrofit vs. compliance decision
     st.subheader("Three paths: retrofit, RECs, or pay the ACP")
     st.caption(
         "Three ways to close a BERDO gap: retrofit the building, retire MA Class I RECs "
         "to offset electricity emissions, or pay the Alternative Compliance Payment. "
-        "This section compares all three so you can make an informed decision."
+        "This section compares all three so you can make an informed decision. The ACP is a payment "
+        "($234 per excess metric ton) that keeps an over-limit building in compliance; owners who "
+        "neither reduce emissions nor pay it face separate daily fines."
     )
 
     if not annual_fine or annual_fine == 0:
         st.info(
-            "Look up your building in the Address Lookup tab or enter your annual fine above "
+            "Look up your building in the Address Lookup tab or enter your annual ACP above "
             "to see the retrofit vs. compliance comparison."
         )
     elif berdo_category and berdo_category in BERDO_STANDARDS:
@@ -699,9 +700,9 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
         fine_5yr = _totals["fine_5yr"]
 
         #Decision matrix
-        st.markdown("Cost comparison. Retrofit now vs. pay escalating ACP")
+        st.markdown("Cost comparison. Retrofit now vs. pay ACP as limits tighten")
         st.caption(
-            "BERDO fines grow every five years as the emissions limit tightens. "
+            "ACP grows every five years as the emissions limit tightens. "
             "The comparison below uses cumulative ACP through 2050, not just the current period."
         )
 
@@ -710,7 +711,7 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
 
         d1, d2, d3 = st.columns(3)
         d1.metric(
-            "Fines: current period only (5 yrs)",
+            "ACP: current period (5 yrs)",
             _fmt_dollars(fine_5yr),
             delta="Grows each period as limits tighten",
         )
@@ -808,7 +809,7 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
         #Recommendation
         st.markdown("Recommendation")
 
-        #Key insight: fines escalate, so compare retrofit against cumulative fines
+        #Key insight: ACP rises, so compare retrofit against cumulative ACP
         #not just one period. Also compute crossover period.
         crossover_period = _totals["crossover_period"]
         _rec_choice = retrofit_recommendation(net_low, fine_5yr, cum_fine_10yr, cumulative_fine_all)
@@ -822,55 +823,55 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
             #Retrofit cost is zero or cheaper than even one period of fines
             st.success(
                 f"**Retrofit now: clear financial case.** The net retrofit cost "
-                f"({net_low_str}) is less than or equal to one period of BERDO fines "
+                f"({net_low_str}) is less than or equal to one period of ACP "
                 f"({fine_5yr_str} for 2025–29 alone). "
-                "And fines only grow from here. Each period the limit tightens and the "
-                "gap widens. Retrofitting eliminates all future fine exposure permanently."
+                "And ACP only grows from here. Each period the limit tightens and the "
+                "gap widens. Retrofitting eliminates all future ACP exposure permanently."
             )
         elif _rec_choice == "retrofit_soon":
             #Retrofit pays back within 2 periods (10 years) of escalating fines
             st.success(
-                f"**Retrofit soon: strong case once fines escalate.** "
-                f"The net retrofit cost ({net_low_str}) is less than cumulative fines "
+                f"**Retrofit soon: strong case as ACP rises.** "
+                f"The net retrofit cost ({net_low_str}) is less than cumulative ACP "
                 f"over the first two periods ({cum_10yr_str} through 2030–34). "
-                f"Fines increase each period as the BERDO limit tightens, "
+                f"ACP increases each period as the BERDO limit tightens, "
                 "so waiting means paying more before you eventually retrofit anyway."
             )
         elif _rec_choice == "phase":
             #Retrofit is cheaper than total lifetime fines, crossover at some period
             st.warning(
-                f"**Consider phasing: fines will exceed retrofit cost by {crossover_period or 'a future period'}.** "
-                f"Paying the fine costs less upfront ({fine_5yr_str} for 2025–29) "
+                f"**Consider phasing: cumulative ACP will exceed retrofit cost by {crossover_period or 'a future period'}.** "
+                f"Paying the ACP costs less upfront ({fine_5yr_str} for 2025–29) "
                 f"vs. retrofitting now ({net_low_str}). "
-                f"However, BERDO limits tighten every 5 years. Your annual fine grows "
+                f"However, BERDO limits tighten every 5 years. Your annual ACP grows "
                 f"each period as the gap between your building's emissions and the limit widens. "
-                f"Cumulative fines reach {cum_str} through 2050 if nothing is done. "
+                f"Cumulative ACP reaches {cum_str} through 2050 if nothing is done. "
                 "A phased approach (lower-cost measures now, deeper retrofit before the next "
                 "period tightens) may be the most cost-effective path."
             )
         else:
-            #Even cumulative fines are less than net retrofit cost
+            #Even cumulative ACP is less than net retrofit cost
             net_high_str = _fmt_dollars(net_high).replace("$", "USD ")
             low_sav_str  = _fmt_dollars(round(sqft * 1.0)).replace("$", "USD ")
             high_sav_str = _fmt_dollars(round(sqft * 2.0)).replace("$", "USD ")
             st.info(
-                f"**Fine avoidance alone does not justify this retrofit.** "
-                f"Even cumulative BERDO fines through 2050 ({cum_str}) are less than "
+                f"**Avoided ACP alone does not justify this retrofit.** "
+                f"Even cumulative ACP through 2050 ({cum_str}) are less than "
                 f"the high net retrofit cost ({net_high_str}). "
                 f"However, this excludes energy savings "
                 f"(typically {low_sav_str}–{high_sav_str}/yr), asset value protection, "
                 "and lender/investor ESG requirements, which for large buildings often "
-                "dwarf the fine exposure. Run the numbers with your energy consultant "
+                "dwarf the ACP exposure. Run the numbers with your energy consultant "
                 "before ruling out the retrofit."
             )
 
         #Period-by-period fine escalation table
         if period_fines:
-            st.markdown("Fine escalation by period")
+            st.markdown("ACP by period")
             st.caption(
                 "Each period the BERDO limit drops. If your building's emissions stay flat, "
-                "the gap, and the fine, grows. The right column shows when cumulative "
-                "fines exceed the low net retrofit cost."
+                "the gap, and the ACP, grows. The right column shows when cumulative "
+                "ACP exceeds the low net retrofit cost."
             )
 
             fine_rows = []
@@ -880,13 +881,13 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
                 fine_rows.append({
                     "Period":              r["period"],
                     "BERDO limit":         f"{r['limit']} kg CO₂e/sf/yr",
-                    "Annual fine":         f"${r['annual_fine']:,.0f}",
-                    "5-yr period fine":    f"${r['5yr_fine']:,.0f}",
-                    "Cumulative fines":    f"${running_total:,.0f}",
+                    "Annual ACP":         f"${r['annual_fine']:,.0f}",
+                    "5-yr period ACP":    f"${r['5yr_fine']:,.0f}",
+                    "Cumulative ACP":    f"${running_total:,.0f}",
                     "vs. retrofit (low)":  (
-                        "Fines now cheaper"
+                        "ACP so far is cheaper"
                         if running_total < net_low
-                        else "Cumulative fines exceed retrofit"
+                        else "Cumulative ACP exceeds retrofit"
                     ),
                 })
 
@@ -898,12 +899,12 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
 
             st.caption(
                 "Assumes current GHG intensity held flat with no operational changes. "
-                "Grid decarbonization would reduce electricity-attributed fines over time. "
+                "Grid decarbonization would reduce electricity-attributed ACP over time. "
                 "Not an official BERDO compliance determination."
             )
     else:
         st.info(
-            "Select a building type above to see the retrofit vs. fine comparison."
+            "Select a building type above to see the retrofit vs. ACP comparison."
         )
 
 

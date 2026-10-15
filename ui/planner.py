@@ -353,8 +353,8 @@ def _planner_tables(has_projects, emissions_rows, _elec_capped_years, elec_share
                                           else " (today's grid, since the grid scenario is off).")
         )
 
-    #Table 2: ACP fines
-    st.markdown("#### Estimated ACP fine: annual, per period")
+    #Table 2: ACP
+    st.markdown("#### Estimated ACP: annual, per period")
     st.caption("Alternative Compliance Payment at $234/metric ton CO₂e over limit.")
     st.dataframe(pd.DataFrame(fines_rows), use_container_width=True, hide_index=True)
 
@@ -530,7 +530,7 @@ years. Cumulative ACP with projects is summed year by year rather than multiplyi
 **ACP**
 
 Alternative Compliance Payments are assessed at \$234 per metric ton of CO₂e above the 
-building's emissions limit. The table shows annual ACP. The summary metrics multiply by 
+building's emissions limit. The table shows annual ACP; the summary metrics multiply by 
 5 years per period for cumulative exposure.
 
 Sources: BERDO ordinance Table 1 and ACP rate; ENERGY STAR Portfolio Manager

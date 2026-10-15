@@ -2,8 +2,7 @@
 import pandas as pd
 
 from berdo.predictions import (
-    TIER_TRACK_RECORD, at_risk_by_zip, format_probability, load_predictions, prediction_for_building,
-    prediction_summary, tier_rate,
+    TIER_TRACK_RECORD, building_label_allowed, format_probability, labelable_buildings, load_predictions, prediction_for_building,
 )
 
 
@@ -14,6 +13,7 @@ def _df():
         "city_status": ["Pending Reporting"] * 3 + ["Pending Review from BERDO Team"] * 2,
         "tier": ["Likely over", "Watch", "Likely compliant", "No earlier data", "Likely over"],
         "probability_action_needed": [0.4, 0.2, 0.01, None, 0.5],
+        "latitude": [42.31, 42.32, 42.34, None, 42.35], "longitude": [-71.08, -71.09, -71.10, None, -71.10],
     })
 
 
@@ -32,9 +32,27 @@ def test_prediction_summary():
     assert s.loc["Under City review", "With earlier data"] == 1
 
 
-def test_at_risk_by_zip():
-    z = at_risk_by_zip(_df()).set_index("ZIP code")
-    assert z.loc["02119", "At risk"] == 2 and z.loc["02215", "At risk"] == 1
+def test_zip_summary_shows_only_combined_counts():
+    z = zip_risk_summary(_df()).set_index("ZIP code")
+    assert z.loc["02119", "at_risk"] == 2 and z.loc["02119", "At risk"] == "fewer than 3"
+    # no separate Likely over / Watch columns, so suppressed counts can't be recovered by subtraction
+    assert not {"Likely over", "Watch"} & set(z.columns)
+
+
+def test_small_counts_suppressed():
+    assert suppress_small(0) == "0" and suppress_small(2) == "fewer than 3" and suppress_small(1234) == "1,234"
+    t = type_risk_summary(_df().assign(property_type="Office"))
+    assert t.loc[0, "At risk"] == "3" and t.loc[0, "Buildings without a result"] == "5"
+    t2 = type_risk_summary(_df().head(2).assign(property_type="Office"))
+    assert t2.loc[0, "At risk"] == "fewer than 3"         # 2 at-risk buildings
+
+
+def test_buildings_under_review_never_labeled():
+    df = _df()
+    assert building_label_allowed(prediction_for_building(df, "1"))
+    assert not building_label_allowed(prediction_for_building(df, "5"))        # under City review
+    assert not building_label_allowed(None)
+    assert set(labelable_buildings(df)["berdo_id"]) == {"1", "2", "3"}
 
 
 def test_prediction_for_building():

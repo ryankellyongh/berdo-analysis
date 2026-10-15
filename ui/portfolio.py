@@ -105,7 +105,7 @@ def _portfolio_totals(valid):
     else:
         error_msg = (
             f"This portfolio is **non-compliant** in the current 2025–2029 period. "
-            f"At current emissions, it faces an estimated USD {current_fine:,.0f}/year in ACP fines "
+            f"At current emissions, it would owe an estimated USD {current_fine:,.0f}/year in ACP "
             f"and USD {total_5yr:,.0f} in cumulative payments across "
             f"{len(finite_non_compliant)} five-year non-compliant period(s) through 2050 "
             f"if no reductions are made."

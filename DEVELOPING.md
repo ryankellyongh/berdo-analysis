@@ -74,3 +74,17 @@ The Citywide Outlook tab reads `analysis/predictions_2026/predictions_2026_pendi
 or re-save that file: its fingerprint in `prediction_hash.txt` shows it hasn't changed since
 October 12, 2026. When the City publishes updated results, score the predictions with
 `python3 analysis/predictions_2026/check_after_update.py path/to/new_2026.csv`.
+
+## Data-use policy for predictions
+
+Predictions about specific buildings can affect real owners, so the app follows these rules
+(enforced in `berdo/predictions.py` and tested in `tests/test_predictions.py`):
+
+- **Public view:** totals by tier, ZIP code, and building type only. Counts under 3 are shown as
+  "fewer than 3," and ZIP tables show only the combined at-risk count, so hidden counts can't be
+  recovered by subtraction.
+- **Building-level predictions:** only after the City access code is entered. The code is stored in
+  Streamlit's secrets as `CITY_ACCESS_CODE`, never in the code or the repository.
+- **Buildings under City review are never labeled individually,** even with access. The City says
+  they are not considered out of compliance while under review.
+- **Owners** may receive their own building's prediction on request.

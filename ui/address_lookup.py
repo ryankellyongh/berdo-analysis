@@ -41,6 +41,7 @@ from berdo.data import (
 from berdo.predictions import (
     PREDICTIONS_FOR_YEAR,
     PREDICTIONS_SAVED_ON,
+    building_label_allowed,
     format_probability,
     prediction_for_building,
 )
@@ -327,7 +328,6 @@ def _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS,
         y=fines,
-        name="Annual ACP fine, conservative (USD)",
         mode="lines+markers",
         yaxis="y2",
         line=dict(color="#BA7517", width=1.5, dash="dot"),
@@ -343,7 +343,7 @@ def _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg
         fig.add_trace(go.Scatter(
             x=COMPLIANCE_PERIODS,
             y=proj_fines,
-            name="Annual ACP fine, grid scenario (USD)",
+            name="Annual ACP, grid scenario (USD)",
             mode="lines+markers",
             yaxis="y2",
             line=dict(color="#27AE60", width=1.5, dash="dot"),
@@ -357,7 +357,7 @@ def _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg
         xaxis_title="Compliance period",
         yaxis=dict(title="kg CO₂e / sf / yr", range=[0, y_max]),
         yaxis2=dict(
-            title="Annual ACP fine (USD)",
+            title="Annual ACP (USD)",
             overlaying="y",
             side="right",
             showgrid=False,
@@ -387,7 +387,7 @@ def _compliance_exposure_summary(gaps, projected_intensities, proj_gap_for_perio
             f"**Conservative scenario:** if no emissions reductions are made, this building "
             f"faces an estimated USD {exposure['total_5yr']:,.0f} in cumulative ACP payments across "
             f"{exposure['periods_over']} five-year non-compliant period(s) through 2050 "
-            f"(annual fine × 5 years per period)."
+            f"(annual ACP × 5 years per period)."
         )
         if exposure["annual_2050"] is not None:
             msg += (
@@ -509,7 +509,7 @@ def render_compliance_section(
         return
 
     if pd.isna(sqft) or sqft <= 0:
-        st.warning("Floor area is missing, so fine exposure can't be calculated.")
+        st.warning("Floor area is missing, so ACP exposure can't be calculated.")
         return
 
     if berdo_category is None and limits is None:
@@ -945,7 +945,9 @@ def _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label):
         st.info(f"**City emissions compliance status (2025 energy use):** {_city_status}")
     _pred = (prediction_for_building(getattr(page, "predictions", None), top.get("BERDO ID"))
              if page.selected_year == PREDICTIONS_FOR_YEAR else None)
-    if _pred:
+    #Data-use policy: a building's own predicted label is shown only with City access,
+    #and never for buildings under City review (see berdo/predictions.py)
+    if _pred and st.session_state.get("city_access_granted") and building_label_allowed(_pred):
         _p = _pred.get("probability_action_needed")
         st.info(
             f"**Predicted 2025 result (saved {PREDICTIONS_SAVED_ON}): {_pred['tier']}**"
@@ -953,6 +955,9 @@ def _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label):
             + ". Based on this building's previous year's emissions; the City hasn't published "
             "its result yet. See the Citywide Outlook tab for the method."
         )
+    elif _pred:
+        st.caption("The City hasn't published this building's 2025 result yet. The Citywide Outlook "
+                   "tab shows predicted results by ZIP code and building type.")
 
     render_compliance_section(
         top,
