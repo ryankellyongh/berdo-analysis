@@ -75,7 +75,7 @@ def city_access():
         st.info("Predictions are available to the City's BERDO team. Access hasn't been set up "
                 "for this app yet.")
         return False
-    st.info("Predictions are available to Building Owners and the City of Boston on request."
+    st.info("Predictions are available to Building Owners and the City of Boston on request. "
             "Enter your access code to view them.")
     entered = st.text_input("Access code", type="password", key="city_access_code")
     if entered and hmac.compare_digest(str(entered), str(code)):
