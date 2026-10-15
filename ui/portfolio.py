@@ -105,7 +105,7 @@ def _portfolio_totals(valid):
     else:
         error_msg = (
             f"This portfolio is **non-compliant** in the current 2025–2029 period. "
-            f"At current emissions, it faces an estimated USD {current_fine:,.0f}/year in ACP fines "
+            f"At current emissions, it would owe an estimated USD {current_fine:,.0f}/year in ACP "
             f"and USD {total_5yr:,.0f} in cumulative payments across "
             f"{len(finite_non_compliant)} five-year non-compliant period(s) through 2050 "
             f"if no reductions are made."
@@ -231,7 +231,7 @@ def _portfolio_chart(summary, elec_share, use_reported_share, selected_year):
     fig.add_trace(go.Scatter(
         x=COMPLIANCE_PERIODS,
         y=portfolio_fines,
-        name="Annual ACP fine, portfolio (USD)",
+        name="Annual ACP, portfolio (USD)",
         mode="lines+markers",
         yaxis="y2",
         line=dict(color="#BA7517", width=1.5, dash="dot"),
@@ -245,7 +245,7 @@ def _portfolio_chart(summary, elec_share, use_reported_share, selected_year):
         xaxis_title="Compliance period",
         yaxis=dict(title="kg CO₂e / sf / yr", range=[0, y_max]),
         yaxis2=dict(
-            title="Annual ACP fine (USD)",
+            title="Annual ACP (USD)",
             overlaying="y",
             side="right",
             showgrid=False,

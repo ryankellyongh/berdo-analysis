@@ -19,6 +19,12 @@ from berdo.data import (
     prepare_dataframe,
     year_from_filename,
 )
+from berdo.predictions import (
+    load_predictions,
+)
+from ui.outlook import (
+    render_outlook_tab,
+)
 from ui.address_lookup import (
     render_address_lookup_tab,
 )
@@ -44,6 +50,8 @@ from ui.planner import (
 #  berdo/retrofit.py      Retrofit, incentive, payback, and ACP schedule calculations
 #  berdo/pdf_export.py    The one-page PDF summary
 #  ui/address_lookup.py   Address Lookup tab
+#  ui/outlook.py          Citywide Outlook tab: saved predictions, map, track record
+#  berdo/predictions.py   Reading and summarizing the saved predictions
 #  ui/portfolio.py        Owner Portfolio tab
 #  ui/retrofit.py         Retrofit & Incentives tab
 #  ui/planner.py          Emissions Planner tab
@@ -108,6 +116,11 @@ def load_all_years() -> dict[int, pd.DataFrame]:
         year_map[0] = _load_single_csv(legacy)
 
     return year_map
+
+@st.cache_data(show_spinner=False)
+def _load_predictions():
+    return load_predictions()
+
 
 #App layout
 
@@ -211,7 +224,7 @@ with st.sidebar.expander("Sources & verification"):
 #Page header
 st.title("BERDO Priority Screening Tool")
 st.write(
-    "Enter a Boston building address to see its BERDO compliance status, fine exposure, "
+    "Enter a Boston building address to see its BERDO compliance status, ACP exposure, "
     "and a matched incentive plan for funding decarbonization."
 )
 
@@ -233,10 +246,11 @@ page = SimpleNamespace(
     df_full=df_full, all_years=all_years, selected_year=selected_year,
     multi_year_mode=multi_year_mode, show_yoy=show_yoy, show_grid_decarb=show_grid_decarb,
     elec_share=elec_share, use_reported_share=use_reported_share,
+    predictions=_load_predictions(),
 )
 
-tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
-    "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
+tab_address, tab_outlook, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
+    "Address Lookup", "Citywide Outlook", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
 ])
 
 
@@ -245,6 +259,10 @@ tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
 
 with tab_address:
     render_address_lookup_tab(page)
+
+
+with tab_outlook:
+    render_outlook_tab(page)
 
 
 with tab_portfolio:

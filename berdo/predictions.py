@@ -58,17 +58,6 @@ def prediction_summary(df) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def at_risk_by_zip(df, top=10) -> pd.DataFrame:
-    """ZIP codes with the most buildings in the Likely over or Watch tiers."""
-    risk = df[df["tier"].isin(["Likely over", "Watch"]) & df["zip"].notna()]
-    out = (risk.groupby("zip").agg(**{"Likely over": ("tier", lambda s: int((s == "Likely over").sum())),
-                                      "Watch": ("tier", lambda s: int((s == "Watch").sum()))})
-           .assign(**{"At risk": lambda t: t["Likely over"] + t["Watch"]})
-           .sort_values("At risk", ascending=False).head(top).reset_index()
-           .rename(columns={"zip": "ZIP code"}))
-    return out
-
-
 def prediction_for_building(df, berdo_id):
     """The saved prediction for one building (a dict), or None."""
     if df is None or not berdo_id:
@@ -86,3 +75,58 @@ def format_probability(p) -> str:
     if p < 0.02:
         return "under 2%"
     return f"{p:.0%}"
+
+
+#Data-use policy
+#- The public view shows totals by tier, ZIP code, and building type, never specific buildings.
+#- Counts below SMALL_GROUP_MIN are shown as "fewer than 3", so a small group can't identify a building.
+#- Buildings under City review are never labeled individually: the City says they are not
+#  considered out of compliance while under review.
+#- Building-level lists are for the City's BERDO team (with an access code) and for owners on request.
+SMALL_GROUP_MIN = 3
+UNDER_REVIEW = "Pending Review from BERDO Team"
+
+
+def suppress_small(n: int) -> str:
+    """A count as text, hiding small groups that could identify a building."""
+    n = int(n)
+    return "0" if n == 0 else (f"fewer than {SMALL_GROUP_MIN}" if n < SMALL_GROUP_MIN else f"{n:,}")
+
+
+def building_label_allowed(prediction) -> bool:
+    """Whether a building's own predicted label may be shown (never for buildings under City review)."""
+    return bool(prediction) and prediction.get("city_status") != UNDER_REVIEW
+
+
+def labelable_buildings(df) -> pd.DataFrame:
+    """Buildings whose predicted label may be shown individually (excludes those under City review)."""
+    return df[df["city_status"] != UNDER_REVIEW]
+
+
+def zip_risk_summary(df) -> pd.DataFrame:
+    """
+    Public, ZIP-level view: the combined at-risk count (Likely over + Watch), small counts suppressed,
+    and each ZIP code's average building location for placing one map circle per ZIP.
+    """
+    d = df[df["zip"].notna()]
+    rows = []
+    for z, g in d.groupby("zip"):
+        over, watch = int((g.tier == "Likely over").sum()), int((g.tier == "Watch").sum())
+        #Only the combined count is public: showing both parts and a total would let
+        #anyone recover a suppressed small count by subtraction.
+        rows.append({"ZIP code": z, "at_risk": over + watch, "At risk": suppress_small(over + watch),
+                     "latitude": g["latitude"].mean(), "longitude": g["longitude"].mean()})
+    out = pd.DataFrame(rows)
+    return out.sort_values("at_risk", ascending=False).reset_index(drop=True) if not out.empty else out
+
+
+def type_risk_summary(df) -> pd.DataFrame:
+    """Public view by building type: buildings without a result and how many are at risk (small counts suppressed)."""
+    rows = []
+    for t, g in df[df["property_type"].notna()].groupby("property_type"):
+        risk = int(g.tier.isin(["Likely over", "Watch"]).sum())
+        rows.append({"Building type": t, "n": len(g), "risk": risk,
+                     "Buildings without a result": suppress_small(len(g)), "At risk": suppress_small(risk)})
+    out = pd.DataFrame(rows)
+    return (out.sort_values("risk", ascending=False).drop(columns=["n", "risk"]).reset_index(drop=True)
+            if not out.empty else out)

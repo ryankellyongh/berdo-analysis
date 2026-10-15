@@ -61,27 +61,30 @@ def _zip_map(z):
 
 def city_access():
     """
-    Building-level predictions are shown only after the City access code is entered. The code is
-    set in Streamlit's secrets (CITY_ACCESS_CODE), never in the code. Returns True when granted.
+    The Citywide Outlook tab is shown only after the access code is entered. The code is set in
+    Streamlit's secrets (CITY_ACCESS_CODE), never in the code or the repository. Returns True when
+    access is granted; otherwise shows the code box (or a note if no code is configured).
     """
+    if st.session_state.get("city_access_granted"):
+        return True
     try:
         code = st.secrets.get("CITY_ACCESS_CODE")
     except Exception:
         code = None
     if not code:
+        st.info("Predictions are available to the City's BERDO team. Access hasn't been set up "
+                "for this app yet.")
         return False
-    if st.session_state.get("city_access_granted"):
+    st.info("Predictions are shared with the City's BERDO team, and with owners for their own "
+            "buildings on request. Enter your access code to view them.")
+    entered = st.text_input("Access code", type="password", key="city_access_code")
+    if entered and hmac.compare_digest(str(entered), str(code)):
+        st.session_state["city_access_granted"] = True
+        st.success("Access granted.")
         return True
-    with st.expander("City and owner access"):
-        st.caption("Building-level predictions are available to the City's BERDO team, and to owners "
-                   "for their own buildings on request.")
-        entered = st.text_input("Access code", type="password", key="city_access_code")
-        if entered and hmac.compare_digest(str(entered), str(code)):
-            st.session_state["city_access_granted"] = True
-            st.success("Access granted. Building-level predictions are shown below.")
-        elif entered:
-            st.error("That code isn't correct.")
-    return bool(st.session_state.get("city_access_granted"))
+    if entered:
+        st.error("That code isn't correct.")
+    return False
 
 
 def render_outlook_tab(page):
@@ -91,6 +94,8 @@ def render_outlook_tab(page):
         "for 2025? Each building is placed in a tier based on how its previous year's emissions, "
         "restated at the 2025 grid factor, compared with its 2025–29 limit."
     )
+    if not city_access():
+        return
     df = page.predictions
     if df is None:
         st.warning("Predictions file not found (analysis/predictions_2026/predictions_2026_pending.csv).")
@@ -119,8 +124,7 @@ def render_outlook_tab(page):
 
     st.markdown("---")
     st.subheader("Where the at-risk buildings are")
-    st.caption("At-risk = Likely over or Watch. Shown by ZIP code and building type only; "
-               f"groups with fewer than 3 buildings are not shown exactly, so no building can be identified.")
+    st.caption("At-risk = Likely over or Watch. Groups with fewer than 3 buildings are not shown exactly.")
     z = zip_risk_summary(df)
     st.plotly_chart(_zip_map(z), use_container_width=True)
     c1, c2 = st.columns(2)
@@ -131,9 +135,9 @@ def render_outlook_tab(page):
         st.markdown("**By building type**")
         st.dataframe(type_risk_summary(df), use_container_width=True, hide_index=True)
 
-    if city_access():
+    if True:   #the whole tab is already behind the access code
         st.markdown("---")
-        st.subheader("Building-level predictions (City access)")
+        st.subheader("Building-level predictions")
         st.caption("Buildings under City review are not labeled individually: the City says they are "
                    "not considered out of compliance while under review.")
         labelable = labelable_buildings(df)
@@ -175,7 +179,6 @@ def render_outlook_tab(page):
             "- **Under City review:** the City says these buildings are not considered out of compliance while under review.\n"
             "- **Few examples:** only 47 Action Needed buildings to learn from.\n"
             "- **One year of change:** predictions assume 2025 emissions resemble the previous year's.\n"
-            "- **Data use:** the public view shows totals only. Building-level predictions are shared with "
-            "the City's BERDO team and with owners for their own buildings, and buildings under City "
-            "review are never labeled individually."
+            "- **Data use:** predictions are shared only with the City's BERDO team (by access code) and "
+            "with owners for their own buildings. Buildings under City review are never labeled individually."
         )
