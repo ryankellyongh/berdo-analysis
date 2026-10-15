@@ -12,11 +12,22 @@ TIER_ORDER = ["Likely over", "Watch", "Likely compliant", "No earlier data"]
 
 #How each tier turned out on the 809 buildings that already had a City result
 #(earlier-year data only; see analysis/predictions_2026/README.md)
+#acted_to_comply: buildings found In Compliance that, between years, cut emissions by more
+#than 10%, bought renewable electricity, or used a flexibility measure. Not counted for
+#Likely compliant buildings, which were already under their limit.
 TIER_TRACK_RECORD = {
-    "Likely over":      {"buildings": 88,  "action_needed": 35},
-    "Watch":            {"buildings": 45,  "action_needed": 8},
-    "Likely compliant": {"buildings": 676, "action_needed": 4},
+    "Likely over":      {"buildings": 88,  "action_needed": 35, "acted_to_comply": 52},
+    "Watch":            {"buildings": 45,  "action_needed": 8,  "acted_to_comply": 33},
+    "Likely compliant": {"buildings": 676, "action_needed": 4,  "acted_to_comply": None},
 }
+
+
+def needed_to_act_share(tier):
+    """Share of a tier that was Action Needed or came in compliant only after acting, or None."""
+    r = TIER_TRACK_RECORD.get(tier)
+    if not r or r["acted_to_comply"] is None:
+        return None
+    return (r["action_needed"] + r["acted_to_comply"]) / r["buildings"]
 
 
 def load_predictions(path=PREDICTIONS_FILE):

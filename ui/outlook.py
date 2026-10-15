@@ -13,6 +13,7 @@ from berdo.predictions import (
     TIER_TRACK_RECORD,
     format_probability,
     labelable_buildings,
+    needed_to_act_share,
     prediction_summary,
     type_risk_summary,
     zip_risk_summary,
@@ -165,11 +166,25 @@ def render_outlook_tab(page):
 
     st.markdown("---")
     st.subheader("How well the tiers have worked")
-    record = pd.DataFrame([{"Tier": t, "Buildings": r["buildings"], "Turned out Action Needed": r["action_needed"],
-                            "Share": f"{r['action_needed'] / r['buildings']:.1%}"} for t, r in TIER_TRACK_RECORD.items()])
+    record = pd.DataFrame([{
+        "Tier": t,
+        "Buildings": r["buildings"],
+        "Action Needed": (f"{r['action_needed']} "
+                          f"({r['action_needed'] / r['buildings']:.{1 if r['action_needed'] / r['buildings'] < 0.01 else 0}%})"),
+        "Came in compliant after acting": (str(r["acted_to_comply"]) if r["acted_to_comply"] is not None
+                                           else "Not applicable"),
+        "Needed to act": (f"{needed_to_act_share(t):.0%}" if needed_to_act_share(t) is not None
+                          else "Not applicable"),
+    } for t, r in TIER_TRACK_RECORD.items()])
     st.dataframe(record, use_container_width=True, hide_index=True)
-    st.caption("Tested on the 809 buildings that already have a City result, using only their previous year's data. "
-               "Likely over and Watch together found 43 of 47 Action Needed buildings.")
+    st.caption(
+        "Tested on the 809 buildings that already have a City result, using only their previous year's data. "
+        "Likely over and Watch together found 43 of 47 Action Needed buildings. Most buildings in those tiers "
+        "that came in compliant did so by acting between years: cutting emissions by more than 10%, buying "
+        "renewable electricity, or using a flexibility measure such as a blended standard. Of the 88 Likely "
+        "over buildings, 87 were Action Needed or acted to avoid it. The tiers flag buildings that need to act; "
+        "they can't foresee which owners will act in time."
+    )
     with st.expander("Method and limitations"):
         st.markdown(
             "- **Method:** last year's emissions restated at the 2025 grid factor and compared with the "

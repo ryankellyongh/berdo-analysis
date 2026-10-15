@@ -2,7 +2,7 @@
 import pandas as pd
 
 from berdo.predictions import (
-    TIER_TRACK_RECORD, building_label_allowed, format_probability, labelable_buildings, load_predictions, prediction_for_building,
+    TIER_TRACK_RECORD, building_label_allowed, needed_to_act_share, format_probability, labelable_buildings, load_predictions, prediction_for_building,
     prediction_summary, suppress_small, tier_rate, type_risk_summary, zip_risk_summary,
 )
 
@@ -72,3 +72,10 @@ def test_saved_predictions_file():
 def test_probabilities_never_shown_as_certain():
     assert format_probability(0.997) == "over 95%" and format_probability(0.005) == "under 2%"
     assert format_probability(0.384) == "38%" and format_probability(None) == "not estimated"
+
+
+def test_needed_to_act_share():
+    # Likely over: 35 Action Needed + 52 came in compliant after acting = 87 of 88
+    assert round(needed_to_act_share("Likely over"), 3) == round(87 / 88, 3)
+    assert round(needed_to_act_share("Watch"), 3) == round(41 / 45, 3)
+    assert needed_to_act_share("Likely compliant") is None and needed_to_act_share("Unknown") is None
