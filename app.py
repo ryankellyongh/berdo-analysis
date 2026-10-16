@@ -3669,6 +3669,199 @@ EPA Portfolio Manager Emissions Factors (August 2025).
 Not an official City of Boston BERDO compliance determination.
 """)
 
+
+#CITYWIDE OVERVIEW — Tab 1
+
+@st.cache_data(show_spinner="Evaluating every building…")
+def evaluate_all_buildings(year: int) -> pd.DataFrame:
+    """Runs evaluate_building on every row of one reporting year."""
+    df = load_all_years()[year].copy()
+    out = df.apply(evaluate_building, axis=1, result_type="expand")
+    out.columns = ["data_status", "berdo_status", "est_acp", "notes"]
+    df = pd.concat([df, out], axis=1)
+    df["berdo_category"] = df["property_type"].map(map_property_type).fillna("Unmapped / missing")
+    df["is_campus_row"] = df.get("is_campus_row", False)
+    return df
+
+
+def render_citywide_tab(year: int, label: str):
+    st.write(
+        "A citywide picture of BERDO reporting and emissions compliance for every "
+        f"covered building in the {label} dataset."
+    )
+    df = evaluate_all_buildings(year)
+    has_official = "official_emissions_status" in df.columns
+
+    if has_official:
+        st.warning(
+            "**Provisional data.** In this disclosure the City withheld energy and emissions "
+            "data for buildings under review, with extensions, or with pending revisions. "
+            "Buildings over their limit are routinely flagged for review, so the number of "
+            "over-limit buildings below is likely an **undercount**."
+        )
+
+    #Headline metrics
+    is_campus = df["is_campus_row"].fillna(False).astype(bool)
+    bldgs = df[~is_campus]
+    over = df[df["berdo_status"] == "Over 2025–29 limit"]
+    not_subject = df["berdo_status"].astype(str).str.startswith("Not subject")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Covered buildings", f"{len(bldgs):,}",
+              delta=f"+{int(is_campus.sum())} campus records" if is_campus.any() else None,
+              delta_color="off")
+    c2.metric("Reported, usable data", f"{(df['data_status'] == 'Reported').sum():,}")
+    c3.metric("Did not report", f"{(df['data_status'] == 'Not submitted').sum():,}")
+    c4.metric("Over 2025–29 limit", f"{len(over):,}")
+
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("Est. annual ACP (2025–29)", f"${over['est_acp'].sum():,.0f}")
+    c6.metric("Not yet covered (2030)", f"{(df['berdo_status'] == 'Not yet covered').sum():,}")
+    c7.metric("Not subject (State / Vacant)", f"{int(not_subject.sum()):,}")
+    c8.metric("Compliance unknown", f"{(df['berdo_status'] == 'Unknown — data incomplete').sum():,}")
+    st.caption(
+        "Est. ACP uses each building's official 2025–29 standard where the City publishes one "
+        "(including Blended Standards and Individual Compliance Schedules), otherwise its sector "
+        "default, at $234/metric ton. It excludes State-owned and vacant buildings. "
+        "Not an official City of Boston determination."
+    )
+
+    st.markdown("---")
+
+    #Status breakdown
+    order = [
+        "Over 2025–29 limit", "Fails 2030–34", "Compliant through 2034",
+        "Compliant through 2039+", "Within custom schedule (2025–29)",
+        "Not yet covered", "Not subject — state", "Not subject — vacant",
+        "Coverage year not reported", "Unknown — data incomplete",
+    ]
+    colors = {
+        "Over 2025–29 limit": "#E24B4A", "Fails 2030–34": "#E67E22",
+        "Compliant through 2034": "#F1C40F", "Compliant through 2039+": "#1D9E75",
+        "Within custom schedule (2025–29)": "#27AE60",
+    }
+    counts = df["berdo_status"].value_counts()
+    statuses = [s for s in order if s in counts] + [s for s in counts.index if s not in order]
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("#### BERDO status (this tool)")
+        fig = go.Figure(go.Bar(
+            x=[counts[s] for s in statuses], y=statuses, orientation="h",
+            marker_color=[colors.get(s, "#95A5A6") for s in statuses],
+            text=[f"{counts[s]:,}" for s in statuses], textposition="outside",
+        ))
+        fig.update_layout(height=380, margin=dict(t=10, b=30, l=10, r=40),
+                          yaxis=dict(autorange="reversed"),
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        fig.update_xaxes(gridcolor="rgba(128,128,128,0.12)")
+        st.plotly_chart(fig, use_container_width=True)
+    with right:
+        if has_official:
+            st.markdown("#### Official emissions status (City)")
+            oc = df["official_emissions_status"].fillna("Not listed").value_counts()
+            fig2 = go.Figure(go.Bar(
+                x=oc.values, y=oc.index, orientation="h", marker_color="#3266ad",
+                text=[f"{v:,}" for v in oc.values], textposition="outside",
+            ))
+            fig2.update_layout(height=380, margin=dict(t=10, b=30, l=10, r=40),
+                               yaxis=dict(autorange="reversed"),
+                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+            fig2.update_xaxes(gridcolor="rgba(128,128,128,0.12)")
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            st.markdown("#### Reporting status")
+            rc = df["data_status"].value_counts()
+            fig2 = go.Figure(go.Bar(
+                x=rc.values, y=rc.index, orientation="h", marker_color="#3266ad",
+                text=[f"{v:,}" for v in rc.values], textposition="outside",
+            ))
+            fig2.update_layout(height=380, margin=dict(t=10, b=30, l=10, r=40),
+                               yaxis=dict(autorange="reversed"),
+                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig2, use_container_width=True)
+            st.caption("Official emissions statuses are published from the 2026 disclosure onward.")
+
+    if has_official:
+        both = df[df["official_emissions_status"].isin(["In Compliance", "Action Needed"])]
+        if len(both):
+            agree = (
+                (both["official_emissions_status"] == "Action Needed")
+                == (both["berdo_status"] == "Over 2025–29 limit")
+            ).mean()
+            st.caption(
+                f"Where the City has made a final determination ({len(both):,} buildings), "
+                f"this tool's 2025–29 result agrees with the City's {agree:.1%} of the time."
+            )
+
+    st.markdown("---")
+
+    #By sector
+    st.markdown("#### By BERDO building category")
+    st.caption("“Unmapped / missing” is mostly buildings whose data was withheld or not "
+               "submitted, so no property type was published.")
+    scored = df[df["data_status"] == "Reported"]
+    rows = []
+    for cat, g in df.groupby("berdo_category"):
+        s = scored[scored["berdo_category"] == cat]
+        inten = pd.to_numeric(s["ghg_intensity_kgco2e_sqft"], errors="coerce")
+        rows.append({
+            "Category":                cat,
+            "Buildings":               len(g),
+            "Reported":                len(s),
+            "Did not report":          int((g["data_status"] == "Not submitted").sum()),
+            "Over 2025–29 limit":      int((g["berdo_status"] == "Over 2025–29 limit").sum()),
+            "Fails 2030–34":           int((g["berdo_status"] == "Fails 2030–34").sum()),
+            "Median GHG (kg/sf/yr)":   round(inten.median(), 2) if inten.notna().any() else None,
+            "Sector limit 2025–29":    BERDO_STANDARDS[cat][0] if cat in BERDO_STANDARDS else None,
+            "Est. annual ACP":         g.loc[g["berdo_status"] == "Over 2025–29 limit", "est_acp"].sum(),
+        })
+    sector = pd.DataFrame(rows)
+    sector["_unmapped"] = sector["Category"] == "Unmapped / missing"
+    sector = (sector.sort_values(["_unmapped", "Buildings"], ascending=[True, False])
+                    .drop(columns="_unmapped"))
+    st.dataframe(
+        sector, use_container_width=True, hide_index=True,
+        column_config={"Est. annual ACP": st.column_config.NumberColumn(format="$%d")},
+    )
+
+    #Largest exposures
+    st.markdown("#### Largest estimated ACP exposure (2025–29)")
+    top = over.sort_values("est_acp", ascending=False).head(20)
+    if top.empty:
+        st.caption("No buildings with usable data are over their 2025–29 limit.")
+    else:
+        top_cols = ["Building Address", "Property Owner Name", "property_type",
+                    "gross_floor_area", "ghg_intensity_kgco2e_sqft", "est_acp"]
+        if has_official:
+            top_cols.append("official_emissions_status")
+        show = top[top_cols].rename(columns={
+            "property_type": "Property type", "gross_floor_area": "Floor area (sq ft)",
+            "ghg_intensity_kgco2e_sqft": "GHG (kg/sf/yr)", "est_acp": "Est. annual ACP",
+            "official_emissions_status": "City status",
+        })
+        show["GHG (kg/sf/yr)"] = pd.to_numeric(show["GHG (kg/sf/yr)"], errors="coerce").round(2)
+        st.dataframe(
+            show, use_container_width=True, hide_index=True,
+            column_config={"Est. annual ACP": st.column_config.NumberColumn(format="$%d"),
+                           "Floor area (sq ft)": st.column_config.NumberColumn(format="%d")},
+        )
+        st.caption("Look up any address in the Address Lookup tab for its full compliance analysis.")
+
+    #Download
+    export_cols = [c for c in [
+        "Building Address", "Property Owner Name", "property_type", "berdo_category",
+        "gross_floor_area", "ghg_intensity_kgco2e_sqft", "compliance_status",
+        "data_status", "berdo_status", "est_acp", "official_emissions_status",
+        "flexibility_measures", "notes",
+    ] if c in df.columns]
+    st.download_button(
+        "Download all buildings (CSV)",
+        df[export_cols].to_csv(index=False).encode("utf-8"),
+        file_name=f"berdo_citywide_{label}.csv",
+        mime="text/csv",
+    )
+
 #App layout
 
 all_years = load_all_years()
@@ -3750,9 +3943,15 @@ else:
         "It is not an official City of Boston BERDO compliance determination."
     )
 
-tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
-    "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
+tab_citywide, tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
+    "Citywide Overview", "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
 ])
+
+#Tab 0 — citywide overview
+
+with tab_citywide:
+    render_citywide_tab(selected_year, str(selected_year) if selected_year else "current")
+
 
 #Tab 1 — single address lookup (unchanged behaviour)
 
