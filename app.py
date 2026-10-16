@@ -3728,32 +3728,39 @@ STATUS_COLORS = {
 }
 
 
-#Access code for the citywide map. The value in Streamlit secrets
-#(CITY_ACCESS_CODE in .streamlit/secrets.toml, or the app's Secrets settings on
-#Streamlit Cloud) takes precedence over this fallback.
-CITY_ACCESS_CODE = "BERDO"
+#Access code for the Citywide Overview tab. The code is never stored in this file:
+#it is read from Streamlit secrets (CITY_ACCESS_CODE), set in the app's
+#Settings → Secrets on Streamlit Cloud, or in .streamlit/secrets.toml locally
+#(keep that file out of git). If no code is configured, the map stays locked.
 
-
-def _city_access_code() -> str:
+def _city_access_code():
     try:
-        return str(st.secrets["CITY_ACCESS_CODE"])
+        code = str(st.secrets["CITY_ACCESS_CODE"]).strip()
     except Exception:   #no secrets file, or key not set
-        return CITY_ACCESS_CODE
+        return None
+    return code or None
 
 
-def _map_unlocked() -> bool:
+def _citywide_unlocked() -> bool:
     """Shows an access-code prompt until the correct code is entered.
     Unlocks for the rest of the browser session."""
     import hmac
-    if st.session_state.get("cw_map_unlocked"):
+    if st.session_state.get("cw_unlocked"):
         return True
-    with st.form("cw_map_access"):
+    expected = _city_access_code()
+    if expected is None:
+        st.info(
+            "The Citywide Overview is locked and no access code has been configured. "
+            "App owner: set CITY_ACCESS_CODE in Streamlit secrets to enable it."
+        )
+        return False
+    with st.form("cw_access"):
         code = st.text_input("Access code", type="password",
-                             help="The citywide map requires an access code.")
-        submitted = st.form_submit_button("Unlock map")
+                             help="The Citywide Overview requires an access code.")
+        submitted = st.form_submit_button("Unlock Citywide Overview")
     if submitted:
-        if hmac.compare_digest(code.strip(), _city_access_code()):
-            st.session_state["cw_map_unlocked"] = True
+        if hmac.compare_digest(code.strip().encode(), expected.encode()):
+            st.session_state["cw_unlocked"] = True
             st.rerun()
         else:
             st.error("Incorrect access code.")
@@ -3762,8 +3769,6 @@ def _map_unlocked() -> bool:
 
 def render_citywide_map(df: pd.DataFrame):
     st.markdown("#### Map")
-    if not _map_unlocked():
-        return
     if df["lat"].notna().sum() == 0:
         st.info(
             "No coordinates available. Add data/berdo_coordinates.csv to the repo "
@@ -3842,6 +3847,8 @@ def evaluate_all_buildings(year: int) -> pd.DataFrame:
 
 
 def render_citywide_tab(year: int, label: str):
+    if not _citywide_unlocked():
+        return
     st.write(
         "A citywide picture of BERDO reporting and emissions compliance for every "
         f"covered building in the {label} dataset."
