@@ -1165,7 +1165,7 @@ def render_address_lookup_tab(page):
     """Address Lookup tab: search, building result, trend, compliance, pathways, PDF, and pre-fill."""
     address_input = st.text_input(
         "Enter building address",
-        placeholder="Example: 20 Gillette Park"
+        placeholder="Example: 100 Summer Street"
     )
 
     if not address_input:
