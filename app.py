@@ -3672,6 +3672,129 @@ Not an official City of Boston BERDO compliance determination.
 
 #CITYWIDE OVERVIEW — Tab 1
 
+@st.cache_data(show_spinner=False)
+def load_coordinates():
+    """
+    data/berdo_coordinates.csv: berdo_id, tax_parcel_id, lat, lon.
+    Built from the geocoded 2022–2025 combined dataset. Returns None if absent.
+    """
+    for folder in (Path("data"), Path(__file__).parent / "data", Path(__file__).parent.parent / "data"):
+        fp = folder / "berdo_coordinates.csv"
+        if fp.exists():
+            c = pd.read_csv(fp, dtype={"berdo_id": str})
+            c["tax_parcel_id"] = pd.to_numeric(c["tax_parcel_id"], errors="coerce")
+            return c
+    return None
+
+
+def attach_coordinates(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds lat/lon by BERDO ID, falling back to Tax Parcel ID."""
+    df = df.copy()
+    df["lat"] = pd.NA
+    df["lon"] = pd.NA
+    coords = load_coordinates()
+    if coords is None:
+        return df
+    id_col = "berdo_id" if "berdo_id" in df.columns else ("BERDO ID" if "BERDO ID" in df.columns else None)
+    if id_col:
+        ids = df[id_col].astype(str).str.replace(r"\.0$", "", regex=True)
+        by_id = coords.dropna(subset=["berdo_id"]).set_index("berdo_id")
+        df["lat"] = ids.map(by_id["lat"])
+        df["lon"] = ids.map(by_id["lon"])
+    if "Tax Parcel ID" in df.columns:
+        by_parcel = (coords.dropna(subset=["tax_parcel_id"])
+                           .drop_duplicates("tax_parcel_id", keep="last")
+                           .set_index("tax_parcel_id"))
+        parcels = pd.to_numeric(df["Tax Parcel ID"], errors="coerce")
+        missing = df["lat"].isna()
+        df.loc[missing, "lat"] = parcels[missing].map(by_parcel["lat"])
+        df.loc[missing, "lon"] = parcels[missing].map(by_parcel["lon"])
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+    return df
+
+
+STATUS_COLORS = {
+    "Over 2025–29 limit":               "#E24B4A",
+    "Fails 2030–34":                    "#E67E22",
+    "Compliant through 2034":           "#F1C40F",
+    "Compliant through 2039+":          "#1D9E75",
+    "Within custom schedule (2025–29)": "#27AE60",
+    "Not yet covered":                  "#3266ad",
+    "Not subject — state":              "#7F8C8D",
+    "Not subject — vacant":             "#7F8C8D",
+    "Coverage year not reported":       "#BDC3C7",
+    "Unknown — data incomplete":        "#BDC3C7",
+}
+
+
+def render_citywide_map(df: pd.DataFrame):
+    st.markdown("#### Map")
+    if df["lat"].notna().sum() == 0:
+        st.info(
+            "No coordinates available. Add data/berdo_coordinates.csv to the repo "
+            "to enable the map."
+        )
+        return
+
+    f1, f2, f3 = st.columns([2, 1, 1])
+    present = [s for s in STATUS_COLORS if s in set(df["berdo_status"])]
+    default = [s for s in present if s not in ("Unknown — data incomplete", "Coverage year not reported")]
+    with f1:
+        show_status = st.multiselect("BERDO status", present, default=default, key="cw_map_status")
+    with f2:
+        cats = ["All categories"] + sorted(c for c in df["berdo_category"].unique() if c != "Unmapped / missing")
+        cat = st.selectbox("Building category", cats, key="cw_map_cat")
+    with f3:
+        size_by_area = st.checkbox("Size dots by floor area", value=True, key="cw_map_size")
+
+    m = df[df["berdo_status"].isin(show_status) & df["lat"].notna()]
+    if cat != "All categories":
+        m = m[m["berdo_category"] == cat]
+    no_coords = int((df["berdo_status"].isin(show_status) & df["lat"].isna()).sum())
+
+    if m.empty:
+        st.caption("No buildings match these filters.")
+        return
+
+    Scatter = getattr(go, "Scattermap", None) or go.Scattermapbox   #plotly ≥5.24 / older
+    map_key = "map" if Scatter is getattr(go, "Scattermap", None) else "mapbox"
+
+    fig = go.Figure()
+    for status in [s for s in STATUS_COLORS if s in show_status]:
+        g = m[m["berdo_status"] == status]
+        if g.empty:
+            continue
+        sqft = pd.to_numeric(g["gross_floor_area"], errors="coerce").fillna(0)
+        size = (5 + (sqft.clip(upper=1_000_000) / 1_000_000) ** 0.5 * 18) if size_by_area else 7
+        inten = pd.to_numeric(g["ghg_intensity_kgco2e_sqft"], errors="coerce")
+        hover = (
+            "<b>" + g["Building Address"].astype(str) + "</b><br>"
+            + g["property_type"].fillna("Type not reported").astype(str) + "<br>"
+            + "Floor area: " + sqft.map(lambda v: f"{v:,.0f}") + " sq ft<br>"
+            + "GHG: " + inten.map(lambda v: f"{v:.2f} kg/sf/yr" if pd.notna(v) else "n/a") + "<br>"
+            + "Status: " + status
+            + g["est_acp"].map(lambda v: f"<br>Est. ACP: ${v:,.0f}/yr" if v > 0 else "")
+        )
+        fig.add_trace(Scatter(
+            lat=g["lat"], lon=g["lon"], mode="markers", name=f"{status} ({len(g):,})",
+            marker=dict(size=size, color=STATUS_COLORS[status], opacity=0.75),
+            hovertext=hover, hoverinfo="text",
+        ))
+    fig.update_layout(**{
+        map_key: dict(style="open-street-map", center=dict(lat=42.325, lon=-71.075), zoom=10.6),
+        "height": 560,
+        "margin": dict(t=0, b=0, l=0, r=0),
+        "legend": dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+    })
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"{len(m):,} buildings shown. "
+        + (f"{no_coords:,} matching buildings have no coordinates and are not plotted. " if no_coords else "")
+        + "Coordinates come from the geocoded 2022–2025 BERDO data, matched by BERDO ID or tax parcel."
+    )
+
+
 @st.cache_data(show_spinner="Evaluating every building…")
 def evaluate_all_buildings(year: int) -> pd.DataFrame:
     """Runs evaluate_building on every row of one reporting year."""
@@ -3681,7 +3804,7 @@ def evaluate_all_buildings(year: int) -> pd.DataFrame:
     df = pd.concat([df, out], axis=1)
     df["berdo_category"] = df["property_type"].map(map_property_type).fillna("Unmapped / missing")
     df["is_campus_row"] = df.get("is_campus_row", False)
-    return df
+    return attach_coordinates(df)
 
 
 def render_citywide_tab(year: int, label: str):
@@ -3725,6 +3848,10 @@ def render_citywide_tab(year: int, label: str):
         "default, at $234/metric ton. It excludes State-owned and vacant buildings. "
         "Not an official City of Boston determination."
     )
+
+    st.markdown("---")
+
+    render_citywide_map(df)
 
     st.markdown("---")
 
