@@ -1,0 +1,55 @@
+BERDO ID,Building Address,Parcel Address,Tax Parcel ID,Property Owner Name,Property type,Floor area (sq ft),BERDO status,Est. ACP (2025–29),City status,Why not mapped
+102644,Nashua St,Nashua St,301925100.0,Delaware North Companies,Indoor Arena,1505000.0,Compliant through 2034,0.0,In Compliance,No street number or parcel match in City address data
+101778,Chauncy St,Chauncy St,304500100.0,Chsp Boston Ii LLC,Hotel,462684.0,Compliant through 2034,0.0,In Compliance,No street number or parcel match in City address data
+105865,W Howell St,W Howell St,703441001.0,Southeast Realty Trust,Hotel,80685.0,Compliant through 2034,0.0,In Compliance,No street number or parcel match in City address data
+101206,Ball St,,901710000.0,Melnea Residences LLC,Multifamily Housing,52055.0,Compliant through 2034,0.0,In Compliance,No street number or parcel match in City address data
+103826,Sprague St,Sprague St,1812975000.0,Hurley/Readville Realty LLC Mass LLC,Distribution Center,41250.0,Compliant through 2039+,0.0,In Compliance,No street number or parcel match in City address data
+103827,Sprague St,Sprague St,1812975004.0,Hurley/Readville Realty LLC Mass LLC,Distribution Center,24785.0,Not yet covered,0.0,N/A until 2030,No street number or parcel match in City address data
+105375,Dudley St,Dudley St,800706000.0,Roman Cath Arch Boston Church,Worship Facility,23930.0,Not yet covered,0.0,N/A until 2030,No street number or parcel match in City address data
+102391,Deer Island,Deer Island,107063000.0,Commonwealth Of Mass,Wastewater Treatment Plant,2832363.0,Not subject — state,0.0,State,No street number or parcel match in City address data
+107955,,,301911035.0,Office Tower Owner Lp,Office,645306.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+C10049,Morton St. And Canterbury St.,,,City of Boston,Vehicle Repair Services,95581.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,Campus record; no parcel or member-building location
+102798,Mapes St,Mapes St,1600517070.0,Elevator Constructor'S,Office,28264.0,Unknown — data incomplete,0.0,N/A until 2030,No street number or parcel match in City address data
+105400,O St,O St,603644000.0,Roman Cath Arch Of Bostn,Other - Education,22835.0,Unknown — data incomplete,0.0,N/A until 2030,No street number or parcel match in City address data
+107184,William J. Devine Golf Course,Morton St,1203486002.0,City Of Boston,Other - Recreation,13000.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107207,Preble St,Preble St,700542000.0,City Of Boston,Pre-school/Daycare,5000.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107198,Meridian St,Meridian St,103680001.0,City Of Boston,Other - Public Services,3111.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+106963,723 Harvard St Mount Hope Cemetery Maintenance Building,723 Harvard St Mount Hope Cemetery Maintenance Building,1806135001.0,City Of Boston,Vehicle Repair Services,2000.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107199,Alford St,Alford St,201831001.0,City Of Boston,Other - Public Services,1043.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107235,Long Island Guardhouse,Long Island,107066001.0,City Of Boston,Office,800.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+106971,W Roxbury Pw,W Roxbury Pw,2000676000.0,Commwlth Of Mass,Vehicle Repair Services,798.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+106978,Beacon St- Pink Palace / Earl Of Sandwich,Beacon St- Pink Palace / Earl Of Sandwich,500812002.0,Earl Of Sandwich Boston LLC,Fast Food Restaurant,660.0,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+100175,,,101660001.0,Massachusetts Port Authority,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+100728,,,201797001.0,Boston Autoport LLC,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+101834,,,107067000.0,City Of Boston,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+101895,,,302714000.0,City Of Boston,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+102770,,,1812340010.0,Edgemere Gardens LLC Mass LLC,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+103810,,,1605018010.0,Hta Carney Mob LLC,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+104216,,,1500563000.0,Mass Bay Transp Auth,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+105393,,,2202496000.0,Roman Cath Arch Of Bos,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+107182,Community Resource Center,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Pending Reporting,No street number or parcel match in City address data
+107183,6-Greenhouse,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107185,7-8-Maintenance Shed,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107186,5-Ranger Office,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107187,9-Ranger Stables,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107188,1-2-Admin Building,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107191,3-Storage,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107192,4-Maintenance Garage,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107193,4B-Weld And Wood Shop,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107194,4B-Storage Trailer,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107195,10-11-Bay House,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107196,4B-Office Trailer,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107197,9-Ranger Stables Trailer,,1203486002.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107234,Long Island Campus_Engine 54,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107236,Long Island Campus_Chapel,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107237,Long Island Campus_Admin Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107238,Long Island Campus_Nichols Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107239,Long Island Campus_Mcgillivray Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107240,Long Island Campus_Morris Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107241,Long Island Campus_Richards Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107242,Long Island Campus_Wards Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107243,Long Island Campus_Tobin Building,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107244,Long Island Campus_Laundry/Garage #2,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107245,Long Island Campus_Garage #1,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+107246,Long Island Campus_Pumphouse,,107066001.0,City Of Boston,,,Unknown — data incomplete,0.0,Emissions Compliance at Portfolio Level,No street number or parcel match in City address data
+C10050,,,,,,,Unknown — data incomplete,0.0,Pending Reporting,Campus record; no parcel or member-building location

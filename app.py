@@ -3711,7 +3711,43 @@ def attach_coordinates(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[missing, "lon"] = parcels[missing].map(by_parcel["lon"])
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+
+    #Campus records (2026 disclosure onward) have no single location: place them
+    #at the average position of their member buildings.
+    df["coords_from_campus"] = False
+    if "campus_id" in df.columns and "berdo_id" in df.columns:
+        members = df[df["campus_id"].notna() & df["lat"].notna()]
+        if not members.empty:
+            centroid = members.groupby(members["campus_id"].astype(str))[["lat", "lon"]].mean()
+            ids = df["berdo_id"].astype(str)
+            fill = df["lat"].isna() & ids.isin(centroid.index)
+            df.loc[fill, "lat"] = ids[fill].map(centroid["lat"])
+            df.loc[fill, "lon"] = ids[fill].map(centroid["lon"])
+            df.loc[fill, "coords_from_campus"] = True
     return df
+
+
+def unmapped_buildings(df: pd.DataFrame) -> pd.DataFrame:
+    """Buildings with no coordinates, riskiest and largest first, with the reason."""
+    miss = df[df["lat"].isna()].copy()
+    is_campus = miss.get("is_campus_row", pd.Series(False, index=miss.index)).fillna(False).astype(bool)
+    miss["Why not mapped"] = is_campus.map({
+        True:  "Campus record; no parcel or member-building location",
+        False: "No street number or parcel match in City address data",
+    })
+    rank = {s: i for i, s in enumerate(STATUS_COLORS)}
+    miss["_rank"] = miss["berdo_status"].map(rank).fillna(len(rank))
+    miss = miss.sort_values(["_rank", "gross_floor_area"], ascending=[True, False])
+    cols = [c for c in [
+        "berdo_id", "BERDO ID", "Building Address", "Parcel Address", "Tax Parcel ID",
+        "Property Owner Name", "property_type", "gross_floor_area", "berdo_status",
+        "est_acp", "official_emissions_status", "Why not mapped",
+    ] if c in miss.columns]
+    return miss[cols].rename(columns={
+        "berdo_id": "BERDO ID", "property_type": "Property type",
+        "gross_floor_area": "Floor area (sq ft)", "berdo_status": "BERDO status",
+        "est_acp": "Est. ACP (2025–29)", "official_emissions_status": "City status",
+    })
 
 
 STATUS_COLORS = {
@@ -3734,11 +3770,11 @@ MAP_HIDDEN_BY_DEFAULT = {
     "Coverage year not reported", "Unknown — data incomplete",
 }
 
-#Basemaps that need no access token. Muted ones make the dots stand out.
-MAP_BASEMAPS = {
-    "Light (muted)": ("carto-positron",   "#222222"),   #(style, dot outline colour)
-    "Dark":          ("carto-darkmatter", "#FFFFFF"),
-    "Street map":    ("open-street-map",  "#222222"),
+#Basemaps that need no access token. White outlines keep dots readable on the colorful map.
+MAP_BASEMAPS = {   #first entry is the default
+    "Colorful street map": ("open-street-map",  "#FFFFFF"),   #(style, dot outline colour)
+    "Light (muted)":       ("carto-positron",   "#222222"),
+    "Dark":                ("carto-darkmatter", "#FFFFFF"),
 }
 
 
@@ -3841,12 +3877,12 @@ def render_citywide_map(df: pd.DataFrame):
         )
         fig.add_trace(Scatter(        #halo / outline
             lat=g["lat"], lon=g["lon"], mode="markers",
-            marker=dict(size=size + 3, color=outline, opacity=0.9),
+            marker=dict(size=size + 4, color=outline, opacity=1.0),
             hoverinfo="skip", showlegend=False, legendgroup=status,
         ))
         fig.add_trace(Scatter(        #coloured dot
             lat=g["lat"], lon=g["lon"], mode="markers", name=f"{status} ({len(g):,})",
-            marker=dict(size=size, color=STATUS_COLORS[status], opacity=0.95),
+            marker=dict(size=size, color=STATUS_COLORS[status], opacity=1.0),
             hovertext=hover, hoverinfo="text", legendgroup=status,
         ))
     fig.update_layout(**{
@@ -3861,8 +3897,38 @@ def render_citywide_map(df: pd.DataFrame):
         f"{len(m):,} buildings shown. "
         + (f"{no_coords:,} matching buildings have no coordinates and are not plotted. " if no_coords else "")
         + "Click a legend item to hide or show that status. "
-        + "Coordinates come from the geocoded 2022–2025 BERDO data, matched by BERDO ID or tax parcel."
+        + "Coordinates come from the geocoded 2022–2025 BERDO data and the City's Street Address "
+        + "Management (SAM) addresses, matched by BERDO ID, tax parcel, or address; "
+        + "campus records are placed at the average location of their member buildings."
     )
+
+    unmapped = unmapped_buildings(df)
+    if not unmapped.empty:
+        at_risk = unmapped["BERDO status"].isin(["Over 2025–29 limit", "Fails 2030–34"]).sum()
+        with st.expander(
+            f"Buildings not on the map ({len(unmapped):,})"
+            + (f" — {at_risk} over or failing a limit" if at_risk else "")
+        ):
+            st.caption(
+                "These buildings have no coordinates, so they can't be plotted. Most are "
+                "listed by street name only (no number), or as a site name such as a park "
+                "or golf course, so they can't be matched to a City address point. "
+                "Sorted by compliance risk, then floor area."
+            )
+            st.dataframe(
+                unmapped, use_container_width=True, hide_index=True,
+                column_config={
+                    "Est. ACP (2025–29)": st.column_config.NumberColumn(format="$%d"),
+                    "Floor area (sq ft)": st.column_config.NumberColumn(format="%d"),
+                },
+            )
+            st.download_button(
+                "Download list (CSV)",
+                unmapped.to_csv(index=False).encode("utf-8"),
+                file_name="berdo_unmapped_buildings.csv",
+                mime="text/csv",
+                key="cw_unmapped_download",
+            )
 
 
 @st.cache_data(show_spinner="Evaluating every building…")
