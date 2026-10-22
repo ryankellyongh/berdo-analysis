@@ -3770,11 +3770,11 @@ MAP_HIDDEN_BY_DEFAULT = {
     "Coverage year not reported", "Unknown — data incomplete",
 }
 
-#Basemaps that need no access token. White outlines keep dots readable on the colorful map.
+#Basemaps that need no access token. Black outlines on every basemap.
 MAP_BASEMAPS = {   #first entry is the default
-    "Colorful street map": ("open-street-map",  "#FFFFFF"),   #(style, dot outline colour)
-    "Light (muted)":       ("carto-positron",   "#222222"),
-    "Dark":                ("carto-darkmatter", "#FFFFFF"),
+    "Colorful street map": ("open-street-map",  "#000000"),   #(style, dot outline colour)
+    "Light (muted)":       ("carto-positron",   "#000000"),
+    "Dark":                ("carto-darkmatter", "#000000"),
 }
 
 
