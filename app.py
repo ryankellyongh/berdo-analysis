@@ -280,6 +280,60 @@ def project_ghg_intensities(ghg_intensity, elec_share, base_year):
         projected.append(round(fossil_intensity + future_elec, 3))
     return projected
 
+def _num_or_none(v):
+    v = pd.to_numeric(v, errors="coerce")
+    return None if pd.isna(v) else float(v)
+
+
+def building_elec_share(row, emissions_year):
+    """
+    Share of a building's reported GHG emissions that comes from grid electricity,
+    the part a cleaner grid reduces. Returns (share 0–1, source) or (None, None).
+
+    1. Reported electricity emissions ÷ total emissions (2026 disclosure onward).
+    2. Otherwise estimated: (kWh − renewable kWh) × BERDO-effective grid factor for
+       the emissions year ÷ reported total. Checked against 2026 reported figures:
+       median within 2%.
+    Fuels, district steam, and district hot/chilled water are held constant.
+    """
+    total = _num_or_none(row.get("ghg_emissions"))
+    if total is None:
+        total = _num_or_none(row.get("GHG Emissions (kgCO2e)"))
+    if not total or total <= 0:
+        return None, None
+    elec = _num_or_none(row.get("elec_emissions_kg"))
+    if elec is not None:
+        return min(max(elec / total, 0.0), 1.0), "reported electricity emissions"
+    kwh = _num_or_none(row.get("fuel_electricity_kwh"))
+    if kwh is None:
+        return None, None
+    ren = _num_or_none(row.get("renewable_elec_kwh")) or 0.0
+    est = max(kwh - ren, 0.0) / 1000.0 * effective_grid_ef(emissions_year)
+    return min(est / total, 1.0), "estimated from reported electricity use"
+
+
+def portfolio_elec_share(rows, emissions_year, fallback_share):
+    """Emissions-weighted electricity share across buildings. Buildings with no
+    energy breakdown use fallback_share. Returns (share or None, known, total)."""
+    num = den = 0.0
+    known = counted = 0
+    for _, r in rows.iterrows():
+        total = _num_or_none(r.get("GHG Emissions (kgCO2e)"))
+        if total is None:
+            total = _num_or_none(r.get("ghg_emissions"))
+        if not total or total <= 0:
+            continue
+        share, _ = building_elec_share(r, emissions_year)
+        counted += 1
+        if share is None:
+            share = fallback_share
+        else:
+            known += 1
+        num += total * share
+        den += total
+    return (num / den if den else None), known, counted
+
+
 def map_property_type(raw_type):
     """
     Return the BERDO Building Use for an ESPM property type, or None if the
@@ -1154,6 +1208,9 @@ def lookup_building_priority(df, address):
             "fuel_diesel_kbtu":            row.get("fuel_diesel_kbtu"),
             "fuel_kerosene_kbtu":          row.get("fuel_kerosene_kbtu"),
             "Compliance Status":           row.get("compliance_status"),
+            "elec_emissions_kg":           row.get("elec_emissions_kg"),
+            "renewable_elec_kwh":          row.get("renewable_elec_kwh"),
+            "fuel_electricity_kwh":        row.get("fuel_electricity_kwh"),
             "Data Status":                 data_status,
             "BERDO Status":                berdo_status,
             "Est. ACP (2025–29)":          acp_2025,
@@ -1201,6 +1258,9 @@ def lookup_owner_portfolio(df, owner_name):
             "GHG Intensity (kgCO2e/sqft)": row.get("ghg_intensity_kgco2e_sqft"),
             "GHG Emissions (kgCO2e)":      row.get("ghg_emissions"),
             "Compliance Status":           row.get("compliance_status"),
+            "elec_emissions_kg":           row.get("elec_emissions_kg"),
+            "renewable_elec_kwh":          row.get("renewable_elec_kwh"),
+            "fuel_electricity_kwh":        row.get("fuel_electricity_kwh"),
             "Data Status":                 data_status,
             "BERDO Status":                berdo_status,
             "Est. ACP (2025–29)":          acp_2025,
@@ -1469,7 +1529,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     if elec_share is not None:
         projected = project_ghg_intensities(
             portfolio_intensity, elec_share,
-            selected_year,
+            EMISSIONS_YEAR,
         )
         fig.add_trace(go.Scatter(
             x=COMPLIANCE_PERIODS,
@@ -2929,7 +2989,12 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 help="Check current pricing at berdo.greenenergyconsumers.org. Prices move.",
             )
         _rec_gap_kg  = max(prefill_ghg_val - limits[0], 0) * sqft if prefill_ghg_val else 0
-        _rec_elec_kg = (prefill_ghg_val or 0) * sqft * (elec_share if elec_share is not None else 0.5)
+        _rec_share = prefill.get("elec_share")
+        _rec_share_src = prefill.get("elec_share_source") or "assumed"
+        if _rec_share is None:
+            _rec_share = elec_share if elec_share is not None else 0.5
+            _rec_share_src = "set with the grid controls" if elec_share is not None else "assumed; no energy breakdown"
+        _rec_elec_kg = (prefill_ghg_val or 0) * sqft * _rec_share
         rec = rec_pathway(_rec_gap_kg, _rec_elec_kg, 2025, rec_price)
         if rec:
             with rc2:
@@ -2965,8 +3030,8 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                     f"fossil-fuel portion of this building's gap."
                 )
             st.caption(
-                f"Assumes {(elec_share if elec_share is not None else 0.5):.0%} of this building's "
-                f"emissions come from electricity (grid decarbonization slider; 50% if off). "
+                f"Assumes {_rec_share:.0%} of this building's emissions come from electricity "
+                f"({_rec_share_src}). "
                 f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
                 "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
                 "independent broker. RECs must be MA Class I from non-emitting sources: solar, wind, "
@@ -4196,58 +4261,99 @@ df_full = all_years[selected_year]
 #Year-over-year comparison: rendered inside Address Lookup; default on.
 show_yoy = multi_year_mode and st.session_state.get("sidebar_show_yoy", True)
 
+#Emissions year: each reporting year holds the previous calendar year's data, so
+#grid projections start from that year's grid factor.
+EMISSIONS_YEAR = (selected_year - 1) if selected_year else 2025
+
 #Grid decarbonization: one shared setting, shown beside each projection chart.
+GRID_MIX_REPORTED = "Each building's reported energy mix"
+GRID_MIX_MANUAL = "One share for every building"
 st.session_state.setdefault("grid_on", False)
+st.session_state.setdefault("grid_mode", GRID_MIX_REPORTED)
 st.session_state.setdefault("grid_share", 50)
 _GRID_PLACES = ("lookup", "portfolio", "planner")
+_GRID_KEYS = {"grid_on": "grid_on_{}", "grid_mode": "grid_mode_{}", "grid_share": "grid_share_{}"}
 
 
 def _sync_grid(src):
     """Copy one place's controls into the shared setting and the other places."""
-    st.session_state["grid_on"] = st.session_state[f"grid_on_{src}"]
-    st.session_state["grid_share"] = st.session_state.get(f"grid_share_{src}", st.session_state["grid_share"])
+    for store, pattern in _GRID_KEYS.items():
+        key = pattern.format(src)
+        if key in st.session_state:
+            st.session_state[store] = st.session_state[key]
     for p in _GRID_PLACES:
         if p != src:
-            st.session_state[f"grid_on_{p}"] = st.session_state["grid_on"]
-            st.session_state[f"grid_share_{p}"] = st.session_state["grid_share"]
+            for store, pattern in _GRID_KEYS.items():
+                st.session_state[pattern.format(p)] = st.session_state[store]
 
 
-def grid_controls(place):
-    """Grid decarbonization toggle and electricity share, next to a projection chart."""
-    for key, store in ((f"grid_on_{place}", "grid_on"), (f"grid_share_{place}", "grid_share")):
+def grid_share_for(row):
+    """(share, description) used for one building's grid projection, or (None, None)."""
+    if not st.session_state["grid_on"]:
+        return None, None
+    manual = st.session_state["grid_share"] / 100.0
+    if st.session_state["grid_mode"] == GRID_MIX_REPORTED and row is not None:
+        share, source = building_elec_share(row, EMISSIONS_YEAR)
+        if share is not None:
+            return share, f"{share:.0%} of this building's emissions come from electricity ({source})"
+        return manual, (f"No energy breakdown reported for this building; using the "
+                        f"{manual:.0%} share set below")
+    return manual, f"{manual:.0%} electricity share applied to every building"
+
+
+def grid_controls(place, share_note=None):
+    """Grid decarbonization controls next to a projection chart."""
+    for store, pattern in _GRID_KEYS.items():
+        key = pattern.format(place)
         if key not in st.session_state:
             st.session_state[key] = st.session_state[store]
     with st.container(border=True):
-        c_on, c_share = st.columns([1.3, 2], vertical_alignment="center")
+        c_on, c_mode = st.columns([1.3, 2], vertical_alignment="center")
         with c_on:
             st.toggle(
                 "Grid decarbonization scenario",
                 key=f"grid_on_{place}", on_change=_sync_grid, args=(place,),
-                help="Projects future emissions assuming the ISO-NE grid cleans up per the City of "
+                help="Projects future emissions as the ISO-NE grid cleans up per the City of "
                      "Boston's projected emissions factors (Appendix B, BERDO Emissions Factors List, "
-                     "May 2026). Fossil fuel use is held constant.",
+                     "May 2026). Only the electricity part of each building's emissions changes; "
+                     "fuels and district energy are held constant.",
             )
-        with c_share:
-            if st.session_state["grid_on"]:
-                st.slider(
-                    "Electricity share of GHG emissions (%)", min_value=0, max_value=100, step=5,
-                    key=f"grid_share_{place}", on_change=_sync_grid, args=(place,),
-                    help="Share of this building's emissions from grid electricity rather than "
-                         "fossil fuels. Check the building's energy breakdown in ESPM, or start at 50%.",
-                )
-            else:
-                st.caption("Turn on to see how a cleaner ISO-NE grid changes the projection.")
-        if st.session_state["grid_on"]:
-            _base, _ef50 = effective_grid_ef(selected_year), effective_grid_ef(2050)
-            st.caption(
-                f"Grid EF {_base:.0f} kg/MWh in {selected_year} → {_ef50:.0f} kg/MWh in 2050 "
-                f"({round((1 - _ef50 / _base) * 100)}% cleaner; Appendix B × RPS Class I). "
-                "Fossil fuel use held constant. This setting is shared by Address Lookup, "
-                "Owner Portfolio, and Emissions Planner."
+        if not st.session_state["grid_on"]:
+            with c_mode:
+                st.caption("Turn on to see how a cleaner ISO-NE grid changes the projection. "
+                           "Each building's reported energy mix is used.")
+            return
+        with c_mode:
+            st.radio(
+                "Electricity share of emissions",
+                [GRID_MIX_REPORTED, GRID_MIX_MANUAL],
+                key=f"grid_mode_{place}", on_change=_sync_grid, args=(place,), horizontal=True,
+                help="Reported mix uses each building's own electricity emissions, so an "
+                     "all-electric building benefits more from a cleaner grid than a gas-heated one.",
             )
+        #Show the share slider in manual mode, or when some buildings lack a breakdown
+        needs_manual = (st.session_state["grid_mode"] == GRID_MIX_MANUAL
+                        or "share set below" in (share_note or "")
+                        or "the rest use" in (share_note or ""))
+        if needs_manual:
+            st.slider(
+                "Electricity share of GHG emissions (%)", min_value=0, max_value=100, step=5,
+                key=f"grid_share_{place}", on_change=_sync_grid, args=(place,),
+                help="Used for every building in manual mode, and for buildings with no "
+                     "reported energy breakdown.",
+            )
+        _base, _ef50 = effective_grid_ef(EMISSIONS_YEAR), effective_grid_ef(2050)
+        st.caption(
+            (f"**{share_note}.** " if share_note else "")
+            + f"Grid EF {_base:.0f} kg/MWh in {EMISSIONS_YEAR} (the emissions year) → {_ef50:.0f} kg/MWh "
+            f"in 2050 ({round((1 - _ef50 / _base) * 100)}% cleaner; Appendix B × RPS Class I). "
+            "Fuels and district energy held constant. This setting is shared by Address Lookup, "
+            "Owner Portfolio, and Emissions Planner."
+        )
 
 
 show_grid_decarb = bool(st.session_state["grid_on"])
+#Fallback share for places with no single building (and for buildings with no breakdown)
 elec_share = st.session_state["grid_share"] / 100.0 if show_grid_decarb else None
 
 if multi_year_mode:
@@ -4368,16 +4474,17 @@ with tab_address:
                 prior_ghg, prior_label = render_yoy_trend(address_input, all_years)
                 st.markdown("---")
 
-            #Grid decarbonization projection
-            grid_controls("lookup")
+            #Grid decarbonization projection, using this building's energy mix
+            _bldg_share, _bldg_note = grid_share_for(top)
+            grid_controls("lookup", _bldg_note)
             projected_intensities = None
-            if show_grid_decarb and elec_share is not None:
+            if show_grid_decarb and _bldg_share is not None:
                 ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
                 if pd.notna(ghg_val) and ghg_val > 0:
                     projected_intensities = project_ghg_intensities(
                         ghg_intensity=float(ghg_val),
-                        elec_share=elec_share,
-                        base_year=selected_year,
+                        elec_share=_bldg_share,
+                        base_year=EMISSIONS_YEAR,
                     )
 
             render_compliance_section(
@@ -4385,7 +4492,7 @@ with tab_address:
                 prior_year_ghg_intensity=prior_ghg,
                 prior_year_label=prior_label,
                 projected_intensities=projected_intensities,
-                base_year=selected_year,
+                base_year=EMISSIONS_YEAR,
             )
 
             #Store prefill data for Incentive Optimizer tab
@@ -4394,7 +4501,10 @@ with tab_address:
             raw_type = top.get("Property Type")
             berdo_cat = map_property_type(raw_type)
 
+            _own_share, _own_source = building_elec_share(top, EMISSIONS_YEAR)
             opt_prefill = {
+                "elec_share":    _own_share,
+                "elec_share_source": _own_source,
                 "limits":        top.get("Limits"),
                 "limit_source":  top.get("Limit Source"),
                 "address":       top.get("Building Address", address_input),
@@ -4423,6 +4533,8 @@ with tab_address:
             #Also pre-fill the Emissions Planner tab
             ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
             planner_prefill = {
+                "elec_share":       _own_share,
+                "elec_share_source": _own_source,
                 "limits":           top.get("Limits"),
                 "limit_source":     top.get("Limit Source"),
                 "address":          opt_prefill.get("address", address_input),
@@ -4484,11 +4596,24 @@ with tab_portfolio:
                 )
             else:
                 st.markdown("---")
-                grid_controls("portfolio")
+                _pf_share, _pf_known, _pf_n = (None, 0, 0)
+                _pf_note = None
+                if show_grid_decarb:
+                    _fallback = st.session_state["grid_share"] / 100.0
+                    if st.session_state["grid_mode"] == GRID_MIX_REPORTED:
+                        _pf_share, _pf_known, _pf_n = portfolio_elec_share(portfolio_result, EMISSIONS_YEAR, _fallback)
+                        if _pf_share is not None:
+                            _pf_note = (f"{_pf_share:.0%} of this portfolio's emissions come from electricity "
+                                        f"(emissions-weighted; {_pf_known} of {_pf_n} buildings report a breakdown"
+                                        + (f", the rest use the {_fallback:.0%} share set below" if _pf_known < _pf_n else "") + ")")
+                    else:
+                        _pf_share = _fallback
+                        _pf_note = f"{_fallback:.0%} electricity share applied to every building"
+                grid_controls("portfolio", _pf_note)
                 render_portfolio_section(
                     portfolio_result,
                     selected_year=selected_year,
-                    elec_share=elec_share if show_grid_decarb else None,
+                    elec_share=_pf_share if show_grid_decarb else None,
                     all_years=all_years,
                     show_yoy=show_yoy,
                 )
@@ -4504,12 +4629,27 @@ with tab_retrofit_optimizer:
 #Tab 4 — Emissions Planner
 
 with tab_planner:
-    grid_controls("planner")
     planner_prefill = st.session_state.get("planner_prefill", {})
+    _plan_share, _plan_note = (None, None)
+    if show_grid_decarb:
+        _manual = st.session_state["grid_share"] / 100.0
+        if st.session_state["grid_mode"] == GRID_MIX_MANUAL:
+            _plan_share = _manual
+            _plan_note = f"{_manual:.0%} electricity share applied to every building"
+        elif planner_prefill.get("elec_share") is not None:
+            _plan_share = planner_prefill["elec_share"]
+            _plan_note = (f"{_plan_share:.0%} of {planner_prefill.get('address', 'this building')}'s emissions "
+                          f"come from electricity ({planner_prefill.get('elec_share_source')})")
+        else:
+            _plan_share = _manual
+            _plan_note = ("No energy breakdown "
+                          + ("reported for this building" if planner_prefill else "yet (look up a building first)")
+                          + f"; using the {_manual:.0%} share set below")
+    grid_controls("planner", _plan_note)
     render_emissions_planner_tab(
         prefill=planner_prefill,
         show_grid_decarb=show_grid_decarb,
-        elec_share=elec_share,
+        elec_share=_plan_share,
     )
 
 
