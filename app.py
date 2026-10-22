@@ -787,7 +787,7 @@ buildings).
 The ISO New England electric grid is projected to become cleaner over time as renewable energy
 grows. This scenario holds fossil fuel use constant but scales down the electricity-attributed
 emissions using the City of Boston's official projected grid emissions factors (Appendix B of the
-BERDO Emissions Factors List). Use the sidebar slider to set the share of the building's
+BERDO Emissions Factors List). Use the slider in Scenario settings (top of the page) to set the share of the building's
 emissions that come from electricity. If unknown, 50% is a reasonable starting point for a
 mixed-use or office building; electricity-heavy buildings (all-electric, data centers) should
 use a higher value.
@@ -2966,7 +2966,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 )
             st.caption(
                 f"Assumes {(elec_share if elec_share is not None else 0.5):.0%} of this building's "
-                f"emissions come from electricity (set in the sidebar). "
+                f"emissions come from electricity (set in Scenario settings). "
                 f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
                 "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
                 "independent broker. RECs must be MA Class I from non-emitting sources: solar, wind, "
@@ -3337,7 +3337,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
-    #Grid decarbonization, read from sidebar
+    #Grid decarbonization, read from Scenario settings
      
     st.markdown("---")
     st.subheader("Emissions Compliance Projection")
@@ -3355,16 +3355,16 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         base_ef = effective_grid_ef(2025)
         ef_2050 = effective_grid_ef(2050)
         st.caption(
-            f"Grid decarbonization is ON (sidebar). "
+            f"Grid decarbonization is ON (Scenario settings). "
             f"Electricity share: {round(elec_share_val * 100)}%. "
             f"Base year grid EF (2025): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
-            "Toggle in the sidebar to turn off."
+            "Turn it off in Scenario settings at the top of the page."
         )
     else:
         st.caption(
             "Grid decarbonization is OFF. "
-            "Enable it in the sidebar to model how ISO-NE grid cleaning reduces "
+            "Turn it on in Scenario settings at the top of the page to model how ISO-NE grid cleaning reduces "
             "electricity-attributed emissions over time."
         )
         
@@ -4169,70 +4169,88 @@ all_years = load_all_years()
 years_sorted = sorted(y for y in all_years if y != 0)
 multi_year_mode = len(years_sorted) >= 2
 
-#Sidebar: year selector -
+#Page header and scenario settings. The header slot is filled once the year is
+#known; settings sit in a visible panel on the page rather than in the sidebar.
+site_theme.apply_theme()
+_header_slot = st.container()
+_settings = st.container(border=True)
+with _settings:
+    st.markdown("**Scenario settings**")
+    _c_year, _c_yoy, _c_grid, _c_share = st.columns([1.1, 1.1, 1.3, 1.8])
+
+#Reporting year
 if multi_year_mode:
-    st.sidebar.header("Data year")
-    selected_year = st.sidebar.radio(
-        "Select reporting year to screen:",
-        options=years_sorted,
-        index=len(years_sorted) - 1,
-        format_func=str,
-        horizontal=False,
-    )
+    with _c_year:
+        selected_year = st.selectbox(
+            "Reporting year",
+            options=years_sorted,
+            index=len(years_sorted) - 1,
+            format_func=str,
+            key="settings_year",
+            help="Each reporting year contains the previous calendar year's energy data.",
+        )
     df_full = all_years[selected_year]
-    show_yoy = st.sidebar.checkbox("Show year-over-year comparison", value=True, key="sidebar_show_yoy")
+    with _c_yoy:
+        st.write("")
+        show_yoy = st.checkbox("Year-over-year comparison", value=True, key="sidebar_show_yoy")
 else:
     selected_year = years_sorted[0] if years_sorted else 0
     df_full = all_years[selected_year]
     show_yoy = False
 
-#Sidebar: grid decarbonization scenario
-st.sidebar.header("Grid decarbonization scenario")
-show_grid_decarb = st.sidebar.checkbox(
-    "Show grid decarbonization scenario",
-    value=False,
-    key="sidebar_grid_decarb",
-    help=(
-        "Projects future GHG intensity assuming the ISO-NE grid cleans up "
-        "per the City of Boston's official projected emissions factors "
-        "(Appendix B, BERDO Emissions Factors List, May 2026). "
-        "Fossil fuel use is held constant."
-    ),
-)
-if show_grid_decarb:
-    elec_share_pct = st.sidebar.slider(
-        "Electricity share of GHG emissions (%)",
-        min_value=0,
-        max_value=100,
-        value=50,
-        step=5,
+#Grid decarbonization scenario
+with _c_grid:
+    st.write("")
+    show_grid_decarb = st.checkbox(
+        "Grid decarbonization scenario",
+        value=False,
+        key="sidebar_grid_decarb",
         help=(
-            "Estimated percentage of this building's total GHG emissions "
-            "that come from grid electricity (vs. fossil fuels such as "
-            "natural gas). Check the building's energy breakdown in ESPM "
-            "or use 50% as a starting estimate for a typical office/mixed-use building."
+            "Projects future GHG intensity assuming the ISO-NE grid cleans up "
+            "per the City of Boston's official projected emissions factors "
+            "(Appendix B, BERDO Emissions Factors List, May 2026). "
+            "Fossil fuel use is held constant."
         ),
     )
+if show_grid_decarb:
+    with _c_share:
+        elec_share_pct = st.slider(
+            "Electricity share of GHG emissions (%)",
+            min_value=0,
+            max_value=100,
+            value=50,
+            step=5,
+            key="settings_elec_share",
+            help=(
+                "Estimated percentage of this building's total GHG emissions "
+                "that come from grid electricity (vs. fossil fuels such as "
+                "natural gas). Check the building's energy breakdown in ESPM "
+                "or use 50% as a starting estimate for a typical office/mixed-use building."
+            ),
+        )
     elec_share = elec_share_pct / 100.0
     base_ef = effective_grid_ef(selected_year)
     ef_2050 = effective_grid_ef(2050)
-    st.sidebar.caption(
-        f"Base year grid EF ({selected_year}): **{base_ef:.0f} kg/MWh** "
-        f"(Appendix B × RPS Class I). Projected EF at 2050: **{ef_2050:.0f} kg/MWh** "
-        f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner)."
-    )
+    with _settings:
+        st.caption(
+            f"Grid decarbonization is on. Base year grid EF ({selected_year}): **{base_ef:.0f} kg/MWh** "
+            f"(Appendix B × RPS Class I). Projected EF at 2050: **{ef_2050:.0f} kg/MWh** "
+            f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). Fossil fuel use is held constant. "
+            "Applies to Address Lookup, Owner Portfolio, and Emissions Planner."
+        )
 else:
     elec_share = None
+    with _c_share:
+        st.caption("Turn on the grid decarbonization scenario to model a cleaner ISO-NE grid.")
 
-#Page header (website-style; presentation lives in site_theme.py)
-site_theme.apply_theme()
 if multi_year_mode:
     year_range_str = f"{years_sorted[0]}–{years_sorted[-1]}"
     _badge = f"Reporting year {selected_year} · data {year_range_str}"
 else:
     year_range_str = str(selected_year) if selected_year else "current"
     _badge = f"Reporting year {year_range_str}"
-site_theme.render_header(_badge)
+with _header_slot:
+    site_theme.render_header(_badge)
 
 tab_citywide, tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
     "Citywide Overview", "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"

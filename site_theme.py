@@ -1,15 +1,17 @@
 """
 Website-style presentation for the BERDO app: hides Streamlit's default chrome,
-adds a site header and footer, and restyles tabs, panels, inputs, and buttons.
+adds a site header and footer, and restyles tabs, panels, inputs, and buttons in City of Boston blue.
 
 Presentation only. No calculations live here. Colours use translucent greys and
-inherit text colour, so the same CSS reads well in Streamlit's light and dark themes.
+inherit text colour (blue is the only accent), so the same CSS reads well in Streamlit's light and dark themes.
 """
 import html
 
 import streamlit as st
 
-ACCENT = "#E5484D"
+#City of Boston brand colours: Optimistic Blue (accent) and Charles Blue (deep navy).
+ACCENT = "#288BE4"
+NAVY = "#091F2F"
 
 _CSS = f"""
 <style>
@@ -17,6 +19,7 @@ _CSS = f"""
 
 :root {{
   --site-accent: {ACCENT};
+  --site-navy: {NAVY};
   --site-border: rgba(127, 127, 127, 0.24);
   --site-panel: rgba(127, 127, 127, 0.06);
   --site-muted: rgba(127, 127, 127, 0.95);
@@ -37,8 +40,14 @@ h1, h2, h3, h4 {{ letter-spacing: -0.01em; font-weight: 600 !important; }}
 /* Hide Streamlit's default chrome so the page reads as a website */
 /* (the header itself stays, transparent, because it holds the sidebar open button) */
 header[data-testid="stHeader"] {{ background: transparent; }}
-[data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
-#MainMenu, footer, .stDeployButton, [data-testid="stAppDeployButton"] {{ display: none !important; }}
+/* Hide only the toolbar's actions (Fork, GitHub, menu, deploy), never the whole
+   toolbar: in some Streamlit versions it also holds the sidebar open button. */
+[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stDecoration"],
+[data-testid="stStatusWidget"], #MainMenu, footer, .stDeployButton,
+[data-testid="stAppDeployButton"] {{ display: none !important; }}
+[data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"] {{
+  display: flex !important; visibility: visible !important;
+}}
 
 /* Centred content column with generous spacing */
 .block-container, [data-testid="stMainBlockContainer"] {{
@@ -66,8 +75,8 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   padding: 10px 12px !important; height: auto !important; background: transparent !important;
 }}
 [data-baseweb="tab"] p {{ font-size: 0.98rem !important; opacity: 0.8; }}
-[data-baseweb="tab"][aria-selected="true"] p {{ color: var(--site-accent); opacity: 1; font-weight: 500; }}
-[data-baseweb="tab-highlight"] {{ background-color: var(--site-accent) !important; height: 2px !important; }}
+[data-baseweb="tab"][aria-selected="true"] p {{ opacity: 1; font-weight: 600; }}
+[data-baseweb="tab-highlight"] {{ background-color: var(--site-accent) !important; height: 3px !important; }}
 [data-baseweb="tab-border"] {{ display: none; }}
 [data-baseweb="tab-panel"] {{ padding-top: 22px; }}
 
@@ -107,7 +116,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
   border-color: var(--site-accent); color: var(--site-accent);
 }}
 .stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] > button {{
-  background: var(--site-accent); border-color: var(--site-accent); color: #fff;
+  background: var(--site-accent); border-color: var(--site-accent); color: #fff; font-weight: 600;
 }}
 .stButton > button:focus-visible, .stDownloadButton > button:focus-visible {{
   outline: 2px solid var(--site-accent); outline-offset: 2px;
