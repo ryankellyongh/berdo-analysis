@@ -144,22 +144,32 @@ def apply_theme():
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-def render_header(badge: str,
-                  brand: str = "Outreach workspace",
-                  heading: str = "Building support, with a clear next step.",
-                  subheading: str = "Find an outreach need, verify the evidence, and prepare an owner conversation."):
+def render_topbar(badge: str, brand: str = "Outreach workspace"):
     #Built without indentation: Markdown treats indented lines as a code block.
     st.markdown(
         '<div class="site-topbar" role="banner">'
         f'<div class="site-brand"><span class="accent">BERDO</span> / {html.escape(brand)}</div>'
         f'<span class="site-badge">{html.escape(badge)}</span>'
-        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero(heading: str = "Building support, with a clear next step.",
+                subheading: str = "Find an outreach need, verify the evidence, and prepare an owner conversation."):
+    st.markdown(
         '<div class="site-hero">'
         f'<h1>{html.escape(heading)}</h1>'
         f'<p>{html.escape(subheading)}</p>'
         '</div>',
         unsafe_allow_html=True,
     )
+
+
+def render_header(badge: str, **kw):
+    """Top bar and hero together (kept for convenience)."""
+    render_topbar(badge)
+    render_hero(**kw)
 
 
 def render_footer(left: str, right: str):

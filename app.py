@@ -787,7 +787,7 @@ buildings).
 The ISO New England electric grid is projected to become cleaner over time as renewable energy
 grows. This scenario holds fossil fuel use constant but scales down the electricity-attributed
 emissions using the City of Boston's official projected grid emissions factors (Appendix B of the
-BERDO Emissions Factors List). Use the slider in Scenario settings (top of the page) to set the share of the building's
+BERDO Emissions Factors List). Use the grid decarbonization slider above the chart to set the share of the building's
 emissions that come from electricity. If unknown, 50% is a reasonable starting point for a
 mixed-use or office building; electricity-heavy buildings (all-electric, data centers) should
 use a higher value.
@@ -2966,7 +2966,7 @@ def render_retrofit_optimizer_tab(prefill: dict = None):
                 )
             st.caption(
                 f"Assumes {(elec_share if elec_share is not None else 0.5):.0%} of this building's "
-                f"emissions come from electricity (set in Scenario settings). "
+                f"emissions come from electricity (grid decarbonization slider; 50% if off). "
                 f"Purchase deadline for 2025 compliance: **{REC_CONNECTOR_DEADLINE}** via the City's "
                 "REC Connector Program (Green Energy Consumers Alliance), or any time through an "
                 "independent broker. RECs must be MA Class I from non-emitting sources: solar, wind, "
@@ -3337,7 +3337,7 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         st.session_state["ep_projects"].pop(idx)
         st.rerun()
 
-    #Grid decarbonization, read from Scenario settings
+    #Grid decarbonization, from the shared grid controls
      
     st.markdown("---")
     st.subheader("Emissions Compliance Projection")
@@ -3355,16 +3355,16 @@ def render_emissions_planner_tab(prefill: dict = None, show_grid_decarb: bool = 
         base_ef = effective_grid_ef(2025)
         ef_2050 = effective_grid_ef(2050)
         st.caption(
-            f"Grid decarbonization is ON (Scenario settings). "
+            f"Grid decarbonization is ON. "
             f"Electricity share: {round(elec_share_val * 100)}%. "
             f"Base year grid EF (2025): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
-            "Turn it off in Scenario settings at the top of the page."
+            "Change it with the grid controls at the top of this tab."
         )
     else:
         st.caption(
             "Grid decarbonization is OFF. "
-            "Turn it on in Scenario settings at the top of the page to model how ISO-NE grid cleaning reduces "
+            "Turn it on with the grid controls at the top of this tab to model how ISO-NE grid cleaning reduces "
             "electricity-attributed emissions over time."
         )
         
@@ -4169,79 +4169,86 @@ all_years = load_all_years()
 years_sorted = sorted(y for y in all_years if y != 0)
 multi_year_mode = len(years_sorted) >= 2
 
-#Page header and scenario settings. The header slot is filled once the year is
-#known; settings sit in a visible panel on the page rather than in the sidebar.
+#Page header. Reporting year applies to every tab, so it sits beside the main
+#heading. Year-over-year and grid decarbonization only affect specific charts, so
+#those controls live next to the charts they change (see grid_controls below).
 site_theme.apply_theme()
-_header_slot = st.container()
-_settings = st.container(border=True)
-with _settings:
-    st.markdown("**Scenario settings**")
-    _c_year, _c_yoy, _c_grid, _c_share = st.columns([1.1, 1.1, 1.3, 1.8])
+_topbar_slot = st.container()
+_hero, _year_col = st.columns([3, 1], vertical_alignment="bottom")
+with _hero:
+    site_theme.render_hero()
 
-#Reporting year
 if multi_year_mode:
-    with _c_year:
+    with _year_col:
         selected_year = st.selectbox(
             "Reporting year",
             options=years_sorted,
             index=len(years_sorted) - 1,
             format_func=str,
             key="settings_year",
-            help="Each reporting year contains the previous calendar year's energy data.",
+            help="Applies to every tab. Each reporting year contains the previous "
+                 "calendar year's energy and emissions data.",
         )
-    df_full = all_years[selected_year]
-    with _c_yoy:
-        st.write("")
-        show_yoy = st.checkbox("Year-over-year comparison", value=True, key="sidebar_show_yoy")
 else:
     selected_year = years_sorted[0] if years_sorted else 0
-    df_full = all_years[selected_year]
-    show_yoy = False
+df_full = all_years[selected_year]
 
-#Grid decarbonization scenario
-with _c_grid:
-    st.write("")
-    show_grid_decarb = st.checkbox(
-        "Grid decarbonization scenario",
-        value=False,
-        key="sidebar_grid_decarb",
-        help=(
-            "Projects future GHG intensity assuming the ISO-NE grid cleans up "
-            "per the City of Boston's official projected emissions factors "
-            "(Appendix B, BERDO Emissions Factors List, May 2026). "
-            "Fossil fuel use is held constant."
-        ),
-    )
-if show_grid_decarb:
-    with _c_share:
-        elec_share_pct = st.slider(
-            "Electricity share of GHG emissions (%)",
-            min_value=0,
-            max_value=100,
-            value=50,
-            step=5,
-            key="settings_elec_share",
-            help=(
-                "Estimated percentage of this building's total GHG emissions "
-                "that come from grid electricity (vs. fossil fuels such as "
-                "natural gas). Check the building's energy breakdown in ESPM "
-                "or use 50% as a starting estimate for a typical office/mixed-use building."
-            ),
-        )
-    elec_share = elec_share_pct / 100.0
-    base_ef = effective_grid_ef(selected_year)
-    ef_2050 = effective_grid_ef(2050)
-    with _settings:
-        st.caption(
-            f"Grid decarbonization is on. Base year grid EF ({selected_year}): **{base_ef:.0f} kg/MWh** "
-            f"(Appendix B × RPS Class I). Projected EF at 2050: **{ef_2050:.0f} kg/MWh** "
-            f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). Fossil fuel use is held constant. "
-            "Applies to Address Lookup, Owner Portfolio, and Emissions Planner."
-        )
-else:
-    elec_share = None
-    with _c_share:
-        st.caption("Turn on the grid decarbonization scenario to model a cleaner ISO-NE grid.")
+#Year-over-year comparison: rendered inside Address Lookup; default on.
+show_yoy = multi_year_mode and st.session_state.get("sidebar_show_yoy", True)
+
+#Grid decarbonization: one shared setting, shown beside each projection chart.
+st.session_state.setdefault("grid_on", False)
+st.session_state.setdefault("grid_share", 50)
+_GRID_PLACES = ("lookup", "portfolio", "planner")
+
+
+def _sync_grid(src):
+    """Copy one place's controls into the shared setting and the other places."""
+    st.session_state["grid_on"] = st.session_state[f"grid_on_{src}"]
+    st.session_state["grid_share"] = st.session_state.get(f"grid_share_{src}", st.session_state["grid_share"])
+    for p in _GRID_PLACES:
+        if p != src:
+            st.session_state[f"grid_on_{p}"] = st.session_state["grid_on"]
+            st.session_state[f"grid_share_{p}"] = st.session_state["grid_share"]
+
+
+def grid_controls(place):
+    """Grid decarbonization toggle and electricity share, next to a projection chart."""
+    for key, store in ((f"grid_on_{place}", "grid_on"), (f"grid_share_{place}", "grid_share")):
+        if key not in st.session_state:
+            st.session_state[key] = st.session_state[store]
+    with st.container(border=True):
+        c_on, c_share = st.columns([1.3, 2], vertical_alignment="center")
+        with c_on:
+            st.toggle(
+                "Grid decarbonization scenario",
+                key=f"grid_on_{place}", on_change=_sync_grid, args=(place,),
+                help="Projects future emissions assuming the ISO-NE grid cleans up per the City of "
+                     "Boston's projected emissions factors (Appendix B, BERDO Emissions Factors List, "
+                     "May 2026). Fossil fuel use is held constant.",
+            )
+        with c_share:
+            if st.session_state["grid_on"]:
+                st.slider(
+                    "Electricity share of GHG emissions (%)", min_value=0, max_value=100, step=5,
+                    key=f"grid_share_{place}", on_change=_sync_grid, args=(place,),
+                    help="Share of this building's emissions from grid electricity rather than "
+                         "fossil fuels. Check the building's energy breakdown in ESPM, or start at 50%.",
+                )
+            else:
+                st.caption("Turn on to see how a cleaner ISO-NE grid changes the projection.")
+        if st.session_state["grid_on"]:
+            _base, _ef50 = effective_grid_ef(selected_year), effective_grid_ef(2050)
+            st.caption(
+                f"Grid EF {_base:.0f} kg/MWh in {selected_year} → {_ef50:.0f} kg/MWh in 2050 "
+                f"({round((1 - _ef50 / _base) * 100)}% cleaner; Appendix B × RPS Class I). "
+                "Fossil fuel use held constant. This setting is shared by Address Lookup, "
+                "Owner Portfolio, and Emissions Planner."
+            )
+
+
+show_grid_decarb = bool(st.session_state["grid_on"])
+elec_share = st.session_state["grid_share"] / 100.0 if show_grid_decarb else None
 
 if multi_year_mode:
     year_range_str = f"{years_sorted[0]}–{years_sorted[-1]}"
@@ -4249,8 +4256,8 @@ if multi_year_mode:
 else:
     year_range_str = str(selected_year) if selected_year else "current"
     _badge = f"Reporting year {year_range_str}"
-with _header_slot:
-    site_theme.render_header(_badge)
+with _topbar_slot:
+    site_theme.render_topbar(_badge)
 
 tab_citywide, tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
     "Citywide Overview", "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
@@ -4354,11 +4361,15 @@ with tab_address:
 
             #Year-over-year trend (multi-year mode only)
             prior_ghg, prior_label = None, None
+            if multi_year_mode:
+                show_yoy = st.toggle("Year-over-year comparison", value=True, key="sidebar_show_yoy",
+                                     help="Compare this building's GHG intensity and EUI across reporting years.")
             if show_yoy and multi_year_mode:
                 prior_ghg, prior_label = render_yoy_trend(address_input, all_years)
                 st.markdown("---")
 
-            #Grid decarbonization projection 
+            #Grid decarbonization projection
+            grid_controls("lookup")
             projected_intensities = None
             if show_grid_decarb and elec_share is not None:
                 ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")
@@ -4473,6 +4484,7 @@ with tab_portfolio:
                 )
             else:
                 st.markdown("---")
+                grid_controls("portfolio")
                 render_portfolio_section(
                     portfolio_result,
                     selected_year=selected_year,
@@ -4492,6 +4504,7 @@ with tab_retrofit_optimizer:
 #Tab 4 — Emissions Planner
 
 with tab_planner:
+    grid_controls("planner")
     planner_prefill = st.session_state.get("planner_prefill", {})
     render_emissions_planner_tab(
         prefill=planner_prefill,
