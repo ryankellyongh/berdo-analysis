@@ -3772,7 +3772,7 @@ MAP_HIDDEN_BY_DEFAULT = {
 
 #Basemaps that need no access token. Black outlines on every basemap.
 MAP_BASEMAPS = {   #first entry is the default
-    "Colorful street map": ("open-street-map",  "#000000"),   #(style, dot outline colour)
+    "Street map":          ("open-street-map",  "#000000"),   #(style, dot outline colour)
     "Light (muted)":       ("carto-positron",   "#000000"),
     "Dark":                ("carto-darkmatter", "#000000"),
 }
@@ -3856,25 +3856,56 @@ def render_citywide_map(df: pd.DataFrame):
     map_key = "map" if Scatter is getattr(go, "Scattermap", None) else "mapbox"
     style, outline = MAP_BASEMAPS[basemap]
 
+    #One dot per location. Several BERDO records can share a coordinate (buildings
+    #on one parcel, campus records and their members), so they are merged into a
+    #single dot coloured by the riskiest status among them, sized by their combined
+    #floor area, with every building listed in the hover text.
+    rank = {s_: i for i, s_ in enumerate(STATUS_COLORS)}          #lower = riskier
+    m = m.assign(
+        _rank=m["berdo_status"].map(rank),
+        _key=m["lat"].round(5).astype(str) + "," + m["lon"].round(5).astype(str),
+        _sqft=pd.to_numeric(m["gross_floor_area"], errors="coerce").fillna(0),
+        _acp=pd.to_numeric(m["est_acp"], errors="coerce").fillna(0),
+    ).sort_values(["_rank", "_sqft"], ascending=[True, False])
+
+    def _hover(g):
+        if len(g) == 1:
+            r = g.iloc[0]
+            inten = pd.to_numeric(r["ghg_intensity_kgco2e_sqft"], errors="coerce")
+            return (
+                f"<b>{r['Building Address']}</b><br>"
+                f"{r['property_type'] if isinstance(r['property_type'], str) else 'Type not reported'}<br>"
+                f"Floor area: {r['_sqft']:,.0f} sq ft<br>"
+                f"GHG: {f'{inten:.2f} kg/sf/yr' if pd.notna(inten) else 'n/a'}<br>"
+                f"Status: {r['berdo_status']}"
+                + (f"<br>Est. ACP: ${r['_acp']:,.0f}/yr" if r["_acp"] > 0 else "")
+            )
+        lines = [f"{r['Building Address']}: {r['berdo_status']}" for _, r in g.head(6).iterrows()]
+        if len(g) > 6:
+            lines.append(f"…and {len(g) - 6} more")
+        acp_total = g["_acp"].sum()
+        return (
+            f"<b>{len(g)} buildings at this location</b><br>" + "<br>".join(lines)
+            + f"<br>Combined floor area: {g['_sqft'].sum():,.0f} sq ft"
+            + (f"<br>Combined est. ACP: ${acp_total:,.0f}/yr" if acp_total > 0 else "")
+        )
+
+    pts = pd.DataFrame([
+        {"lat": g["lat"].iloc[0], "lon": g["lon"].iloc[0],
+         "status": g["berdo_status"].iloc[0],       #riskiest (sorted first)
+         "sqft": g["_sqft"].sum(), "hover": _hover(g)}
+        for _, g in m.groupby("_key", sort=False)
+    ])
+
     #Map markers can't take an outline directly, so each status gets a slightly
     #larger "halo" dot underneath. Lowest-risk statuses are drawn first so the
-    #red and orange dots sit on top where buildings overlap.
+    #red and orange dots sit on top where nearby dots overlap.
     fig = go.Figure()
-    for status in reversed([s for s in STATUS_COLORS if s in show_status]):
-        g = m[m["berdo_status"] == status]
+    for status in reversed([s_ for s_ in STATUS_COLORS if s_ in show_status]):
+        g = pts[pts["status"] == status]
         if g.empty:
             continue
-        sqft = pd.to_numeric(g["gross_floor_area"], errors="coerce").fillna(0)
-        size = (6 + (sqft.clip(upper=1_000_000) / 1_000_000) ** 0.5 * 18) if size_by_area else 9
-        inten = pd.to_numeric(g["ghg_intensity_kgco2e_sqft"], errors="coerce")
-        hover = (
-            "<b>" + g["Building Address"].astype(str) + "</b><br>"
-            + g["property_type"].fillna("Type not reported").astype(str) + "<br>"
-            + "Floor area: " + sqft.map(lambda v: f"{v:,.0f}") + " sq ft<br>"
-            + "GHG: " + inten.map(lambda v: f"{v:.2f} kg/sf/yr" if pd.notna(v) else "n/a") + "<br>"
-            + "Status: " + status
-            + g["est_acp"].map(lambda v: f"<br>Est. ACP: ${v:,.0f}/yr" if v > 0 else "")
-        )
+        size = (6 + (g["sqft"].clip(upper=1_000_000) / 1_000_000) ** 0.5 * 18) if size_by_area else 9
         fig.add_trace(Scatter(        #halo / outline
             lat=g["lat"], lon=g["lon"], mode="markers",
             marker=dict(size=size + 4, color=outline, opacity=1.0),
@@ -3883,7 +3914,7 @@ def render_citywide_map(df: pd.DataFrame):
         fig.add_trace(Scatter(        #coloured dot
             lat=g["lat"], lon=g["lon"], mode="markers", name=f"{status} ({len(g):,})",
             marker=dict(size=size, color=STATUS_COLORS[status], opacity=1.0),
-            hovertext=hover, hoverinfo="text", legendgroup=status,
+            hovertext=g["hover"], hoverinfo="text", legendgroup=status,
         ))
     fig.update_layout(**{
         map_key: dict(style=style, center=dict(lat=42.32, lon=-71.08), zoom=11.2),
@@ -3894,7 +3925,9 @@ def render_citywide_map(df: pd.DataFrame):
     })
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        f"{len(m):,} buildings shown. "
+        f"{len(m):,} buildings shown at {len(pts):,} locations. "
+        + (f"Where buildings share a location, the dot shows the riskiest status and the "
+           f"hover lists every building there. " if len(pts) < len(m) else "")
         + (f"{no_coords:,} matching buildings have no coordinates and are not plotted. " if no_coords else "")
         + "Click a legend item to hide or show that status. "
         + "Coordinates come from the geocoded 2022–2025 BERDO data and the City's Street Address "
