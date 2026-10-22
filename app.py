@@ -977,6 +977,21 @@ def get_fuel_breakdown(row) -> list:
     )
 
 
+def ensure_official_emissions_status(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize the optional City status field, including older disclosures."""
+    df = df.copy()
+    if "official_emissions_status" not in df.columns:
+        df["official_emissions_status"] = pd.Series(pd.NA, index=df.index, dtype="string")
+    else:
+        df["official_emissions_status"] = (
+            df["official_emissions_status"].astype("string").str.strip().replace("", pd.NA)
+        )
+    if "compliance_status" in df.columns:
+        state = df["compliance_status"].astype("string").str.strip().str.casefold().eq("state").fillna(False)
+        df.loc[state & df["official_emissions_status"].isna(), "official_emissions_status"] = "State"
+    return df
+
+
 REQUIRED_COLUMNS = [
     "Building Address", "Property Owner Name", "property_type",
     "gross_floor_area", "site_eui", "ghg_emissions",
@@ -1033,10 +1048,7 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
 
     #Older files have no official emissions status; they mark State-owned buildings
     #with the reporting status "State". Carry that into the same field 2026 uses.
-    if "official_emissions_status" not in df.columns:
-        df["official_emissions_status"] = pd.NA
-    _state = df["compliance_status"].astype(str).str.strip().str.lower().eq("state")
-    df.loc[_state & df["official_emissions_status"].isna(), "official_emissions_status"] = "State"
+    df = ensure_official_emissions_status(df)
 
     if "ev_charging_kwh" in df.columns:
         df["ev_charging_kwh"] = pd.to_numeric(df["ev_charging_kwh"], errors="coerce").fillna(0)
@@ -4086,7 +4098,7 @@ def render_citywide_map(df: pd.DataFrame):
 @st.cache_data(show_spinner="Evaluating every building…")
 def evaluate_all_buildings(year: int) -> pd.DataFrame:
     """Runs evaluate_building on every row of one reporting year."""
-    df = load_all_years()[year].copy()
+    df = ensure_official_emissions_status(load_all_years()[year])
     out = df.apply(evaluate_building, axis=1, result_type="expand")
     out.columns = ["data_status", "berdo_status", "est_acp", "notes"]
     df = pd.concat([df, out], axis=1)
@@ -4112,9 +4124,9 @@ def render_citywide_tab(year: int, label: str):
         "A citywide picture of BERDO reporting and emissions compliance for every "
         f"covered building in the {label} dataset."
     )
-    df = evaluate_all_buildings(year)
-    has_official = df["official_emissions_status"].notna().any() and (
-        df["official_emissions_status"].astype(str) != "State").any()
+    df = ensure_official_emissions_status(evaluate_all_buildings(year))
+    official_status = df["official_emissions_status"]
+    has_official = bool((official_status.notna() & official_status.ne("State").fillna(False)).any())
     emissions_year = (year - 1) if year else 2025
     pre_limits = emissions_year < 2025
     if pre_limits:
