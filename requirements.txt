@@ -2,7 +2,7 @@ pandas
 numpy
 matplotlib
 openpyxl
-jupyter
 streamlit
 plotly
+pydeck
 reportlab
