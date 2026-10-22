@@ -3734,17 +3734,12 @@ MAP_HIDDEN_BY_DEFAULT = {
     "Coverage year not reported", "Unknown — data incomplete",
 }
 
-#Carto basemaps: free, no access token. Muted ones make the dots stand out.
+#Basemaps that need no access token. Muted ones make the dots stand out.
 MAP_BASEMAPS = {
-    "Light (muted)": ("https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",    [30, 30, 30]),
-    "Dark":          ("https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json", [255, 255, 255]),
-    "Street map":    ("https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",     [30, 30, 30]),
-}   #(style URL, dot outline colour)
-
-
-def _hex_to_rgb(h):
-    h = h.lstrip("#")
-    return [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+    "Light (muted)": ("carto-positron",   "#222222"),   #(style, dot outline colour)
+    "Dark":          ("carto-darkmatter", "#FFFFFF"),
+    "Street map":    ("open-street-map",  "#222222"),
+}
 
 
 #Access code for the Citywide Overview tab. The code is never stored in this file:
@@ -3787,10 +3782,6 @@ def _citywide_unlocked() -> bool:
 
 
 def render_citywide_map(df: pd.DataFrame):
-    """Citywide map drawn with pydeck (bundled with Streamlit): outlined dots,
-    risk drawn on top, token-free Carto basemaps."""
-    import pydeck as pdk
-
     st.markdown("#### Map")
     if df["lat"].notna().sum() == 0:
         st.info(
@@ -3816,7 +3807,7 @@ def render_citywide_map(df: pd.DataFrame):
     with f4:
         size_by_area = st.checkbox("Size by floor area", value=True, key="cw_map_size")
 
-    m = df[df["berdo_status"].isin(show_status) & df["lat"].notna()].copy()
+    m = df[df["berdo_status"].isin(show_status) & df["lat"].notna()]
     if cat != "All categories":
         m = m[m["berdo_category"] == cat]
     no_coords = int((df["berdo_status"].isin(show_status) & df["lat"].isna()).sum())
@@ -3825,75 +3816,51 @@ def render_citywide_map(df: pd.DataFrame):
         st.caption("No buildings match these filters.")
         return
 
-    #Draw order: lowest risk first, so red/orange sit on top where dots overlap
-    rank = {s: i for i, s in enumerate(STATUS_COLORS)}
-    m["_rank"] = m["berdo_status"].map(rank)
-    m = m.sort_values("_rank", ascending=False)
+    Scatter = getattr(go, "Scattermap", None) or go.Scattermapbox   #plotly ≥5.24 / older
+    map_key = "map" if Scatter is getattr(go, "Scattermap", None) else "mapbox"
+    style, outline = MAP_BASEMAPS[basemap]
 
-    sqft  = pd.to_numeric(m["gross_floor_area"], errors="coerce").fillna(0)
-    inten = pd.to_numeric(m["ghg_intensity_kgco2e_sqft"], errors="coerce")
-    acp   = pd.to_numeric(m["est_acp"], errors="coerce").fillna(0)
-    points = pd.DataFrame({
-        "lat":    m["lat"].astype(float),
-        "lon":    m["lon"].astype(float),
-        "color":  m["berdo_status"].map(lambda s: _hex_to_rgb(STATUS_COLORS[s]) + [235]),
-        "radius": (5 + (sqft.clip(upper=1_000_000) / 1_000_000) ** 0.5 * 14) if size_by_area else 7.0,
-        "address": m["Building Address"].astype(str),
-        "ptype":   m["property_type"].fillna("Type not reported").astype(str),
-        "sqft":    sqft.map(lambda v: f"{v:,.0f}"),
-        "ghg":     inten.map(lambda v: f"{v:.2f} kg/sf/yr" if pd.notna(v) else "n/a"),
-        "status":  m["berdo_status"].astype(str),
-        "acp":     acp.map(lambda v: f"${v:,.0f}/yr" if v > 0 else "$0"),
-    })
-
-    style_url, outline = MAP_BASEMAPS[basemap]
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=points,
-        get_position="[lon, lat]",
-        get_fill_color="color",
-        get_radius="radius",
-        radius_units="pixels",
-        stroked=True,
-        get_line_color=outline,
-        line_width_units="pixels",
-        get_line_width=1.5,
-        pickable=True,
-        auto_highlight=True,
-    )
-    deck = pdk.Deck(
-        layers=[layer],
-        initial_view_state=pdk.ViewState(latitude=42.32, longitude=-71.08, zoom=11.2),
-        map_provider="carto",
-        map_style=style_url,
-        tooltip={
-            "html": "<b>{address}</b><br/>{ptype}<br/>Floor area: {sqft} sq ft<br/>"
-                    "GHG: {ghg}<br/>Status: {status}<br/>Est. ACP: {acp}",
-            "style": {"fontSize": "12px"},
-        },
-    )
-    try:
-        st.pydeck_chart(deck, use_container_width=True, height=600)
-    except TypeError:   #Streamlit versions without the height argument
-        st.pydeck_chart(deck, use_container_width=True)
-
-    #Legend (pydeck has none built in)
-    counts = m["berdo_status"].value_counts()
-    items = []
-    for s_ in [s for s in STATUS_COLORS if s in counts]:
-        r, g_, b = _hex_to_rgb(STATUS_COLORS[s_])
-        items.append(
-            f"<span style='display:inline-flex;align-items:center;margin:0 18px 6px 0;'>"
-            f"<span style='width:13px;height:13px;border-radius:50%;background:rgb({r},{g_},{b});"
-            f"border:1.5px solid #222;display:inline-block;margin-right:6px;'></span>"
-            f"{s_} ({counts[s_]:,})</span>"
+    #Map markers can't take an outline directly, so each status gets a slightly
+    #larger "halo" dot underneath. Lowest-risk statuses are drawn first so the
+    #red and orange dots sit on top where buildings overlap.
+    fig = go.Figure()
+    for status in reversed([s for s in STATUS_COLORS if s in show_status]):
+        g = m[m["berdo_status"] == status]
+        if g.empty:
+            continue
+        sqft = pd.to_numeric(g["gross_floor_area"], errors="coerce").fillna(0)
+        size = (6 + (sqft.clip(upper=1_000_000) / 1_000_000) ** 0.5 * 18) if size_by_area else 9
+        inten = pd.to_numeric(g["ghg_intensity_kgco2e_sqft"], errors="coerce")
+        hover = (
+            "<b>" + g["Building Address"].astype(str) + "</b><br>"
+            + g["property_type"].fillna("Type not reported").astype(str) + "<br>"
+            + "Floor area: " + sqft.map(lambda v: f"{v:,.0f}") + " sq ft<br>"
+            + "GHG: " + inten.map(lambda v: f"{v:.2f} kg/sf/yr" if pd.notna(v) else "n/a") + "<br>"
+            + "Status: " + status
+            + g["est_acp"].map(lambda v: f"<br>Est. ACP: ${v:,.0f}/yr" if v > 0 else "")
         )
-    st.markdown("<div style='line-height:1.9'>" + "".join(items) + "</div>", unsafe_allow_html=True)
-
+        fig.add_trace(Scatter(        #halo / outline
+            lat=g["lat"], lon=g["lon"], mode="markers",
+            marker=dict(size=size + 3, color=outline, opacity=0.9),
+            hoverinfo="skip", showlegend=False, legendgroup=status,
+        ))
+        fig.add_trace(Scatter(        #coloured dot
+            lat=g["lat"], lon=g["lon"], mode="markers", name=f"{status} ({len(g):,})",
+            marker=dict(size=size, color=STATUS_COLORS[status], opacity=0.95),
+            hovertext=hover, hoverinfo="text", legendgroup=status,
+        ))
+    fig.update_layout(**{
+        map_key: dict(style=style, center=dict(lat=42.32, lon=-71.08), zoom=11.2),
+        "height": 600,
+        "margin": dict(t=0, b=0, l=0, r=0),
+        "legend": dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+                       traceorder="reversed", itemsizing="constant"),
+    })
+    st.plotly_chart(fig, use_container_width=True)
     st.caption(
         f"{len(m):,} buildings shown. "
         + (f"{no_coords:,} matching buildings have no coordinates and are not plotted. " if no_coords else "")
-        + "Hover a dot for details; scroll to zoom. "
+        + "Click a legend item to hide or show that status. "
         + "Coordinates come from the geocoded 2022–2025 BERDO data, matched by BERDO ID or tax parcel."
     )
 

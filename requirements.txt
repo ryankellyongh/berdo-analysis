@@ -4,5 +4,4 @@ matplotlib
 openpyxl
 streamlit
 plotly
-pydeck
 reportlab
