@@ -3715,16 +3715,30 @@ def attach_coordinates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 STATUS_COLORS = {
-    "Over 2025–29 limit":               "#E24B4A",
-    "Fails 2030–34":                    "#E67E22",
-    "Compliant through 2034":           "#F1C40F",
-    "Compliant through 2039+":          "#1D9E75",
-    "Within custom schedule (2025–29)": "#27AE60",
-    "Not yet covered":                  "#3266ad",
-    "Not subject — state":              "#7F8C8D",
-    "Not subject — vacant":             "#7F8C8D",
-    "Coverage year not reported":       "#BDC3C7",
-    "Unknown — data incomplete":        "#BDC3C7",
+    #High-contrast, colour-blind-friendly palette (Tableau 10 family)
+    "Over 2025–29 limit":               "#D62728",   #red
+    "Fails 2030–34":                    "#FF7F0E",   #orange
+    "Compliant through 2034":           "#E3B505",   #gold
+    "Compliant through 2039+":          "#2CA02C",   #green
+    "Within custom schedule (2025–29)": "#17BECF",   #teal
+    "Not yet covered":                  "#9467BD",   #purple
+    "Not subject — state":              "#7F7F7F",
+    "Not subject — vacant":             "#7F7F7F",
+    "Coverage year not reported":       "#BDBDBD",
+    "Unknown — data incomplete":        "#BDBDBD",
+}
+
+#Statuses hidden from the map by default: context, not compliance risk
+MAP_HIDDEN_BY_DEFAULT = {
+    "Not yet covered", "Not subject — state", "Not subject — vacant",
+    "Coverage year not reported", "Unknown — data incomplete",
+}
+
+#Basemaps that need no access token. Muted ones make the dots stand out.
+MAP_BASEMAPS = {
+    "Light (muted)": ("carto-positron",   "#222222"),   #(style, dot outline colour)
+    "Dark":          ("carto-darkmatter", "#FFFFFF"),
+    "Street map":    ("open-street-map",  "#222222"),
 }
 
 
@@ -3776,16 +3790,22 @@ def render_citywide_map(df: pd.DataFrame):
         )
         return
 
-    f1, f2, f3 = st.columns([2, 1, 1])
+    f1, f2, f3, f4 = st.columns([3, 1.4, 1.1, 1])
     present = [s for s in STATUS_COLORS if s in set(df["berdo_status"])]
-    default = [s for s in present if s not in ("Unknown — data incomplete", "Coverage year not reported")]
+    default = [s for s in present if s not in MAP_HIDDEN_BY_DEFAULT]
     with f1:
-        show_status = st.multiselect("BERDO status", present, default=default, key="cw_map_status")
+        show_status = st.multiselect(
+            "BERDO status", present, default=default, key="cw_map_status",
+            help="Not-yet-covered and exempt buildings are hidden by default so "
+                 "compliance risk stands out. Add them back here.",
+        )
     with f2:
         cats = ["All categories"] + sorted(c for c in df["berdo_category"].unique() if c != "Unmapped / missing")
         cat = st.selectbox("Building category", cats, key="cw_map_cat")
     with f3:
-        size_by_area = st.checkbox("Size dots by floor area", value=True, key="cw_map_size")
+        basemap = st.selectbox("Basemap", list(MAP_BASEMAPS), key="cw_map_basemap")
+    with f4:
+        size_by_area = st.checkbox("Size by floor area", value=True, key="cw_map_size")
 
     m = df[df["berdo_status"].isin(show_status) & df["lat"].notna()]
     if cat != "All categories":
@@ -3798,14 +3818,18 @@ def render_citywide_map(df: pd.DataFrame):
 
     Scatter = getattr(go, "Scattermap", None) or go.Scattermapbox   #plotly ≥5.24 / older
     map_key = "map" if Scatter is getattr(go, "Scattermap", None) else "mapbox"
+    style, outline = MAP_BASEMAPS[basemap]
 
+    #Map markers can't take an outline directly, so each status gets a slightly
+    #larger "halo" dot underneath. Lowest-risk statuses are drawn first so the
+    #red and orange dots sit on top where buildings overlap.
     fig = go.Figure()
-    for status in [s for s in STATUS_COLORS if s in show_status]:
+    for status in reversed([s for s in STATUS_COLORS if s in show_status]):
         g = m[m["berdo_status"] == status]
         if g.empty:
             continue
         sqft = pd.to_numeric(g["gross_floor_area"], errors="coerce").fillna(0)
-        size = (5 + (sqft.clip(upper=1_000_000) / 1_000_000) ** 0.5 * 18) if size_by_area else 7
+        size = (6 + (sqft.clip(upper=1_000_000) / 1_000_000) ** 0.5 * 18) if size_by_area else 9
         inten = pd.to_numeric(g["ghg_intensity_kgco2e_sqft"], errors="coerce")
         hover = (
             "<b>" + g["Building Address"].astype(str) + "</b><br>"
@@ -3815,21 +3839,28 @@ def render_citywide_map(df: pd.DataFrame):
             + "Status: " + status
             + g["est_acp"].map(lambda v: f"<br>Est. ACP: ${v:,.0f}/yr" if v > 0 else "")
         )
-        fig.add_trace(Scatter(
+        fig.add_trace(Scatter(        #halo / outline
+            lat=g["lat"], lon=g["lon"], mode="markers",
+            marker=dict(size=size + 3, color=outline, opacity=0.9),
+            hoverinfo="skip", showlegend=False, legendgroup=status,
+        ))
+        fig.add_trace(Scatter(        #coloured dot
             lat=g["lat"], lon=g["lon"], mode="markers", name=f"{status} ({len(g):,})",
-            marker=dict(size=size, color=STATUS_COLORS[status], opacity=0.75),
-            hovertext=hover, hoverinfo="text",
+            marker=dict(size=size, color=STATUS_COLORS[status], opacity=0.95),
+            hovertext=hover, hoverinfo="text", legendgroup=status,
         ))
     fig.update_layout(**{
-        map_key: dict(style="open-street-map", center=dict(lat=42.325, lon=-71.075), zoom=10.6),
-        "height": 560,
+        map_key: dict(style=style, center=dict(lat=42.32, lon=-71.08), zoom=11.2),
+        "height": 600,
         "margin": dict(t=0, b=0, l=0, r=0),
-        "legend": dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        "legend": dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+                       traceorder="reversed", itemsizing="constant"),
     })
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
         f"{len(m):,} buildings shown. "
         + (f"{no_coords:,} matching buildings have no coordinates and are not plotted. " if no_coords else "")
+        + "Click a legend item to hide or show that status. "
         + "Coordinates come from the geocoded 2022–2025 BERDO data, matched by BERDO ID or tax parcel."
     )
 
@@ -4126,7 +4157,7 @@ with tab_citywide:
 with tab_address:
     address_input = st.text_input(
         "Enter building address",
-        placeholder="Example: 20 Gillette Park"
+        placeholder="Example: 1 Federal St"
     )
 
     if address_input:
