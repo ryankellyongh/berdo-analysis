@@ -3741,6 +3741,7 @@ MAP_BASEMAPS = {
     "Street map":    ("https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",     [30, 30, 30]),
 }   #(style URL, dot outline colour)
 
+
 def _hex_to_rgb(h):
     h = h.lstrip("#")
     return [int(h[i:i + 2], 16) for i in (0, 2, 4)]
