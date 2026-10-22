@@ -4,10 +4,12 @@ import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 
+import site_theme
+
 #Page config
 
 st.set_page_config(
-    page_title="BERDO Compliance Planner",
+    page_title="BERDO · Outreach workspace",
     layout="wide"
 )
 
@@ -4222,25 +4224,15 @@ if show_grid_decarb:
 else:
     elec_share = None
 
-#Page header
-st.title("BERDO Compliance Planner")
-st.write(
-    "Enter a Boston building address to see its BERDO compliance status, fine exposure, "
-    "and a matched incentive plan for funding decarbonization."
-)
-
+#Page header (website-style; presentation lives in site_theme.py)
+site_theme.apply_theme()
 if multi_year_mode:
     year_range_str = f"{years_sorted[0]}–{years_sorted[-1]}"
-    st.info(
-        f"Showing data for **{selected_year}**. "
-        f"Multi-year data loaded: {year_range_str}. "
-        "Use the sidebar to switch years or toggle the trend view."
-    )
+    _badge = f"Reporting year {selected_year} · data {year_range_str}"
 else:
-    st.info(
-        "This is a screening tool for analysis purposes. "
-        "It is not an official City of Boston BERDO compliance determination."
-    )
+    year_range_str = str(selected_year) if selected_year else "current"
+    _badge = f"Reporting year {year_range_str}"
+site_theme.render_header(_badge)
 
 tab_citywide, tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
     "Citywide Overview", "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
@@ -4488,3 +4480,10 @@ with tab_planner:
         show_grid_decarb=show_grid_decarb,
         elec_share=elec_share,
     )
+
+
+#Site footer
+site_theme.render_footer(
+    "Screening tool · Not an official City of Boston BERDO compliance determination",
+    f"Data: City of Boston BERDO disclosure ({year_range_str})",
+)
