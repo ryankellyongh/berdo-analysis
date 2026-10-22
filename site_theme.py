@@ -69,16 +69,28 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 .site-hero h1 {{ font-size: 2rem; margin: 0 0 6px; padding: 0; line-height: 1.2; }}
 .site-hero p {{ margin: 0 0 18px; opacity: 0.75; font-size: 1rem; }}
 
-/* Tabs: muted labels, red underline on the selected tab */
-[data-baseweb="tab-list"] {{ gap: 6px; border-bottom: 1px solid var(--site-border); }}
-[data-baseweb="tab"] {{
-  padding: 10px 12px !important; height: auto !important; background: transparent !important;
+/* Tabs: muted labels, blue underline on the selected tab.
+   Targets both the older BaseWeb tab markup and newer role-based markup, and
+   overrides Streamlit's own selected-tab colour, which otherwise uses primaryColor. */
+[data-testid="stTabs"] [role="tablist"], [data-baseweb="tab-list"] {{
+  gap: 6px; border-bottom: 1px solid var(--site-border);
 }}
-[data-baseweb="tab"] p {{ font-size: 0.98rem !important; opacity: 0.8; }}
+[data-testid="stTabs"] [role="tab"], [data-baseweb="tab"] {{
+  padding: 10px 12px !important; height: auto !important; background: transparent !important;
+  color: inherit !important; border-bottom: 3px solid transparent !important;
+}}
+[data-testid="stTabs"] [role="tab"] p, [data-baseweb="tab"] p {{
+  font-size: 0.98rem !important; opacity: 0.8; color: inherit !important;
+}}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"], [data-baseweb="tab"][aria-selected="true"] {{
+  border-bottom-color: var(--site-accent) !important;
+}}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] p,
 [data-baseweb="tab"][aria-selected="true"] p {{ opacity: 1; font-weight: 600; }}
-[data-baseweb="tab-highlight"] {{ background-color: var(--site-accent) !important; height: 3px !important; }}
-[data-baseweb="tab-border"] {{ display: none; }}
-[data-baseweb="tab-panel"] {{ padding-top: 22px; }}
+[data-testid="stTabs"] [role="tab"]:hover p, [data-baseweb="tab"]:hover p {{ opacity: 1; }}
+/* Streamlit's own moving underline and divider: hidden in favour of the border above */
+[data-baseweb="tab-highlight"], [data-baseweb="tab-border"] {{ display: none !important; }}
+[data-testid="stTabs"] [role="tabpanel"], [data-baseweb="tab-panel"] {{ padding-top: 22px; }}
 
 /* Panels: metrics, bordered containers, expanders, alerts, tables, charts */
 [data-testid="stMetric"] {{

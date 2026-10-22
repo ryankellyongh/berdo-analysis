@@ -1,7 +1,7 @@
 # Theme for the BERDO app. No secrets here; safe to commit.
 # No "base" is set, so the app follows each viewer's light/dark preference.
 [theme]
-primaryColor = "#E5484D"
+primaryColor = "#288BE4"   # City of Boston "Optimistic Blue"
 
 [client]
 toolbarMode = "minimal"

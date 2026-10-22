@@ -744,6 +744,26 @@ def render_compliance_section(
 
     st.plotly_chart(fig, use_container_width=True)
 
+    #Annual ACP by period, always visible, with the grid scenario beside it when on
+    _acp_rows = []
+    for i, g in enumerate(gaps):
+        r = {"Period": g["period"], "Limit (kg CO₂e/sf/yr)": f"{g['limit']:.2f}",
+             "Annual ACP, current emissions": f"${g['annual_fine_usd']:,.0f}"}
+        if proj_gap_for_period is not None:
+            pg = proj_gap_for_period[i]
+            r["Annual ACP, grid decarbonization"] = f"${pg['annual_fine_usd']:,.0f}"
+            r["Lower with cleaner grid"] = f"${g['annual_fine_usd'] - pg['annual_fine_usd']:,.0f}"
+        _acp_rows.append(r)
+    st.markdown("**Annual ACP by compliance period**")
+    st.dataframe(pd.DataFrame(_acp_rows), hide_index=True, use_container_width=True)
+    if proj_gap_for_period is None:
+        st.caption("Turn on the grid decarbonization scenario above the chart to add its ACP to this table.")
+    if base_year < 2025:
+        st.caption(
+            f"These figures use {base_year} emissions, reported before BERDO limits took effect; "
+            f"they show what would be owed if {base_year} emissions repeated."
+        )
+
     #Fine exposure summary
     non_compliant_periods = [g for g in gaps if not g["compliant"]]
     if non_compliant_periods:
@@ -860,6 +880,7 @@ COLUMN_RENAME_MAP = {
     "Site EUI (Energy Use Intensity kBtu/ft²)": "site_eui",
     "Estimated Total GHG Emissions (kgCO2e)": "ghg_emissions",
     "Estimated Total GHG Emissions e(kgCO2e)": "ghg_emissions",
+    "Electricity Emissions (kgCO2e)": "elec_emissions_kg",     #2024–2025 files; 2026 via converter
     "Reporting Compliance Status": "compliance_status",
     "First Emissions Compliance Year (Projected)": "compliance_year",
     
@@ -1002,6 +1023,21 @@ def _load_single_csv(file_path: Path) -> pd.DataFrame:
         df["fuel_electricity_kwh"] = df["fuel_electricity_kwh"].clip(lower=0)
         
     #Subtract excluded EV emissions (requires 'ev_charging_kwh' column mapped)
+    #Numeric energy-mix fields; on-site renewables are reported in kBtu in older files
+    for _c in ("elec_emissions_kg", "renewable_elec_kwh"):
+        if _c in df.columns:
+            df[_c] = pd.to_numeric(df[_c], errors="coerce")
+    if "renewable_elec_kwh" not in df.columns and "Renewable System Electricity Usage Onsite (kBtu)" in df.columns:
+        df["renewable_elec_kwh"] = pd.to_numeric(
+            df["Renewable System Electricity Usage Onsite (kBtu)"], errors="coerce") / 3.412
+
+    #Older files have no official emissions status; they mark State-owned buildings
+    #with the reporting status "State". Carry that into the same field 2026 uses.
+    if "official_emissions_status" not in df.columns:
+        df["official_emissions_status"] = pd.NA
+    _state = df["compliance_status"].astype(str).str.strip().str.lower().eq("state")
+    df.loc[_state & df["official_emissions_status"].isna(), "official_emissions_status"] = "State"
+
     if "ev_charging_kwh" in df.columns:
         df["ev_charging_kwh"] = pd.to_numeric(df["ev_charging_kwh"], errors="coerce").fillna(0)
         ev_deduction_kg = df["ev_charging_kwh"] * (effective_grid_ef(2025) / 1000) # Assumes 2025 base EF
@@ -1579,6 +1615,21 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.12)")
 
     st.plotly_chart(fig, use_container_width=True)
+
+    #Annual portfolio ACP by period, with the grid scenario beside it when on
+    _pf_rows = []
+    for i, lim in enumerate(blended_limits):
+        r = {"Period": COMPLIANCE_PERIODS[i], "Blended limit (kg CO₂e/sf/yr)": f"{lim:.3f}",
+             "Annual ACP, current emissions": f"${portfolio_fines[i]:,.0f}"}
+        if elec_share is not None:
+            _g = round(max(projected[i] - lim, 0) * total_sqft / 1000 * ACP_RATE, 0)
+            r["Annual ACP, grid decarbonization"] = f"${_g:,.0f}"
+            r["Lower with cleaner grid"] = f"${portfolio_fines[i] - _g:,.0f}"
+        _pf_rows.append(r)
+    st.markdown("**Annual portfolio ACP by compliance period**")
+    st.dataframe(pd.DataFrame(_pf_rows), hide_index=True, use_container_width=True)
+    if elec_share is None:
+        st.caption("Turn on the grid decarbonization scenario above to add its ACP to this table.")
 
     st.caption(
         "Blended standard per BERDO 2.0: area-weighted average of each building's sector limit. "
@@ -4044,6 +4095,16 @@ def evaluate_all_buildings(year: int) -> pd.DataFrame:
     return attach_coordinates(df)
 
 
+def _compact_money(v):
+    """Short dollar figure that fits a metric card: $42.0M, $878K, $5,359."""
+    v = float(v or 0)
+    if abs(v) >= 1_000_000:
+        return f"${v / 1_000_000:,.1f}M"
+    if abs(v) >= 100_000:
+        return f"${v / 1_000:,.0f}K"
+    return f"${v:,.0f}"
+
+
 def render_citywide_tab(year: int, label: str):
     if not _citywide_unlocked():
         return
@@ -4052,7 +4113,17 @@ def render_citywide_tab(year: int, label: str):
         f"covered building in the {label} dataset."
     )
     df = evaluate_all_buildings(year)
-    has_official = "official_emissions_status" in df.columns
+    has_official = df["official_emissions_status"].notna().any() and (
+        df["official_emissions_status"].astype(str) != "State").any()
+    emissions_year = (year - 1) if year else 2025
+    pre_limits = emissions_year < 2025
+    if pre_limits:
+        st.info(
+            f"**Reporting year {year} contains {emissions_year} emissions, before BERDO emissions "
+            f"limits took effect.** Limits first apply to 2025 emissions (reported in 2026). The "
+            f"figures below show which buildings would exceed the 2025–29 limit, and the ACP they "
+            f"would owe, if their {emissions_year} emissions repeated."
+        )
 
     if has_official:
         st.warning(
@@ -4074,10 +4145,15 @@ def render_citywide_tab(year: int, label: str):
               delta_color="off")
     c2.metric("Reported, usable data", f"{(df['data_status'] == 'Reported').sum():,}")
     c3.metric("Did not report", f"{(df['data_status'] == 'Not submitted').sum():,}")
-    c4.metric("Over 2025–29 limit", f"{len(over):,}")
+    c4.metric("Would exceed 2025–29 limit" if pre_limits else "Over 2025–29 limit", f"{len(over):,}")
 
     c5, c6, c7, c8 = st.columns(4)
-    c5.metric("Est. annual ACP (2025–29)", f"${over['est_acp'].sum():,.0f}")
+    _acp_total = over["est_acp"].sum()
+    c5.metric(
+        f"Projected annual ACP (if {emissions_year} repeats)" if pre_limits else "Est. annual ACP (2025–29)",
+        _compact_money(_acp_total),
+        help=f"Exact: ${_acp_total:,.0f} per year.",
+    )
     c6.metric("Not yet covered (2030)", f"{(df['berdo_status'] == 'Not yet covered').sum():,}")
     c7.metric("Not subject (State / Vacant)", f"{int(not_subject.sum()):,}")
     c8.metric("Compliance unknown", f"{(df['berdo_status'] == 'Unknown — data incomplete').sum():,}")
