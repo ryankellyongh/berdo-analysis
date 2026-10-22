@@ -4126,7 +4126,7 @@ with tab_citywide:
 with tab_address:
     address_input = st.text_input(
         "Enter building address",
-        placeholder="Example: 20 Gillette Park"
+        placeholder="Example: 1 Beacon St"
     )
 
     if address_input:
