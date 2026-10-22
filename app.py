@@ -3918,9 +3918,10 @@ def render_citywide_map(df: pd.DataFrame):
         ))
     fig.update_layout(**{
         map_key: dict(style=style, center=dict(lat=42.32, lon=-71.08), zoom=11.2),
-        "height": 600,
-        "margin": dict(t=0, b=0, l=0, r=0),
-        "legend": dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+        "height": 660,
+        "margin": dict(t=0, b=70, l=0, r=0),
+        #Legend below the map so it doesn't collide with the zoom/pan toolbar
+        "legend": dict(orientation="h", yanchor="top", y=-0.01, xanchor="left", x=0,
                        traceorder="reversed", itemsizing="constant"),
     })
     st.plotly_chart(fig, use_container_width=True)
