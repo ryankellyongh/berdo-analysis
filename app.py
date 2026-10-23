@@ -5,12 +5,19 @@ import streamlit as st
 from pathlib import Path
 
 import site_theme
+import base64
+from io import BytesIO
+from PIL import Image
 
 #Page config
 
+_NORTHEASTERN_ICON = Image.open(BytesIO(base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAACiElEQVR42u3Xy4uVdRjA8c/znpNgOSA0kTVRdKEQRxfSIlpIYDmbiKhFRBunMii6gkFgF7CkwozQkaIY24RQi0SCmFXZ0kVhkN0WrqaF0w1OTOcwh/M+bQZeXoaG8w4cdOHnD/jxhd+zeB6XXGjx48TkOMYwsNISfsdAcy1cgxbSSoFuO9mBh5Kt2IABINALjgVH0NXMFclLyRTWoVRpBQuYbeMkvg7uTl7GNirJfmwMDmDR8Dp4Nfhu+d0bAYk5HAi+jbMTk1RuTQ5jSl0fMwWv4R8NJTuTT7AJXxZMYwEKdb8Gj+OkusvwTPJ2slFD64viK3yGbvAeFgAKK80XvIvf0FdpJ0/gUHKlZjI4hbM4A6sFQD84ERzBkkor2Z0cxtWamQ9+CTrDBAQ6wSvBQfRUCjxccjSZMKSki7+DQT1gdf8GbwSvY1El8GDyQXKD4SRKQZMA6BUcDPaho+7e5KPkFmtUGE6/YCbYi7/U3ZPMJptHGQCDdsRs8CzOq9uRHEu2jTIAynVRHA+ewry6O5KPk9tHGQCJz4M9OKdu+3LEnaMLqMwFj+FndZPL33HXqAPgVLAb36u7LZlNpkYdAKeXI06ruyn5MLlv1AFwJpjGN+quT97vluUDQQwdkLTQ1sxPwaOYU3dtchSPIIYKwBiuKiIKzZwL9uAEUmVT8iLGQ5TDBNycbC4zxzQ3HzyJ49TXsKQVWDUguDzZha3JdmtzvuC5YBaDoYewiGgl09ipWiqvszZ/BnuDGfRXDShEgS1l5qHkTawH7Eo+Lbm/ZExznWBf8A4GCOrakIzjhWQLfkCqtPA0BvhCc4vBfvQwnqwMwB/B8+F/BZasXS94CxtQXroHLyr/AVy5yNijc9l2AAAAAElFTkSuQmCC"
+)))
+
 st.set_page_config(
     page_title="BERDO · Outreach workspace",
-    page_icon="https://brand.northeastern.edu/global/assets/favicon/favicon-32x32.png?v=2",
+    page_icon=_NORTHEASTERN_ICON,
     layout="wide"
 )
 
