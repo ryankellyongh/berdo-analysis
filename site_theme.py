@@ -58,24 +58,24 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 .site-topbar {{
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 30px 36px; margin-bottom: 26px; flex-wrap: wrap;
-  background: #082326; color: #ffffff;
-  border-bottom: 2px solid #2b4446;
+  background: transparent; color: var(--site-accent);
+  border-bottom: 1px solid var(--site-border);
 }}
 .site-brand {{ display: flex; align-items: center; gap: 22px; min-width: 0; }}
 .site-topbar .site-brand-title {{
-  font-family: Georgia, 'Times New Roman', serif !important;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
   font-size: 48px; font-weight: 700; line-height: 1.05;
-  letter-spacing: -1.2px; color: #ffffff;
+  letter-spacing: -1.2px; color: var(--site-accent);
 }}
 .site-brand-subtitle {{
   margin-top: 10px; font-family: 'Inter', Arial, sans-serif;
   font-size: 16px; font-weight: 700; line-height: 1.4;
-  letter-spacing: 3px; text-transform: uppercase; color: #a5cbc7;
+  letter-spacing: 3px; text-transform: uppercase; color: var(--site-accent);
 }}
 .site-badge {{
   display: inline-block; max-width: 100%; font-size: 0.8rem;
-  padding: 6px 12px; border: 1px solid #456562; border-radius: 8px;
-  color: #d7e9e6; background: rgba(255, 255, 255, 0.04); line-height: 1.4;
+  padding: 6px 12px; border: 1px solid var(--site-border); border-radius: 8px;
+  color: inherit; background: var(--site-panel); line-height: 1.4;
 }}
 @media (max-width: 640px) {{
   .site-topbar {{ padding: 24px 18px; gap: 20px; }}
