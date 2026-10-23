@@ -10,6 +10,7 @@ import site_theme
 
 st.set_page_config(
     page_title="BERDO · Outreach workspace",
+    page_icon="https://brand.northeastern.edu/global/assets/favicon/favicon-32x32.png?v=2",
     layout="wide"
 )
 
