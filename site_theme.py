@@ -54,6 +54,46 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   max-width: 1240px; padding-top: 1.25rem !important; padding-bottom: 3rem !important;
 }}
 
+/* Workspace navigation shares one header row with the reporting badge and About. */
+.st-key-workspace_header {{
+  box-sizing: border-box; width: 100%; padding: 18px 0 22px;
+  margin-bottom: 26px; background: #ffffff;
+  border-bottom: 1px solid var(--site-border);
+}}
+@supports (width: 100cqw) {{
+  .st-key-workspace_header {{
+    width: 100cqw; margin-inline: calc((100% - 100cqw) / 2);
+    padding-inline: calc((100cqw - 100%) / 2);
+  }}
+}}
+.st-key-workspace_header [data-testid="stHorizontalBlock"] {{ align-items: center; gap: 16px; }}
+.st-key-workspace_header .site-brand-title {{
+  font-family: 'Inter', Arial, sans-serif !important;
+  font-size: 28px; font-weight: 700; line-height: 1.1; color: var(--site-accent);
+}}
+.st-key-workspace_header .site-brand-subtitle {{ font-size: 10px; letter-spacing: 1.6px; }}
+.st-key-workspace_header .site-badge {{ color: var(--site-accent); white-space: nowrap; font-size: 0.73rem; }}
+.st-key-header_navigation [role="radiogroup"] {{
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap;
+}}
+.st-key-header_navigation [role="radiogroup"] label {{
+  margin: 0; padding: 10px 0; border-bottom: 3px solid transparent; cursor: pointer;
+}}
+.st-key-header_navigation [role="radiogroup"] label > div:first-child {{ display: none; }}
+.st-key-header_navigation [role="radiogroup"] label p {{
+  font-size: 0.8rem !important; font-weight: 500; white-space: nowrap;
+}}
+.st-key-header_navigation [role="radiogroup"] label:has(input:checked) {{
+  border-bottom-color: var(--site-accent);
+}}
+.st-key-header_navigation [role="radiogroup"] label:has(input:checked) p {{
+  color: var(--site-accent); font-weight: 600;
+}}
+.st-key-header_navigation [role="radiogroup"] label:has(input:focus-visible) {{
+  outline: 2px solid var(--site-accent); outline-offset: 3px;
+}}
+.st-key-workspace_header .stButton > button {{ color: var(--site-accent); border-color: var(--site-accent); }}
+
 /* Site header */
 [data-testid="stMain"] {{ container-type: inline-size; }}
 .site-topbar {{
@@ -233,6 +273,36 @@ def render_topbar(badge: str, brand: str = "Outreach workspace", on_about: bool 
         '</div>',
         unsafe_allow_html=True,
     )
+
+
+def _open_about():
+    st.query_params["page"] = "about"
+
+
+def render_workspace_header(badge: str):
+    """Render native navigation controls alongside the brand, badge, and About."""
+    labels = ["Citywide Overview", "Address Lookup", "Owner Portfolio",
+              "Retrofit & Incentives", "Emissions Planner"]
+    with st.container(key="workspace_header"):
+        brand_col, navigation_col, badge_col, about_col = st.columns(
+            [1.25, 5.3, 2.0, 0.65], vertical_alignment="center"
+        )
+        with brand_col:
+            st.markdown(
+                '<div class="site-brand-copy"><div class="site-brand-title">BERDO</div>'
+                '<div class="site-brand-subtitle">OUTREACH WORKSPACE</div></div>',
+                unsafe_allow_html=True,
+            )
+        with navigation_col:
+            selected = st.radio(
+                "Workspace navigation", labels, horizontal=True,
+                label_visibility="collapsed", key="header_navigation",
+            )
+        with badge_col:
+            st.markdown(f'<span class="site-badge">{html.escape(badge)}</span>', unsafe_allow_html=True)
+        with about_col:
+            st.button("About", key="header_about", on_click=_open_about)
+    return selected
 
 
 def render_hero(heading: str = "Building support, with a clear next step.",

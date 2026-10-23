@@ -4429,21 +4429,17 @@ else:
     _badge = f"Reporting year {year_range_str}"
 st.session_state["workspace_badge"] = _badge
 with _topbar_slot:
-    site_theme.render_topbar(_badge)
-
-tab_citywide, tab_address, tab_portfolio, tab_retrofit_optimizer, tab_planner = st.tabs([
-    "Citywide Overview", "Address Lookup", "Owner Portfolio", "Retrofit & Incentives", "Emissions Planner"
-])
+    active_page = site_theme.render_workspace_header(_badge)
 
 #Tab 0 — citywide overview
 
-with tab_citywide:
+if active_page == "Citywide Overview":
     render_citywide_tab(selected_year, str(selected_year) if selected_year else "current")
 
 
 #Tab 1 — single address lookup (unchanged behaviour)
 
-with tab_address:
+if active_page == "Address Lookup":
     address_input = st.text_input(
         "Enter building address",
         placeholder="Example: 1 Beacon St"
@@ -4627,7 +4623,7 @@ with tab_address:
 
 #Tab 2 — owner portfolio lookup
 
-with tab_portfolio:
+if active_page == "Owner Portfolio":
     st.write(
         "Enter a property owner name to group all their buildings into a BERDO "
         "Building Portfolio and see combined compliance exposure under the blended "
@@ -4687,14 +4683,14 @@ with tab_portfolio:
 
 #Tab 3 — Retrofit & Incentives (merged Retrofit Estimator + Incentive Optimizer)
 
-with tab_retrofit_optimizer:
+if active_page == "Retrofit & Incentives":
     opt_prefill = st.session_state.get("optimizer_prefill", {})
     render_retrofit_optimizer_tab(prefill=opt_prefill)
 
 
 #Tab 4 — Emissions Planner
 
-with tab_planner:
+if active_page == "Emissions Planner":
     planner_prefill = st.session_state.get("planner_prefill", {})
     _plan_share, _plan_note = (None, None)
     if show_grid_decarb:
