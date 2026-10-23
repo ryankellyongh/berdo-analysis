@@ -40,10 +40,9 @@ h1, h2, h3, h4 {{ letter-spacing: -0.01em; font-weight: 600 !important; }}
 /* Hide Streamlit's default chrome so the page reads as a website */
 /* (the header itself stays, transparent, because it holds the sidebar open button) */
 header[data-testid="stHeader"] {{ background: transparent; }}
-/* Hide only the toolbar's actions (Fork, GitHub, menu, deploy), never the whole
-   toolbar: in some Streamlit versions it also holds the sidebar open button. */
-[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stDecoration"],
-[data-testid="stStatusWidget"], #MainMenu, footer, .stDeployButton,
+/* Keep the Settings menu available for switching Light and Dark themes. */
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"], footer, .stDeployButton,
 [data-testid="stAppDeployButton"] {{ display: none !important; }}
 [data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"] {{
   display: flex !important; visibility: visible !important;
@@ -57,7 +56,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 /* Workspace header: text buttons with one active blue underline. */
 .st-key-workspace_header {{
   position: relative; box-sizing: border-box; width: 100%;
-  padding: 18px 0 22px; margin-bottom: 26px; background: #ffffff;
+  padding: 18px 0 22px; margin-bottom: 26px; background: transparent;
   border-bottom: 1px solid var(--site-border);
 }}
 .st-key-workspace_header [data-testid="stHorizontalBlock"] {{
@@ -107,7 +106,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   box-sizing: border-box; width: 100%;
   padding: 20px 0; margin-bottom: 26px; flex-wrap: wrap;
-  background: #ffffff; color: var(--site-accent);
+  background: transparent; color: var(--site-accent);
   border-bottom: 1px solid var(--site-border);
 }}
 @supports (width: 100cqw) {{
@@ -132,7 +131,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 }}
 a.site-about-button, a.site-about-button:visited {{
   display: inline-block; padding: 6px 14px; border: 1px solid var(--site-accent);
-  border-radius: 8px; color: var(--site-accent); background: #ffffff;
+  border-radius: 8px; color: var(--site-accent); background: transparent;
   font-family: 'Inter', Arial, sans-serif; font-size: 0.85rem;
   font-weight: 600; text-decoration: none; line-height: 1.4;
 }}
@@ -226,7 +225,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 }}
 [data-testid="stWidgetLabel"] p {{ font-size: 0.88rem; opacity: 0.85; }}
 
-/* Buttons: outlined by default, solid red for primary and form submit */
+/* Buttons: outlined by default, City blue for primary and form submit */
 .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] > button {{
   border-radius: 10px; border: 1px solid var(--site-border); padding: 0.5rem 1rem; font-weight: 500;
 }}
@@ -262,7 +261,7 @@ def apply_theme():
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-def render_topbar(badge: str, brand: str = "Outreach workspace", on_about: bool = False):
+def render_topbar(badge: str, brand: str = "Priority screening tool", on_about: bool = False):
     #Built without indentation: Markdown treats indented lines as a code block.
     page_url = "?page=workspace" if on_about else "?page=about"
     page_label = "Back to workspace" if on_about else "About"
@@ -302,7 +301,7 @@ def render_workspace_header(badge: str):
         with columns[0]:
             st.markdown(
                 '<div class="site-brand-copy"><div class="site-brand-title">BERDO</div>'
-                '<div class="site-brand-subtitle">OUTREACH WORKSPACE</div></div>',
+                '<div class="site-brand-subtitle">PRIORITY SCREENING TOOL</div></div>',
                 unsafe_allow_html=True,
             )
         for index, label in enumerate(labels):
