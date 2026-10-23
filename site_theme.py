@@ -56,15 +56,32 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 
 /* Site header */
 .site-topbar {{
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 14px 0 16px; border-bottom: 1px solid var(--site-border); margin-bottom: 26px;
-  flex-wrap: wrap;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 30px 36px; margin-bottom: 26px; flex-wrap: wrap;
+  background: #082326; color: #ffffff;
+  border-bottom: 2px solid #2b4446;
 }}
-.site-brand {{ font-weight: 600; font-size: 1.02rem; }}
-.site-brand .accent {{ color: var(--site-accent); font-weight: 700; }}
+.site-brand {{ display: flex; align-items: center; gap: 22px; min-width: 0; }}
+.site-topbar .site-brand-title {{
+  font-family: Georgia, 'Times New Roman', serif !important;
+  font-size: 48px; font-weight: 700; line-height: 1.05;
+  letter-spacing: -1.2px; color: #ffffff;
+}}
+.site-brand-subtitle {{
+  margin-top: 10px; font-family: 'Inter', Arial, sans-serif;
+  font-size: 16px; font-weight: 700; line-height: 1.4;
+  letter-spacing: 3px; text-transform: uppercase; color: #a5cbc7;
+}}
 .site-badge {{
-  display: inline-block; font-size: 0.8rem; padding: 4px 10px; border-radius: 8px;
-  background: rgba(127, 127, 127, 0.16); line-height: 1.4;
+  display: inline-block; max-width: 100%; font-size: 0.8rem;
+  padding: 6px 12px; border: 1px solid #456562; border-radius: 8px;
+  color: #d7e9e6; background: rgba(255, 255, 255, 0.04); line-height: 1.4;
+}}
+@media (max-width: 640px) {{
+  .site-topbar {{ padding: 24px 18px; gap: 20px; }}
+  .site-brand {{ gap: 15px; }}
+  .site-topbar .site-brand-title {{ font-size: 38px; }}
+  .site-brand-subtitle {{ font-size: 12px; letter-spacing: 2px; }}
 }}
 .site-hero h1 {{ font-size: 2rem; margin: 0 0 6px; padding: 0; line-height: 1.2; }}
 .site-hero p {{ margin: 0 0 18px; opacity: 0.75; font-size: 1rem; }}
@@ -160,7 +177,11 @@ def render_topbar(badge: str, brand: str = "Outreach workspace"):
     #Built without indentation: Markdown treats indented lines as a code block.
     st.markdown(
         '<div class="site-topbar" role="banner">'
-        f'<div class="site-brand"><span class="accent">BERDO</span> / {html.escape(brand)}</div>'
+        '<div class="site-brand">'
+        '<div class="site-brand-copy">'
+        '<div class="site-brand-title">BERDO</div>'
+        f'<div class="site-brand-subtitle">{html.escape(brand)}</div>'
+        '</div></div>'
         f'<span class="site-badge">{html.escape(badge)}</span>'
         '</div>',
         unsafe_allow_html=True,
