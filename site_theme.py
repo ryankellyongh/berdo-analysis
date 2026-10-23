@@ -143,6 +143,10 @@ a.site-about-button:focus-visible {{ outline: 2px solid var(--site-accent); outl
   background-color: var(--site-accent) !important;
   border-color: var(--site-accent) !important;
 }}
+/* React Aria tabs render an additional selection indicator inside the tab. */
+[data-testid="stTabs"] .react-aria-SelectionIndicator {{
+  display: none !important;
+}}
 /* Streamlit's own moving underline and divider: hidden in favour of the border above */
 [data-baseweb="tab-highlight"], [data-baseweb="tab-border"] {{ display: none !important; }}
 [data-testid="stTabs"] [role="tabpanel"], [data-baseweb="tab-panel"] {{ padding-top: 22px; }}
