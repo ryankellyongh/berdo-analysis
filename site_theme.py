@@ -39,7 +39,7 @@ h1, h2, h3, h4 {{ letter-spacing: -0.01em; font-weight: 600 !important; }}
 
 /* Hide Streamlit's default chrome so the page reads as a website */
 /* (the header itself stays, transparent, because it holds the sidebar open button) */
-header[data-testid="stHeader"] {{ background: transparent; }}
+header[data-testid="stHeader"] {{ background: transparent !important; }}
 /* Keep the Settings menu available for switching Light and Dark themes. */
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"], footer, .stDeployButton,
@@ -55,8 +55,8 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 
 /* Workspace header: text buttons with one active blue underline. */
 .st-key-workspace_header {{
-  position: relative; box-sizing: border-box; width: 100%;
-  padding: 18px 0 22px; margin-bottom: 26px; background: transparent;
+  position: relative; box-sizing: border-box; width: 100%; color: inherit !important;
+  padding: 18px 0 22px; margin-bottom: 26px; background: transparent !important;
   border-bottom: 1px solid var(--site-border);
 }}
 .st-key-workspace_header [data-testid="stHorizontalBlock"] {{
@@ -106,7 +106,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   box-sizing: border-box; width: 100%;
   padding: 20px 0; margin-bottom: 26px; flex-wrap: wrap;
-  background: transparent; color: var(--site-accent);
+  background: transparent !important; color: var(--site-accent);
   border-bottom: 1px solid var(--site-border);
 }}
 @supports (width: 100cqw) {{
@@ -131,7 +131,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 }}
 a.site-about-button, a.site-about-button:visited {{
   display: inline-block; padding: 6px 14px; border: 1px solid var(--site-accent);
-  border-radius: 8px; color: var(--site-accent); background: transparent;
+  border-radius: 8px; color: var(--site-accent); background: transparent !important;
   font-family: 'Inter', Arial, sans-serif; font-size: 0.85rem;
   font-weight: 600; text-decoration: none; line-height: 1.4;
 }}
