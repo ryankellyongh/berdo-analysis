@@ -113,6 +113,25 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] p,
 [data-baseweb="tab"][aria-selected="true"] p {{ opacity: 1; font-weight: 600; }}
 [data-testid="stTabs"] [role="tab"]:hover p, [data-baseweb="tab"]:hover p {{ opacity: 1; }}
+/* Use City blue for both native tab indicators and selected-tab borders. */
+[data-testid="stTabs"] {{
+  --primary-color: var(--site-accent);
+  --st-primary-color: var(--site-accent);
+}}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
+  border-bottom: 3px solid var(--site-accent) !important;
+  box-shadow: none !important;
+}}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"]::after {{
+  background-color: var(--site-accent) !important;
+  border-color: var(--site-accent) !important;
+}}
+[data-testid="stTabs"] [data-baseweb="tab-highlight"],
+[data-testid="stTabs"] [data-testid="stTabHighlight"],
+[data-testid="stTabs"] [data-testid="stTabsHighlight"] {{
+  background-color: var(--site-accent) !important;
+  border-color: var(--site-accent) !important;
+}}
 /* Streamlit's own moving underline and divider: hidden in favour of the border above */
 [data-baseweb="tab-highlight"], [data-baseweb="tab-border"] {{ display: none !important; }}
 [data-testid="stTabs"] [role="tabpanel"], [data-baseweb="tab-panel"] {{ padding-top: 22px; }}
