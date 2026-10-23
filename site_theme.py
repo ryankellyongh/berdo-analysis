@@ -54,45 +54,52 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   max-width: 1240px; padding-top: 1.25rem !important; padding-bottom: 3rem !important;
 }}
 
-/* Workspace navigation shares one header row with the reporting badge and About. */
+/* Workspace header: text buttons with one active blue underline. */
 .st-key-workspace_header {{
-  box-sizing: border-box; width: 100%; padding: 18px 0 22px;
-  margin-bottom: 26px; background: #ffffff;
+  position: relative; box-sizing: border-box; width: 100%;
+  padding: 18px 0 22px; margin-bottom: 26px; background: #ffffff;
   border-bottom: 1px solid var(--site-border);
 }}
-@supports (width: 100cqw) {{
-  .st-key-workspace_header {{
-    width: 100cqw; margin-inline: calc((100% - 100cqw) / 2);
-    padding-inline: calc((100cqw - 100%) / 2);
-  }}
+.st-key-workspace_header [data-testid="stHorizontalBlock"] {{
+  align-items: center; gap: 8px;
 }}
-.st-key-workspace_header [data-testid="stHorizontalBlock"] {{ align-items: center; gap: 16px; }}
 .st-key-workspace_header .site-brand-title {{
   font-family: 'Inter', Arial, sans-serif !important;
-  font-size: 28px; font-weight: 700; line-height: 1.1; color: var(--site-accent);
+  font-size: 28px; font-weight: 700; line-height: 1.1;
+  color: var(--site-accent); white-space: nowrap;
 }}
-.st-key-workspace_header .site-brand-subtitle {{ font-size: 10px; letter-spacing: 1.6px; }}
-.st-key-workspace_header .site-badge {{ color: var(--site-accent); white-space: nowrap; font-size: 0.73rem; }}
-.st-key-header_navigation [role="radiogroup"] {{
-  display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap;
+.st-key-workspace_header .site-brand-subtitle {{
+  font-size: 9px; letter-spacing: 1.3px; white-space: nowrap;
 }}
-.st-key-header_navigation [role="radiogroup"] label {{
-  margin: 0; padding: 10px 0; border-bottom: 3px solid transparent; cursor: pointer;
+.st-key-workspace_header .site-badge {{
+  box-sizing: border-box; color: var(--site-accent);
+  white-space: nowrap; font-size: 0.65rem; padding: 6px 8px;
 }}
-.st-key-header_navigation [role="radiogroup"] label > div:first-child {{ display: none; }}
-.st-key-header_navigation [role="radiogroup"] label p {{
-  font-size: 0.8rem !important; font-weight: 500; white-space: nowrap;
+.st-key-workspace_header .stButton > button {{
+  box-sizing: border-box; width: 100%; min-height: 40px;
+  border: 0 !important; border-bottom: 3px solid transparent !important;
+  border-radius: 0; padding: 8px 2px; background: transparent !important;
+  color: inherit !important; box-shadow: none !important;
 }}
-.st-key-header_navigation [role="radiogroup"] label:has(input:checked) {{
-  border-bottom-color: var(--site-accent);
+.st-key-workspace_header .stButton > button p {{
+  font-size: 0.72rem !important; font-weight: 500; white-space: nowrap;
 }}
-.st-key-header_navigation [role="radiogroup"] label:has(input:checked) p {{
-  color: var(--site-accent); font-weight: 600;
+.st-key-workspace_header .stButton > button[kind="primary"] {{
+  border-bottom-color: var(--site-accent) !important; color: var(--site-accent) !important;
 }}
-.st-key-header_navigation [role="radiogroup"] label:has(input:focus-visible) {{
-  outline: 2px solid var(--site-accent); outline-offset: 3px;
+.st-key-workspace_header .stButton > button[kind="primary"] p {{ font-weight: 600; }}
+.st-key-workspace_header .stButton > button:hover {{ color: var(--site-accent) !important; }}
+.st-key-workspace_header .stButton > button:focus-visible {{
+  outline: 2px solid var(--site-accent); outline-offset: 2px;
 }}
-.st-key-workspace_header .stButton > button {{ color: var(--site-accent); border-color: var(--site-accent); }}
+.st-key-header_about .stButton > button {{
+  border: 1px solid var(--site-accent) !important; border-radius: 8px;
+  color: var(--site-accent) !important; padding-inline: 8px;
+}}
+@media (max-width: 900px) {{
+  .st-key-workspace_header {{ overflow-x: auto; }}
+  .st-key-workspace_header > [data-testid="stVerticalBlock"] {{ min-width: 1100px; }}
+}}
 
 /* Site header */
 [data-testid="stMain"] {{ container-type: inline-size; }}
@@ -279,29 +286,36 @@ def _open_about():
     st.query_params["page"] = "about"
 
 
+def _select_workspace_page(label):
+    st.session_state["workspace_page"] = label
+
+
 def render_workspace_header(badge: str):
-    """Render native navigation controls alongside the brand, badge, and About."""
+    """Render text navigation and About in the same header row."""
     labels = ["Citywide Overview", "Address Lookup", "Owner Portfolio",
               "Retrofit & Incentives", "Emissions Planner"]
+    selected = st.session_state.get("workspace_page", labels[0])
+    if selected not in labels:
+        selected = labels[0]
     with st.container(key="workspace_header"):
-        brand_col, navigation_col, badge_col, about_col = st.columns(
-            [1.25, 5.3, 2.0, 0.65], vertical_alignment="center"
-        )
-        with brand_col:
+        columns = st.columns([1.35, 1.45, 1.2, 1.25, 1.6, 1.35, 2.0, 0.65],
+                             gap="small", vertical_alignment="center")
+        with columns[0]:
             st.markdown(
                 '<div class="site-brand-copy"><div class="site-brand-title">BERDO</div>'
                 '<div class="site-brand-subtitle">OUTREACH WORKSPACE</div></div>',
                 unsafe_allow_html=True,
             )
-        with navigation_col:
-            selected = st.radio(
-                "Workspace navigation", labels, horizontal=True,
-                label_visibility="collapsed", key="header_navigation",
-            )
-        with badge_col:
+        for index, label in enumerate(labels):
+            with columns[index + 1]:
+                st.button(label, key=f"header_page_{index}",
+                          type="primary" if selected == label else "secondary",
+                          on_click=_select_workspace_page, args=(label,))
+        with columns[6]:
             st.markdown(f'<span class="site-badge">{html.escape(badge)}</span>', unsafe_allow_html=True)
-        with about_col:
-            st.button("About", key="header_about", on_click=_open_about)
+        with columns[7]:
+            with st.container(key="header_about"):
+                st.button("About", key="header_about_button", on_click=_open_about)
     return selected
 
 
