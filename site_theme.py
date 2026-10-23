@@ -55,22 +55,30 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 }}
 
 /* Site header */
+[data-testid="stMain"] {{ container-type: inline-size; }}
 .site-topbar {{
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  padding: 30px 36px; margin-bottom: 26px; flex-wrap: wrap;
-  background: transparent; color: var(--site-accent);
+  box-sizing: border-box; width: 100%;
+  padding: 20px 0; margin-bottom: 26px; flex-wrap: wrap;
+  background: #ffffff; color: var(--site-accent);
   border-bottom: 1px solid var(--site-border);
+}}
+@supports (width: 100cqw) {{
+  .site-topbar {{
+    width: 100cqw; margin-inline: calc((100% - 100cqw) / 2);
+    padding-inline: max(2rem, calc((100cqw - 1176px) / 2));
+  }}
 }}
 .site-brand {{ display: flex; align-items: center; gap: 22px; min-width: 0; }}
 .site-topbar .site-brand-title {{
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
-  font-size: 48px; font-weight: 700; line-height: 1.05;
-  letter-spacing: -1.2px; color: var(--site-accent);
+  font-size: 32px; font-weight: 700; line-height: 1.1;
+  letter-spacing: -0.6px; color: var(--site-accent);
 }}
 .site-brand-subtitle {{
-  margin-top: 10px; font-family: 'Inter', Arial, sans-serif;
-  font-size: 16px; font-weight: 700; line-height: 1.4;
-  letter-spacing: 3px; text-transform: uppercase; color: var(--site-accent);
+  margin-top: 5px; font-family: 'Inter', Arial, sans-serif;
+  font-size: 12px; font-weight: 700; line-height: 1.4;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--site-accent);
 }}
 .site-badge {{
   display: inline-block; max-width: 100%; font-size: 0.8rem;
@@ -78,9 +86,9 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   color: inherit; background: var(--site-panel); line-height: 1.4;
 }}
 @media (max-width: 640px) {{
-  .site-topbar {{ padding: 24px 18px; gap: 20px; }}
+  .site-topbar {{ padding: 18px 24px; gap: 16px; }}
   .site-brand {{ gap: 15px; }}
-  .site-topbar .site-brand-title {{ font-size: 38px; }}
+  .site-topbar .site-brand-title {{ font-size: 28px; }}
   .site-brand-subtitle {{ font-size: 12px; letter-spacing: 2px; }}
 }}
 .site-hero h1 {{ font-size: 2rem; margin: 0 0 6px; padding: 0; line-height: 1.2; }}
