@@ -80,6 +80,17 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   font-size: 12px; font-weight: 700; line-height: 1.4;
   letter-spacing: 2px; text-transform: uppercase; color: var(--site-accent);
 }}
+.site-topbar-actions {{
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}}
+a.site-about-button, a.site-about-button:visited {{
+  display: inline-block; padding: 6px 14px; border: 1px solid var(--site-accent);
+  border-radius: 8px; color: var(--site-accent); background: #ffffff;
+  font-family: 'Inter', Arial, sans-serif; font-size: 0.85rem;
+  font-weight: 600; text-decoration: none; line-height: 1.4;
+}}
+a.site-about-button:hover {{ background: rgba(40, 139, 228, 0.08); }}
+a.site-about-button:focus-visible {{ outline: 2px solid var(--site-accent); outline-offset: 3px; }}
 .site-badge {{
   display: inline-block; max-width: 100%; font-size: 0.8rem;
   padding: 6px 12px; border: 1px solid var(--site-border); border-radius: 8px;
@@ -200,8 +211,10 @@ def apply_theme():
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-def render_topbar(badge: str, brand: str = "Outreach workspace"):
+def render_topbar(badge: str, brand: str = "Outreach workspace", on_about: bool = False):
     #Built without indentation: Markdown treats indented lines as a code block.
+    page_url = "?page=workspace" if on_about else "?page=about"
+    page_label = "Back to workspace" if on_about else "About"
     st.markdown(
         '<div class="site-topbar" role="banner">'
         '<div class="site-brand">'
@@ -209,7 +222,10 @@ def render_topbar(badge: str, brand: str = "Outreach workspace"):
         '<div class="site-brand-title">BERDO</div>'
         f'<div class="site-brand-subtitle">{html.escape(brand)}</div>'
         '</div></div>'
+        '<div class="site-topbar-actions">'
         f'<span class="site-badge">{html.escape(badge)}</span>'
+        f'<a class="site-about-button" href="{page_url}" target="_self">{page_label}</a>'
+        '</div>'
         '</div>',
         unsafe_allow_html=True,
     )

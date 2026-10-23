@@ -827,57 +827,12 @@ def render_compliance_section(
     )
     st.caption(caption)
 
-    with st.expander("About this tool"):
-        st.markdown(r"""
-        
-**What is BERDO?**
 
-The Building Emissions Reduction and Disclosure Ordinance (BERDO) requires large buildings
-in Boston to reduce greenhouse gas emissions on a mandatory schedule toward net-zero by 2050.
-Buildings over 35,000 sq ft or with 35+ residential units must meet emissions limits starting
-in 2025. Smaller covered buildings (20,000–35,000 sq ft or 15–34 residential units) begin
-compliance in 2030.
-
-**How are buildings evaluated?**
-
-Each building gets two independent flags rather than a single blended score, because a
-building that didn't report needs a different intervention than one that reported and
-is over its limit — outreach versus retrofit capital.
-
-**Data Status** reflects reporting completeness: whether data was submitted at all, and
-whether property type, floor area, and GHG intensity are present and mappable to a BERDO
-category. Buildings marked "not submitted" face daily reporting fines and are the most
-urgent outreach targets.
-
-**BERDO Status** compares the building's actual GHG intensity against its own sector limit —
-not against a dataset average — so an energy-intensive hospital isn't penalized for using
-more energy than a warehouse. It shows whether the building is over the current 2025–29
-limit, will fail the 2030–34 limit at current emissions, or is compliant further out.
-Smaller covered buildings show "Not yet covered" until their 2030 compliance year.
-
-**How is the compliance gap calculated?**
-
-The tool compares each building's reported GHG intensity (kg CO₂e per square foot per year)
-against the BERDO 2.0 emissions limits for its property type. If the building exceeds the limit,
-the tool estimates the annual Alternative Compliance Payment (ACP) at \$234 per excess metric
-ton of CO₂e. Buildings that do not make ACPs and remain non-compliant face additional daily
-fines of \$1,000/day (buildings over 35,000 sq ft or 35+ units) or \$300/day (smaller covered
-buildings).
-
-**What is the grid decarbonization scenario?**
-
-The ISO New England electric grid is projected to become cleaner over time as renewable energy
-grows. This scenario holds fossil fuel use constant but scales down the electricity-attributed
-emissions using the City of Boston's official projected grid emissions factors (Appendix B of the
-BERDO Emissions Factors List). Use the grid decarbonization slider above the chart to set the share of the building's
-emissions that come from electricity. If unknown, 50% is a reasonable starting point for a
-mixed-use or office building; electricity-heavy buildings (all-electric, data centers) should
-use a higher value.
-
-Source: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021);
-BERDO Emissions Factors List (City of Boston, updated May 5, 2026).
-Not an official City of Boston compliance determination.
-""")
+def render_about_page():
+    """Render the existing About content on its own page."""
+    site_theme.render_topbar(st.session_state.get("workspace_badge", "About this tool"), on_about=True)
+    st.title("About this tool")
+    st.markdown('\n        \n**What is BERDO?**\n\nThe Building Emissions Reduction and Disclosure Ordinance (BERDO) requires large buildings\nin Boston to reduce greenhouse gas emissions on a mandatory schedule toward net-zero by 2050.\nBuildings over 35,000 sq ft or with 35+ residential units must meet emissions limits starting\nin 2025. Smaller covered buildings (20,000–35,000 sq ft or 15–34 residential units) begin\ncompliance in 2030.\n\n**How are buildings evaluated?**\n\nEach building gets two independent flags rather than a single blended score, because a\nbuilding that didn\'t report needs a different intervention than one that reported and\nis over its limit — outreach versus retrofit capital.\n\n**Data Status** reflects reporting completeness: whether data was submitted at all, and\nwhether property type, floor area, and GHG intensity are present and mappable to a BERDO\ncategory. Buildings marked "not submitted" face daily reporting fines and are the most\nurgent outreach targets.\n\n**BERDO Status** compares the building\'s actual GHG intensity against its own sector limit —\nnot against a dataset average — so an energy-intensive hospital isn\'t penalized for using\nmore energy than a warehouse. It shows whether the building is over the current 2025–29\nlimit, will fail the 2030–34 limit at current emissions, or is compliant further out.\nSmaller covered buildings show "Not yet covered" until their 2030 compliance year.\n\n**How is the compliance gap calculated?**\n\nThe tool compares each building\'s reported GHG intensity (kg CO₂e per square foot per year)\nagainst the BERDO 2.0 emissions limits for its property type. If the building exceeds the limit,\nthe tool estimates the annual Alternative Compliance Payment (ACP) at \\$234 per excess metric\nton of CO₂e. Buildings that do not make ACPs and remain non-compliant face additional daily\nfines of \\$1,000/day (buildings over 35,000 sq ft or 35+ units) or \\$300/day (smaller covered\nbuildings).\n\n**What is the grid decarbonization scenario?**\n\nThe ISO New England electric grid is projected to become cleaner over time as renewable energy\ngrows. This scenario holds fossil fuel use constant but scales down the electricity-attributed\nemissions using the City of Boston\'s official projected grid emissions factors (Appendix B of the\nBERDO Emissions Factors List). Use the grid decarbonization slider above the chart to set the share of the building\'s\nemissions that come from electricity. If unknown, 50% is a reasonable starting point for a\nmixed-use or office building; electricity-heavy buildings (all-electric, data centers) should\nuse a higher value.\n\nSource: BERDO 2.0 Phase 1 Regulations (Boston APCC, adopted October 2021);\nBERDO Emissions Factors List (City of Boston, updated May 5, 2026).\nNot an official City of Boston compliance determination.\n')
 
 #Data loading. Supports single file (berdo.csv) or multi-year files
 #(berdo_2022.csv, berdo_2023.csv, …) in the data/ folder.
@@ -4336,6 +4291,11 @@ def render_citywide_tab(year: int, label: str):
 
 #App layout
 
+site_theme.apply_theme()
+if st.query_params.get("page") == "about":
+    render_about_page()
+    st.stop()
+
 all_years = load_all_years()
 years_sorted = sorted(y for y in all_years if y != 0)
 multi_year_mode = len(years_sorted) >= 2
@@ -4343,7 +4303,6 @@ multi_year_mode = len(years_sorted) >= 2
 #Page header. Reporting year applies to every tab, so it sits beside the main
 #heading. Year-over-year and grid decarbonization only affect specific charts, so
 #those controls live next to the charts they change (see grid_controls below).
-site_theme.apply_theme()
 _topbar_slot = st.container()
 _hero, _year_col = st.columns([3, 1], vertical_alignment="bottom")
 with _hero:
@@ -4468,6 +4427,7 @@ if multi_year_mode:
 else:
     year_range_str = str(selected_year) if selected_year else "current"
     _badge = f"Reporting year {year_range_str}"
+st.session_state["workspace_badge"] = _badge
 with _topbar_slot:
     site_theme.render_topbar(_badge)
 
