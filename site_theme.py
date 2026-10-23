@@ -274,7 +274,6 @@ def render_topbar(badge: str, brand: str = "Outreach workspace", on_about: bool 
         f'<div class="site-brand-subtitle">{html.escape(brand)}</div>'
         '</div></div>'
         '<div class="site-topbar-actions">'
-        f'<span class="site-badge">{html.escape(badge)}</span>'
         f'<a class="site-about-button" href="{page_url}" target="_self">{page_label}</a>'
         '</div>'
         '</div>',
@@ -298,7 +297,7 @@ def render_workspace_header(badge: str):
     if selected not in labels:
         selected = labels[0]
     with st.container(key="workspace_header"):
-        columns = st.columns([1.8, 1.45, 1.2, 1.25, 1.6, 1.35, 2.0, 0.65],
+        columns = st.columns([1.8, 1.45, 1.2, 1.25, 1.6, 1.35, 0.65],
                              gap="small", vertical_alignment="center")
         with columns[0]:
             st.markdown(
@@ -312,8 +311,6 @@ def render_workspace_header(badge: str):
                           type="primary" if selected == label else "secondary",
                           on_click=_select_workspace_page, args=(label,))
         with columns[6]:
-            st.markdown(f'<span class="site-badge">{html.escape(badge)}</span>', unsafe_allow_html=True)
-        with columns[7]:
             with st.container(key="header_about"):
                 st.button("About", key="header_about_button", on_click=_open_about)
     return selected
