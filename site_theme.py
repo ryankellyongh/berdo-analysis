@@ -298,7 +298,7 @@ def render_workspace_header(badge: str):
     if selected not in labels:
         selected = labels[0]
     with st.container(key="workspace_header"):
-        columns = st.columns([1.35, 1.45, 1.2, 1.25, 1.6, 1.35, 2.0, 0.65],
+        columns = st.columns([1.8, 1.45, 1.2, 1.25, 1.6, 1.35, 2.0, 0.65],
                              gap="small", vertical_alignment="center")
         with columns[0]:
             st.markdown(
