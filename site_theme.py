@@ -66,7 +66,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 @supports (width: 100cqw) {{
   .site-topbar {{
     width: 100cqw; margin-inline: calc((100% - 100cqw) / 2);
-    padding-inline: max(2rem, calc((100cqw - 1176px) / 2));
+    padding-inline: calc((100cqw - 100%) / 2);
   }}
 }}
 .site-brand {{ display: flex; align-items: center; gap: 22px; min-width: 0; }}
@@ -86,7 +86,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   color: inherit; background: var(--site-panel); line-height: 1.4;
 }}
 @media (max-width: 640px) {{
-  .site-topbar {{ padding: 18px 24px; gap: 16px; }}
+  .site-topbar {{ padding-block: 18px; gap: 16px; }}
   .site-brand {{ gap: 15px; }}
   .site-topbar .site-brand-title {{ font-size: 28px; }}
   .site-brand-subtitle {{ font-size: 12px; letter-spacing: 2px; }}
