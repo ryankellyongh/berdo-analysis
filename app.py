@@ -1083,10 +1083,20 @@ def load_all_years() -> dict[int, pd.DataFrame]:
     #Streamlit Cloud runs from repo root, so data/ resolves correctly.
     #Also check relative to app.py location as fallback.
     
-    data_dir = Path("data")
-    if not data_dir.exists() or not any(data_dir.glob("berdo_*.csv")):
-        data_dir = Path(__file__).parent.parent / "data"
-    year_files = sorted(data_dir.glob("berdo_*.csv"))
+    data_dirs = [Path("data"), Path(__file__).resolve().parent / "data",
+                 Path(__file__).resolve().parent.parent / "data"]
+    data_dir = next(
+        (d for d in data_dirs if (d / "berdo.csv").is_file() or any(
+            p.is_file() and re.fullmatch(r"berdo_[0-9]{4}\.csv", p.name)
+            for p in d.glob("berdo_*.csv")
+        )),
+        data_dirs[0],
+    )
+    #Accept source datasets only; exported reports may share the berdo_ prefix.
+    year_files = sorted(
+        p for p in data_dir.glob("berdo_*.csv")
+        if p.is_file() and re.fullmatch(r"berdo_[0-9]{4}\.csv", p.name)
+    )
 
     year_map: dict[int, pd.DataFrame] = {}
     for fp in year_files:
