@@ -30,8 +30,12 @@ CITY_COLUMN_NAMES = [
     ("compliance_status",      ["Reporting Compliance Status"], "Annual reporting status"),
     ("compliance_year",        ["First Emissions Compliance Year (Projected)", "First Emissions Compliance Year"],
                                "First year emissions limits apply"),
-    ("emissions_status",       ["Emissions Compliance Status"], "City's emissions compliance result (2026 onward)"),
-    ("official_standard",      ["Applicable Emissions Compliance Standard (kgCO2e/sq ft)"], "City's applicable limit (2026 onward)"),
+    #Second names are those written by convert_berdo_2026.py, so both the City file and
+    #the converted CSV load the same way.
+    ("emissions_status",       ["Emissions Compliance Status", "official_emissions_status"],
+                               "City's emissions compliance result (2026 onward)"),
+    ("official_standard",      ["Applicable Emissions Compliance Standard (kgCO2e/sq ft)", "official_standard_2025"],
+                               "City's applicable limit (2026 onward)"),
     ("flexibility_measures",   ["Flexibility Measures"], "Flexibility measures on file (2026 onward)"),
     #Fuel usage (kBtu, except electricity in kWh)
     ("fuel_natural_gas_kbtu",        ["Natural Gas Usage (kBtu)"], ""),

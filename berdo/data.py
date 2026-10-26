@@ -496,3 +496,19 @@ def add_year_file(year_map: dict, file_name: str, file_year: int, df: pd.DataFra
         df = df.assign(duplicate_file=kept["source_file"].iat[0])
     year_map[reporting_year] = df
     return year_map
+
+
+def headline_counts(df: pd.DataFrame, statuses: pd.Series = None) -> dict:
+    """
+    Citywide headline counts on ONE population: buildings, never campus summary rows.
+    Campus summaries (totals for a whole campus) are counted separately as campus
+    assessments, so no card mixes the two. `statuses` (optional) is the evaluated BERDO
+    status per row, aligned to df; status counts use buildings only.
+    """
+    summary = df["is_campus_summary"].fillna(False).astype(bool) if "is_campus_summary" in df.columns \
+        else pd.Series(False, index=df.index)
+    out = {"buildings": int((~summary).sum()), "campus_assessments": int(summary.sum())}
+    if statuses is not None:
+        out["by_status"] = statuses[~summary].value_counts().to_dict()
+        out["campus_by_status"] = statuses[summary].value_counts().to_dict()
+    return out

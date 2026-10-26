@@ -127,7 +127,7 @@ def build_building_summary_pdf(s: dict) -> bytes:
             row = [P(esc(p["period"])), P(f"{p['limit']:.2f}"),
                    P(f"{p['gap']:+.2f}"),
                    P(esc(p["status"]), st_cellb if p["status"] == "Over limit" else st_cell),
-                   P(f"USD {p['acp']:,.0f}" if p["acp"] else "USD 0")]
+                   P("N/A" if p["acp"] is None else f"USD {p['acp']:,.0f}")]
             if has_grid:
                 row.append(P(esc(p.get("grid_status") or "")))
             data.append(row)

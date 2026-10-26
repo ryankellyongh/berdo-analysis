@@ -507,14 +507,16 @@ def calculate_compliance_gap(ghg_intensity, sqft, berdo_category, limits=None, c
     if limits is None:
         return []
 
+    #No rounding before the compliance test or the ACP: a building 0.0004 kg/sf over
+    #its limit is over it. Values are rounded only when displayed (ACP to the cent here).
     results = []
     for i, period in enumerate(COMPLIANCE_PERIODS):
         limit = limits[i]
-        gap = round(ghg_intensity - limit, 3)
+        gap = float(ghg_intensity) - limit
         compliant = gap <= 0
         covered = period_covered(coverage, i)
-        excess_tons = 0.0 if (compliant or not covered) else round(gap * sqft / 1000, 1)
-        fine = 0.0 if (compliant or not covered) else round(excess_tons * ACP_RATE, 0)
+        excess_tons = 0.0 if (compliant or not covered) else gap * sqft / 1000
+        fine = 0.0 if (compliant or not covered) else round(excess_tons * ACP_RATE, 2)
         results.append({
             "period": period,
             "limit": limit,
@@ -676,15 +678,17 @@ def official_emissions_result(row, official, ghg, sqft, limits, scoreable):
     key = official.strip().lower()
     std = pd.to_numeric(row.get("official_standard"), errors="coerce")
     notes = [f"City emissions compliance status: {official}"]
-    acp = 0.0
+    #None means "no ACP estimate", shown as N/A. 0.0 only when the City says compliant.
+    acp = None
     if key == "in compliance":
+        acp = 0.0
         label = "Meets 2025 limit (City)"
     elif key == "action needed":
         label = "Action needed (City)"
         limit = float(std) if pd.notna(std) else (limits[0] if limits else None)
         if scoreable and limit is not None and ghg > limit:
-            excess_t = round((ghg - limit) * sqft / 1000, 1)
-            acp = round(excess_t * ACP_RATE, 0)
+            excess_t = (ghg - limit) * sqft / 1000
+            acp = round(excess_t * ACP_RATE, 2)
             notes.append(f"Over the applicable standard of {limit:.2f} kg/sf/yr by {ghg - limit:.2f} "
                          f"({excess_t:,.0f} excess MT); estimated ACP shown at USD {ACP_RATE}/MT")
         else:
@@ -723,6 +727,11 @@ def official_emissions_result(row, official, ghg, sqft, limits, scoreable):
 def evaluate_building(row):
     """
     Returns (data_status, berdo_status, acp_2025, notes).
+
+    acp_2025 is the estimated annual ACP for 2025-29 in USD: 0.0 when the building is
+    covered and within its limit, a positive amount when over it, and None whenever it
+    can't be estimated (data incomplete, coverage unknown, not yet covered, not assessed,
+    or a City status without an ACP). None must be shown as N/A, never as $0.
 
     Two independent flags rather than one blended score: a building that
     didn't report needs outreach; a building over its limit needs retrofit
@@ -766,7 +775,7 @@ def evaluate_building(row):
             notes.append("Emissions data incomplete in the public dataset")
         if pd.notna(sqft) and sqft >= 100_000:
             notes.append("Over 100,000 sq ft: longer retrofit lead time")
-        return data_status, f"Not assessed ({gov.lower()})", 0.0, notes
+        return data_status, f"Not assessed ({gov.lower()})", None, notes
 
     #Flag 1: data status
     if row["compliance_status"] in ("not submitted", "not reported"):
@@ -805,7 +814,7 @@ def evaluate_building(row):
             "buildings; emissions standards still do"
         )
 
-    acp_2025 = 0.0
+    acp_2025 = None
     if not scoreable:
         berdo_status = "Unknown (data incomplete)"
     elif not cov["known"]:
@@ -821,9 +830,9 @@ def evaluate_building(row):
         )
     else:
         gaps = calculate_compliance_gap(ghg, sqft, None, limits=limits, coverage=cov)
+        acp_2025 = gaps[0]["annual_fine_usd"]          #0.0 when within the limit
         if not gaps[0]["compliant"]:
             berdo_status = "Over 2025–29 limit"
-            acp_2025 = gaps[0]["annual_fine_usd"]
             if bl.get("blended"):
                 _bg = calculate_compliance_gap(ghg, sqft, None, limits=bl["blended"])
                 if _bg and _bg[0]["compliant"]:
@@ -939,12 +948,16 @@ def _estimate_incentive_value(inc, sqft):
     Return (low, high) dollar estimate for an incentive.
     Deductions are converted to after-tax cash value via cash_value_factor;
     credits and rebates default to 1.0 (dollar-for-dollar).
+    Programs that state a per-project maximum carry it as "max_per_project", and
+    estimates never exceed it. These are potential amounts to investigate, never
+    funding: callers must not subtract them from project cost.
     """
     f = inc.get("cash_value_factor", 1.0)
-    return (
-        round(inc["amount_psf_low"]  * sqft * f, 0),
-        round(inc["amount_psf_high"] * sqft * f, 0),
-    )
+    low, high = inc["amount_psf_low"] * sqft * f, inc["amount_psf_high"] * sqft * f
+    cap = inc.get("max_per_project")
+    if cap is not None:
+        low, high = min(low, cap), min(high, cap)
+    return round(low, 0), round(high, 0)
 
 
 #Address Lookup calculations
@@ -970,13 +983,16 @@ def is_portfolio_level(city_status) -> bool:
 
 def current_period_acp(ghg_intensity, sqft, limit_2025, coverage, city_status=None):
     """
-    Estimated annual ACP for 2025-29, or None when there's no ACP to estimate: under
-    the limit, not covered yet, or assessed as part of a Building Portfolio.
+    Estimated annual ACP for 2025-29: 0.0 when covered and within the limit, a positive
+    amount when over it, and None when there's no ACP to estimate (not covered yet,
+    inputs missing, or assessed as part of a Building Portfolio).
     """
+    if ghg_intensity is None or sqft is None or limit_2025 is None or pd.isna(ghg_intensity):
+        return None
+    if not period_covered(coverage, 0) or is_portfolio_level(city_status):
+        return None
     gap = float(ghg_intensity) - limit_2025
-    if gap > 0 and period_covered(coverage, 0) and not is_portfolio_level(city_status):
-        return round(gap * float(sqft) / 1000 * ACP_RATE, 0)
-    return None
+    return round(max(gap, 0.0) * float(sqft) / 1000 * ACP_RATE, 2)
 
 
 def limits_with_city_standard(default_limits, city_standard):

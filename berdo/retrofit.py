@@ -19,6 +19,12 @@ from berdo.emissions import (
     period_covered,
 )
 
+#Conventions (see tests/test_regressions.py):
+#  baseline ACP   what the building owes at current emissions
+#  remaining ACP  what it still owes after the project
+#  avoided ACP    baseline minus remaining: the only ACP a project "saves"
+#  Potential incentives are leads to verify. Only confirmed funding reduces cost.
+
 PAYBACK_CAP_YEARS = 50          #beyond this, avoided ACP is the wrong frame for payback
 DEFAULT_ENERGY_SAVINGS_PSF = 1.0   #USD/sq ft/yr, used for the headline payback
 
@@ -85,41 +91,75 @@ def estimate_incentives(matched, sqft):
     return out, sum(i["_est_low"] for i in out), sum(i["_est_high"] for i in out)
 
 
-def net_retrofit_cost(cost_low, cost_high, incentive_low, incentive_high):
-    """Net cost range, with incentives capped at the gross cost. Returns (low, high)."""
-    return max(cost_low - incentive_high, 0), max(cost_high - incentive_low, 0)
-
-
-def headline_payback(net_low, annual_acp, sqft):
+def net_retrofit_cost(cost_low, cost_high, confirmed_funding=0.0):
     """
-    Payback for the headline sentence, using avoided ACP plus USD 1/sq ft/yr energy savings.
+    Net cost range after funding the owner has actually secured. Returns (low, high).
+    Potential incentives (estimate_incentives) are never subtracted: their eligibility
+    and amounts are unverified until a program confirms them.
+    """
+    confirmed = max(float(confirmed_funding or 0.0), 0.0)
+    return max(cost_low - confirmed, 0.0), max(cost_high - confirmed, 0.0)
+
+
+def remaining_acp(new_intensity, sqft, limit, covered=True):
+    """Annual ACP still owed after a project (0.0 if within the limit), or None if unknown."""
+    if new_intensity is None or sqft is None or limit is None or not covered:
+        return None
+    return round(max(float(new_intensity) - limit, 0.0) * float(sqft) / 1000 * ACP_RATE, 2)
+
+
+def avoided_acp(baseline_acp, remaining):
+    """Avoided ACP = baseline ACP minus remaining ACP, or None if either is unknown."""
+    if baseline_acp is None or remaining is None:
+        return None
+    return max(float(baseline_acp) - float(remaining), 0.0)
+
+
+def headline_payback(net_low, avoided, sqft):
+    """
+    Payback for the headline sentence: net cost / (avoided ACP + USD 1/sq ft/yr energy savings).
+    `avoided` is avoided ACP (baseline minus remaining), not the baseline ACP.
     Returns ("years", value), ("energy_driven", None), ("covered", None), or (None, None).
     """
-    total_return = annual_acp + DEFAULT_ENERGY_SAVINGS_PSF * sqft
-    if annual_acp > 0 and total_return > 0 and net_low > 0:
+    if avoided is None:
+        return None, None
+    total_return = avoided + DEFAULT_ENERGY_SAVINGS_PSF * sqft
+    if avoided > 0 and total_return > 0 and net_low > 0:
         years = net_low / total_return
         return ("years", round(years, 1)) if years <= PAYBACK_CAP_YEARS else ("energy_driven", None)
-    if annual_acp > 0 and net_low == 0:
+    if avoided > 0 and net_low == 0:
         return "covered", None
     return None, None
 
 
-def payback_estimates(net_low, net_high, annual_acp, energy_savings_annual, horizon_years=15) -> dict:
+def payback_estimates(net_low, net_high, avoided, energy_savings_annual, horizon_years=15) -> dict:
     """
-    Simple paybacks (years, rounded to 0.1; 0 when the net cost is zero) from avoided
-    ACP alone and from avoided ACP plus energy savings, and cumulative cash flows.
+    Simple paybacks (years, rounded to 0.1 only for display; 0 when the net cost is zero)
+    from avoided ACP alone and from avoided ACP plus energy savings, and cumulative cash flows.
+
+    `avoided` is avoided ACP = baseline ACP minus remaining ACP after the project.
+    Passing the baseline ACP instead would assume the project removes every excess ton.
+    A payback that can't be computed (no benefit) is None.
     """
-    benefit = annual_acp + energy_savings_annual
+    avoided = float(avoided or 0.0)
+    benefit = avoided + energy_savings_annual
     years = list(range(0, horizon_years + 1))
+
+    def _pb(cost, annual):
+        if cost <= 0:
+            return 0.0
+        return round(cost / annual, 1) if annual > 0 else None
+
     return {
+        "avoided_acp": avoided,
         "total_annual_benefit": benefit,
-        "low_acp_only":  round(net_low / annual_acp, 1) if net_low > 0 else 0.0,
-        "high_acp_only": round(net_high / annual_acp, 1) if net_high > 0 else 0.0,
-        "low_combined":  round(net_low / benefit, 1) if net_low > 0 else 0.0,
-        "high_combined": round(net_high / benefit, 1) if net_high > 0 else 0.0,
+        "low_acp_only":  _pb(net_low, avoided),
+        "high_acp_only": _pb(net_high, avoided),
+        "low_combined":  _pb(net_low, benefit),
+        "high_combined": _pb(net_high, benefit),
         "years": years,
-        "cash_low_acp":    [-net_low + annual_acp * y for y in years],
-        "cash_high_acp":   [-net_high + annual_acp * y for y in years],
+        "cash_low_acp":    [-net_low + avoided * y for y in years],
+        "cash_high_acp":   [-net_high + avoided * y for y in years],
         "cash_low_total":  [-net_low + benefit * y for y in years],
         "cash_high_total": [-net_high + benefit * y for y in years],
     }
@@ -132,8 +172,25 @@ def acp_schedule(current_intensity, sqft, limits, coverage, n_periods=5):
         gap = max(current_intensity - limits[i], 0) if period_covered(coverage, i) else 0
         excess_tons = gap * sqft / 1000
         rows.append({"period": period, "limit": limits[i],
-                     "annual_fine": round(excess_tons * ACP_RATE, 0),
-                     "5yr_fine": round(excess_tons * ACP_RATE * 5, 0)})
+                     "annual_fine": round(excess_tons * ACP_RATE, 2),
+                     "5yr_fine": round(excess_tons * ACP_RATE * 5, 2)})
+    return rows
+
+
+def avoided_acp_schedule(current_intensity, new_intensity, sqft, limits, coverage, n_periods=5):
+    """
+    Per period: baseline ACP at current emissions, remaining ACP after the project, and
+    avoided ACP (baseline minus remaining). Rows also carry "annual_fine"/"5yr_fine" set
+    to the AVOIDED amounts, so acp_totals() compares retrofit cost with avoided ACP.
+    """
+    base = acp_schedule(current_intensity, sqft, limits, coverage, n_periods)
+    after = acp_schedule(new_intensity, sqft, limits, coverage, n_periods)
+    rows = []
+    for b, a in zip(base, after):
+        av = max(b["annual_fine"] - a["annual_fine"], 0.0)
+        rows.append({"period": b["period"], "limit": b["limit"],
+                     "baseline_annual": b["annual_fine"], "remaining_annual": a["annual_fine"],
+                     "annual_fine": av, "5yr_fine": av * 5})
     return rows
 
 

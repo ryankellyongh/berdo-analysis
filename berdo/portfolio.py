@@ -29,8 +29,11 @@ def classify_portfolio_buildings(buildings_df: pd.DataFrame):
     """
     Split an owner's buildings into those included in the portfolio calculation and
     those excluded, with a reason for each exclusion.
-    Excluded: state/federal records, buildings not covered in 2025-29, and buildings
-    missing GHG emissions or floor area. Returns (included_df, excluded_rows).
+    Excluded: state/federal records, buildings not covered in 2025-29, buildings
+    missing GHG emissions or floor area, and buildings whose use can't be matched to a
+    BERDO standard. The included set is the ONLY membership used for emissions, floor
+    area, and the blended standard, so all three describe the same buildings.
+    Returns (included_df, excluded_rows).
     """
     excluded_rows, valid_rows = [], []
     for _, row in buildings_df.iterrows():
@@ -69,13 +72,17 @@ def classify_portfolio_buildings(buildings_df: pd.DataFrame):
             else:
                 reason = "Missing floor area"
             excluded_rows.append(_excluded(row, reason))
+        elif building_limits(row.get("Property Type"), row.get("All Property Types"))["limits"] is None:
+            excluded_rows.append(_excluded(
+                row, "Property type can't be matched to a BERDO building use, so it has no "
+                     "emissions standard; left out of emissions, floor area, and the blended standard"))
         else:
             valid_rows.append(row)
     valid = pd.DataFrame(valid_rows) if valid_rows else pd.DataFrame()
     return valid, excluded_rows
 
 
-def portfolio_summary(valid: pd.DataFrame) -> dict:
+def portfolio_summary(valid: pd.DataFrame, n_excluded: int = 0) -> dict:
     """
     Portfolio totals, blended standard, and ACP exposure.
     `blended_limits` is None when no building's use can be mapped to a BERDO standard.
@@ -85,38 +92,55 @@ def portfolio_summary(valid: pd.DataFrame) -> dict:
     chart_fines: annual ACP per period from the unrounded excess, as charted.
     total_5yr: cumulative ACP across non-compliant five-year periods through 2049.
     indefinite_annual_fine: annual ACP from 2050 onward, if over the 2050+ limit.
+    is_subtotal: True when any of the owner's buildings were excluded (n_excluded > 0),
+    so the result covers only the assessable buildings and must be labeled a subtotal.
+
+    Buildings without an emissions standard are dropped here too, so emissions, floor
+    area, and the blended standard always use the same membership. Nothing is rounded
+    before the compliance test; ACP is rounded to the cent.
     """
+    if valid is None or valid.empty:
+        return {"valid": pd.DataFrame(), "total_sqft": 0.0, "total_emissions": 0.0, "intensity": None,
+                "n_included": 0, "n_excluded": int(n_excluded), "is_subtotal": True, "blended_limits": None}
     valid = valid.copy()
     valid["Gross Floor Area"]       = pd.to_numeric(valid["Gross Floor Area"], errors="coerce")
     valid["GHG Emissions (kgCO2e)"] = pd.to_numeric(valid["GHG Emissions (kgCO2e)"], errors="coerce")
-    total_sqft      = valid["Gross Floor Area"].sum()
-    total_emissions = valid["GHG Emissions (kgCO2e)"].sum()
-    intensity       = round(total_emissions / total_sqft, 4)
+    has_std = valid.apply(lambda r: building_limits(r.get("Property Type"),
+                                                    r.get("All Property Types"))["limits"] is not None,
+                          axis=1) if not valid.empty else pd.Series(dtype=bool)
+    dropped = int((~has_std).sum()) if not valid.empty else 0
+    valid = valid[has_std] if not valid.empty else valid
+    n_excluded = int(n_excluded) + dropped
+    total_sqft      = valid["Gross Floor Area"].sum() if not valid.empty else 0.0
+    total_emissions = valid["GHG Emissions (kgCO2e)"].sum() if not valid.empty else 0.0
+    intensity       = (total_emissions / total_sqft) if total_sqft else None
     out = {"valid": valid, "total_sqft": total_sqft, "total_emissions": total_emissions,
-           "intensity": intensity, "blended_limits": calculate_blended_standard(valid)}
+           "intensity": intensity, "n_included": len(valid), "n_excluded": n_excluded,
+           "is_subtotal": n_excluded > 0,
+           "blended_limits": calculate_blended_standard(valid) if not valid.empty else None}
     limits = out["blended_limits"]
     if limits is None:
         return out
 
     periods = []
     for i, limit in enumerate(limits):
-        gap = round(intensity - limit, 4)
+        gap = intensity - limit
         compliant = gap <= 0
-        excess_tons = 0.0 if compliant else round(gap * total_sqft / 1000, 1)
+        excess_tons = 0.0 if compliant else gap * total_sqft / 1000
         periods.append({"period": COMPLIANCE_PERIODS[i], "limit": limit, "gap": gap,
                         "compliant": compliant, "excess_tons": excess_tons,
-                        "annual_fine": 0.0 if compliant else round(excess_tons * ACP_RATE, 0)})
+                        "annual_fine": 0.0 if compliant else round(excess_tons * ACP_RATE, 2)})
     non_compliant = [(i, limits[i]) for i in range(len(COMPLIANCE_PERIODS)) if intensity > limits[i]]
     finite = [(i, lim) for i, lim in non_compliant if COMPLIANCE_PERIODS[i] != "2050+"]
     indefinite_limit = next((lim for i, lim in non_compliant if COMPLIANCE_PERIODS[i] == "2050+"), None)
     out.update({
         "periods": periods,
-        "chart_fines": [round(max((intensity - lim) * total_sqft / 1000, 0) * ACP_RATE, 0) for lim in limits],
+        "chart_fines": [round(max((intensity - lim) * total_sqft / 1000, 0) * ACP_RATE, 2) for lim in limits],
         "non_compliant_periods": non_compliant,
         "finite_non_compliant": finite,
-        "total_5yr": sum(round(max(intensity - lim, 0) * total_sqft / 1000, 1) * ACP_RATE * 5
-                         for _, lim in finite),
-        "indefinite_annual_fine": (round(max(intensity - indefinite_limit, 0) * total_sqft / 1000, 1) * ACP_RATE
+        "total_5yr": round(sum(max(intensity - lim, 0) * total_sqft / 1000 * ACP_RATE * 5
+                               for _, lim in finite), 2),
+        "indefinite_annual_fine": (round(max(intensity - indefinite_limit, 0) * total_sqft / 1000 * ACP_RATE, 2)
                                    if indefinite_limit is not None else 0.0),
     })
     return out

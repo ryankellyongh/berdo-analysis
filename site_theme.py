@@ -39,10 +39,11 @@ h1, h2, h3, h4 {{ letter-spacing: -0.01em; font-weight: 600 !important; }}
 
 /* Hide Streamlit's default chrome so the page reads as a website */
 /* (the header itself stays, transparent, because it holds the sidebar open button) */
-header[data-testid="stHeader"] {{ background: transparent !important; }}
-/* Keep the Settings menu available for switching Light and Dark themes. */
-[data-testid="stDecoration"],
-[data-testid="stStatusWidget"], footer, .stDeployButton,
+header[data-testid="stHeader"] {{ background: transparent; }}
+/* Hide only the toolbar's actions (Fork, GitHub, menu, deploy), never the whole
+   toolbar: in some Streamlit versions it also holds the sidebar open button. */
+[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stDecoration"],
+[data-testid="stStatusWidget"], #MainMenu, footer, .stDeployButton,
 [data-testid="stAppDeployButton"] {{ display: none !important; }}
 [data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"] {{
   display: flex !important; visibility: visible !important;
@@ -53,100 +54,17 @@ header[data-testid="stHeader"] {{ background: transparent !important; }}
   max-width: 1240px; padding-top: 1.25rem !important; padding-bottom: 3rem !important;
 }}
 
-/* Workspace header: text buttons with one active blue underline. */
-.st-key-workspace_header {{
-  position: relative; box-sizing: border-box; width: 100%; color: inherit !important;
-  padding: 18px 0 22px; margin-bottom: 26px; background: transparent !important;
-  border-bottom: 1px solid var(--site-border);
-}}
-.st-key-workspace_header [data-testid="stHorizontalBlock"] {{
-  align-items: center; gap: 8px;
-}}
-.st-key-workspace_header .site-brand-title {{
-  font-family: 'Inter', Arial, sans-serif !important;
-  font-size: 28px; font-weight: 700; line-height: 1.1;
-  color: var(--site-accent); white-space: nowrap;
-}}
-.st-key-workspace_header .site-brand-subtitle {{
-  font-size: 9px; letter-spacing: 1.3px; white-space: nowrap;
-}}
-.st-key-workspace_header .site-badge {{
-  box-sizing: border-box; color: var(--site-accent);
-  white-space: nowrap; font-size: 0.65rem; padding: 6px 8px;
-}}
-.st-key-workspace_header .stButton > button {{
-  box-sizing: border-box; width: 100%; min-height: 40px;
-  border: 0 !important; border-bottom: 3px solid transparent !important;
-  border-radius: 0; padding: 8px 2px; background: transparent !important;
-  color: inherit !important; box-shadow: none !important;
-}}
-.st-key-workspace_header .stButton > button p {{
-  font-size: 0.72rem !important; font-weight: 500; white-space: nowrap;
-}}
-.st-key-workspace_header .stButton > button[kind="primary"] {{
-  border-bottom-color: var(--site-accent) !important; color: var(--site-accent) !important;
-}}
-.st-key-workspace_header .stButton > button[kind="primary"] p {{ font-weight: 600; }}
-.st-key-workspace_header .stButton > button:hover {{ color: var(--site-accent) !important; }}
-.st-key-workspace_header .stButton > button:focus-visible {{
-  outline: 2px solid var(--site-accent); outline-offset: 2px;
-}}
-.st-key-header_about .stButton > button {{
-  border: 1px solid var(--site-accent) !important; border-radius: 8px;
-  color: var(--site-accent) !important; padding-inline: 8px;
-}}
-@media (max-width: 900px) {{
-  .st-key-workspace_header {{ overflow-x: auto; }}
-  .st-key-workspace_header > [data-testid="stVerticalBlock"] {{ min-width: 1100px; }}
-}}
-
 /* Site header */
-[data-testid="stMain"] {{ container-type: inline-size; }}
 .site-topbar {{
-  display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  box-sizing: border-box; width: 100%;
-  padding: 20px 0; margin-bottom: 26px; flex-wrap: wrap;
-  background: transparent !important; color: var(--site-accent);
-  border-bottom: 1px solid var(--site-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 0 16px; border-bottom: 1px solid var(--site-border); margin-bottom: 26px;
+  flex-wrap: wrap;
 }}
-@supports (width: 100cqw) {{
-  .site-topbar {{
-    width: 100cqw; margin-inline: calc((100% - 100cqw) / 2);
-    padding-inline: calc((100cqw - 100%) / 2);
-  }}
-}}
-.site-brand {{ display: flex; align-items: center; gap: 22px; min-width: 0; }}
-.site-topbar .site-brand-title {{
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
-  font-size: 32px; font-weight: 700; line-height: 1.1;
-  letter-spacing: -0.6px; color: var(--site-accent);
-}}
-.site-brand-subtitle {{
-  margin-top: 5px; font-family: 'Inter', Arial, sans-serif;
-  font-size: 12px; font-weight: 700; line-height: 1.4;
-  letter-spacing: 2px; text-transform: uppercase; color: var(--site-accent);
-}}
-.site-topbar-actions {{
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-}}
-a.site-about-button, a.site-about-button:visited {{
-  display: inline-block; padding: 6px 14px; border: 1px solid var(--site-accent);
-  border-radius: 8px; color: var(--site-accent); background: transparent !important;
-  font-family: 'Inter', Arial, sans-serif; font-size: 0.85rem;
-  font-weight: 600; text-decoration: none; line-height: 1.4;
-}}
-a.site-about-button:hover {{ background: rgba(40, 139, 228, 0.08); }}
-a.site-about-button:focus-visible {{ outline: 2px solid var(--site-accent); outline-offset: 3px; }}
+.site-brand {{ font-weight: 600; font-size: 1.02rem; }}
+.site-brand .accent {{ color: var(--site-accent); font-weight: 700; }}
 .site-badge {{
-  display: inline-block; max-width: 100%; font-size: 0.8rem;
-  padding: 6px 12px; border: 1px solid var(--site-border); border-radius: 8px;
-  color: inherit; background: var(--site-panel); line-height: 1.4;
-}}
-@media (max-width: 640px) {{
-  .site-topbar {{ padding-block: 18px; gap: 16px; }}
-  .site-brand {{ gap: 15px; }}
-  .site-topbar .site-brand-title {{ font-size: 28px; }}
-  .site-brand-subtitle {{ font-size: 12px; letter-spacing: 2px; }}
+  display: inline-block; font-size: 0.8rem; padding: 4px 10px; border-radius: 8px;
+  background: rgba(127, 127, 127, 0.16); line-height: 1.4;
 }}
 .site-hero h1 {{ font-size: 2rem; margin: 0 0 6px; padding: 0; line-height: 1.2; }}
 .site-hero p {{ margin: 0 0 18px; opacity: 0.75; font-size: 1rem; }}
@@ -170,36 +88,12 @@ a.site-about-button:focus-visible {{ outline: 2px solid var(--site-accent); outl
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] p,
 [data-baseweb="tab"][aria-selected="true"] p {{ opacity: 1; font-weight: 600; }}
 [data-testid="stTabs"] [role="tab"]:hover p, [data-baseweb="tab"]:hover p {{ opacity: 1; }}
-/* Use City blue for both native tab indicators and selected-tab borders. */
-[data-testid="stTabs"] {{
-  --primary-color: var(--site-accent);
-  --st-primary-color: var(--site-accent);
-}}
-[data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
-  border-bottom: 3px solid var(--site-accent) !important;
-  box-shadow: none !important;
-}}
-[data-testid="stTabs"] [role="tab"][aria-selected="true"]::after {{
-  background-color: var(--site-accent) !important;
-  border-color: var(--site-accent) !important;
-}}
-[data-testid="stTabs"] [data-baseweb="tab-highlight"],
-[data-testid="stTabs"] [data-testid="stTabHighlight"],
-[data-testid="stTabs"] [data-testid="stTabsHighlight"] {{
-  background-color: var(--site-accent) !important;
-  border-color: var(--site-accent) !important;
-}}
-/* React Aria tabs render an additional selection indicator inside the tab. */
-[data-testid="stTabs"] .react-aria-SelectionIndicator {{
-  display: none !important;
-}}
 /* Streamlit's own moving underline and divider: hidden in favour of the border above */
 [data-baseweb="tab-highlight"], [data-baseweb="tab-border"] {{ display: none !important; }}
 [data-testid="stTabs"] [role="tabpanel"], [data-baseweb="tab-panel"] {{ padding-top: 22px; }}
 
 /* Panels: metrics, bordered containers, expanders, alerts, tables, charts */
 [data-testid="stMetric"] {{
-  box-sizing: border-box; min-height: 10rem;
   border: 1px solid var(--site-border); border-radius: var(--site-radius);
   background: var(--site-panel); padding: 16px 18px;
 }}
@@ -226,7 +120,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 }}
 [data-testid="stWidgetLabel"] p {{ font-size: 0.88rem; opacity: 0.85; }}
 
-/* Buttons: outlined by default, City blue for primary and form submit */
+/* Buttons: outlined by default, solid red for primary and form submit */
 .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] > button {{
   border-radius: 10px; border: 1px solid var(--site-border); padding: 0.5rem 1rem; font-weight: 500;
 }}
@@ -262,58 +156,15 @@ def apply_theme():
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-def render_topbar(badge: str, brand: str = "Priority screening tool", on_about: bool = False):
+def render_topbar(badge: str, brand: str = "Outreach workspace"):
     #Built without indentation: Markdown treats indented lines as a code block.
-    page_url = "?page=workspace" if on_about else "?page=about"
-    page_label = "Back to workspace" if on_about else "About"
     st.markdown(
         '<div class="site-topbar" role="banner">'
-        '<div class="site-brand">'
-        '<div class="site-brand-copy">'
-        '<div class="site-brand-title">BERDO</div>'
-        f'<div class="site-brand-subtitle">{html.escape(brand)}</div>'
-        '</div></div>'
-        '<div class="site-topbar-actions">'
-        f'<a class="site-about-button" href="{page_url}" target="_self">{page_label}</a>'
-        '</div>'
+        f'<div class="site-brand"><span class="accent">BERDO</span> / {html.escape(brand)}</div>'
+        f'<span class="site-badge">{html.escape(badge)}</span>'
         '</div>',
         unsafe_allow_html=True,
     )
-
-
-def _open_about():
-    st.query_params["page"] = "about"
-
-
-def _select_workspace_page(label):
-    st.session_state["workspace_page"] = label
-
-
-def render_workspace_header(badge: str):
-    """Render text navigation and About in the same header row."""
-    labels = ["Citywide Overview", "Address Lookup", "Owner Portfolio",
-              "Retrofit & Incentives", "Emissions Planner"]
-    selected = st.session_state.get("workspace_page", labels[0])
-    if selected not in labels:
-        selected = labels[0]
-    with st.container(key="workspace_header"):
-        columns = st.columns([1.8, 1.45, 1.2, 1.25, 1.6, 1.35, 0.65],
-                             gap="small", vertical_alignment="center")
-        with columns[0]:
-            st.markdown(
-                '<div class="site-brand-copy"><div class="site-brand-title">BERDO</div>'
-                '<div class="site-brand-subtitle">PRIORITY SCREENING TOOL</div></div>',
-                unsafe_allow_html=True,
-            )
-        for index, label in enumerate(labels):
-            with columns[index + 1]:
-                st.button(label, key=f"header_page_{index}",
-                          type="primary" if selected == label else "secondary",
-                          on_click=_select_workspace_page, args=(label,))
-        with columns[6]:
-            with st.container(key="header_about"):
-                st.button("About", key="header_about_button", on_click=_open_about)
-    return selected
 
 
 def render_hero(heading: str = "Building support, with a clear next step.",
