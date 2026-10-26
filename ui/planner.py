@@ -80,7 +80,9 @@ def _planner_inputs(prefill):
             "Change the building type above to use a single-category limit instead."
         )
 
-    if not berdo_category or ghg_intensity <= 0 or sqft <= 0:
+    #Zero is a valid intensity (e.g. all-electric with renewables) for a looked-up
+    #building; with nothing pre-filled, 0 means "not entered yet".
+    if not berdo_category or sqft <= 0 or ghg_intensity < 0 or (ghg_intensity == 0 and not prefill_addr_key):
         st.info(
             "Enter your building type and current GHG intensity above to see the compliance projection. "
             "Look up your building in the Address Lookup tab to pre-fill automatically."

@@ -16,6 +16,7 @@ import site_theme
 from berdo.data import MissingColumnsError, lookup_owner_portfolio, prepare_dataframe
 from berdo.emissions import effective_grid_ef
 from berdo.predictions import load_predictions
+from ui.about import render_about
 from ui.address_lookup import render_address_lookup_tab
 from ui.citywide import render_citywide_tab
 from ui.outlook import render_outlook_tab
@@ -63,37 +64,72 @@ if not all_years:
 years_sorted = sorted(all_years)
 multi_year_mode = len(years_sorted) >= 2
 
-#Header: reporting year applies to every tab, so it sits beside the heading
-site_theme.apply_theme()
-_topbar = st.container()
-_hero, _year_col = st.columns([3, 1], vertical_alignment="bottom")
-with _hero:
-    site_theme.render_hero()
-with _year_col:
-    selected_year = st.selectbox(
-        "Reporting year", years_sorted, index=len(years_sorted) - 1, key="settings_year",
-        help="Applies to every tab. Each reporting year holds the previous calendar year's data.")
-emissions_year = selected_year - 1
+#Shared settings. Several tabs show the same control (reporting year, grid scenario);
+#each copy has its own widget key and they are kept in sync through one shared value,
+#so changing a control on any tab changes it everywhere.
+TAB_IDS = ["citywide", "lookup", "portfolio", "retrofit", "planner"]
+SHARED = {"selected_year": years_sorted[-1], "grid_on": False, "grid_reported_mix": True, "grid_share": 50}
+for _k, _v in SHARED.items():
+    st.session_state.setdefault(_k, _v)
+if st.session_state["selected_year"] not in all_years:
+    st.session_state["selected_year"] = years_sorted[-1]
 
-#Projection settings shared by Address Lookup, Owner Portfolio, and Emissions Planner
-with st.expander("Projection settings: grid decarbonization", expanded=False):
-    c1, c2, c3 = st.columns([1.2, 1.4, 1.4], vertical_alignment="center")
+
+def _sync(shared_key, src):
+    st.session_state[shared_key] = st.session_state[f"{shared_key}_{src}"]
+    for t in TAB_IDS:
+        if t != src:
+            st.session_state[f"{shared_key}_{t}"] = st.session_state[shared_key]
+
+
+def _bind(shared_key, tab_id):
+    """Widget key for one tab's copy of a shared control, seeded from the shared value."""
+    k = f"{shared_key}_{tab_id}"
+    if k not in st.session_state:
+        st.session_state[k] = st.session_state[shared_key]
+    return k
+
+
+def page_heading(tab_id):
+    """Heading and reporting-year selector at the top of each tab."""
+    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     with c1:
-        show_grid_decarb = st.toggle(
-            "Grid decarbonization scenario", key="grid_on",
-            help="Projects future emissions as the ISO-NE grid cleans up (BERDO Appendix B × RPS "
-                 "Class I). Only electricity emissions change; fuels are held constant.")
+        site_theme.render_hero()
     with c2:
-        use_reported_share = st.toggle(
-            "Use each building's reported energy mix", value=True, key="grid_reported_mix",
-            help="Uses the building's reported electricity emissions. The share below is used only "
-                 "for buildings without a breakdown.")
-    with c3:
-        elec_share = st.slider("Electricity share when not reported (%)", 0, 100, 50, 5,
-                               key="grid_share", disabled=not show_grid_decarb) / 100.0
-    _b, _e = effective_grid_ef(emissions_year), effective_grid_ef(2050)
-    st.caption(f"Grid factor {_b:.0f} kg/MWh in {emissions_year} (the emissions year) → {_e:.0f} kg/MWh "
-               f"in 2050 ({round((1 - _e / _b) * 100)}% cleaner).")
+        st.selectbox("Reporting year", years_sorted, format_func=str,
+                     key=_bind("selected_year", tab_id), on_change=_sync, args=("selected_year", tab_id),
+                     help="Applies to every tab. Each reporting year holds the previous calendar year's data.")
+
+
+def projection_settings(tab_id):
+    """Grid decarbonization settings, shown on the tabs whose projections use them."""
+    ey = st.session_state["selected_year"] - 1
+    with st.expander("Projection settings: grid decarbonization", expanded=st.session_state["grid_on"]):
+        c1, c2, c3 = st.columns([1.2, 1.4, 1.4], vertical_alignment="center")
+        with c1:
+            st.toggle("Grid decarbonization scenario", key=_bind("grid_on", tab_id),
+                      on_change=_sync, args=("grid_on", tab_id),
+                      help="Projects future emissions as the ISO-NE grid cleans up (BERDO Appendix B × "
+                           "RPS Class I). Only electricity emissions change; fuels are held constant.")
+        with c2:
+            st.toggle("Use each building's reported energy mix", key=_bind("grid_reported_mix", tab_id),
+                      on_change=_sync, args=("grid_reported_mix", tab_id),
+                      help="Uses the building's reported electricity emissions. The share at right is "
+                           "used only for buildings without a breakdown.")
+        with c3:
+            st.slider("Electricity share when not reported (%)", 0, 100, step=5,
+                      key=_bind("grid_share", tab_id), on_change=_sync, args=("grid_share", tab_id),
+                      disabled=not st.session_state["grid_on"])
+        _b, _e = effective_grid_ef(ey), effective_grid_ef(2050)
+        st.caption(f"Grid factor {_b:.0f} kg/MWh in {ey} (the emissions year) → {_e:.0f} kg/MWh in 2050 "
+                   f"({round((1 - _e / _b) * 100)}% cleaner). Shared by Address Lookup, Owner Portfolio, "
+                   "and Emissions Planner.")
+
+
+selected_year = st.session_state["selected_year"]
+show_grid_decarb = bool(st.session_state["grid_on"])
+use_reported_share = bool(st.session_state["grid_reported_mix"])
+elec_share = st.session_state["grid_share"] / 100.0
 
 page = SimpleNamespace(
     selected_year=selected_year,
@@ -107,19 +143,30 @@ page = SimpleNamespace(
     predictions=load_predictions(ROOT / "analysis" / "predictions_2026" / "predictions_2026_pending.csv"),
 )
 
-with _topbar:
-    site_theme.render_topbar(f"Reporting year {selected_year} · {emissions_year} energy use")
-
-tabs = st.tabs(["Citywide Overview", "Address Lookup", "Owner Portfolio",
-                "Retrofit & Incentives", "Emissions Planner", "2025 Outlook"])
+#Header row: brand at left; the page tabs are styled into the same row (site_theme)
+site_theme.apply_theme()
+with st.container(key="site_header"):
+    site_theme.render_brand()
+with st.container(key="site_nav"):
+    tabs = st.tabs(["Citywide Overview", "Address Lookup", "Owner Portfolio",
+                    "Retrofit & Incentives", "Emissions Planner", "About"])
 
 with tabs[0]:
+    page_heading("citywide")
     render_citywide_tab(page, coords_path=str(DATA_DIR / "berdo_coordinates.csv"))
+    if st.session_state.get("city_access_granted"):
+        st.markdown("---")
+        with st.expander("2025 Outlook: predicted results for buildings without a City result"):
+            render_outlook_tab(page)
 
 with tabs[1]:
+    page_heading("lookup")
+    projection_settings("lookup")
     render_address_lookup_tab(page)
 
 with tabs[2]:
+    page_heading("portfolio")
+    projection_settings("portfolio")
     owner = st.text_input("Enter property owner name", placeholder="Example: City of Boston", key="owner_input")
     if owner:
         result = lookup_owner_portfolio(page.df_full, owner)
@@ -138,15 +185,18 @@ with tabs[2]:
                 st.info("Only one building found; use Address Lookup for single-building analysis.")
 
 with tabs[3]:
+    page_heading("retrofit")
     render_retrofit_optimizer_tab(page, st.session_state.get("optimizer_prefill", {}))
 
 with tabs[4]:
+    page_heading("planner")
+    projection_settings("planner")
     render_emissions_planner_tab(st.session_state.get("planner_prefill", {}),
                                  show_grid_decarb=show_grid_decarb, elec_share=page.elec_share,
                                  use_reported_share=use_reported_share)
 
 with tabs[5]:
-    render_outlook_tab(page)
+    render_about(years_sorted)
 
 site_theme.render_footer(
     "Screening tool · Not an official City of Boston BERDO compliance determination",

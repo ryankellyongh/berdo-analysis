@@ -140,36 +140,57 @@ def _map(b: pd.DataFrame):
 
 
 def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
-    st.markdown("### Who needs support?")
-    st.caption("Reporting support and emissions planning are shown separately. There is no combined risk score.")
+    year = page.selected_year
+    st.write(f"A citywide picture of BERDO reporting and emissions compliance for every covered "
+             f"building in the {year} dataset.")
     if not city_access():
         return
     ev = evaluate_year(page.df_full)
     ev = attach_coordinates(ev, load_coordinates(coords_path))
     b = buildings_only(ev)                                  #buildings only, never campus summaries
     counts = headline_counts(ev, ev["berdo_status"])
-    emissions_year = (page.selected_year - 1) if page.selected_year else 2025
+    emissions_year = (year - 1) if year else 2025
     pre_limits = emissions_year < 2025
-    if pre_limits:
-        st.info(f"**Reporting year {page.selected_year} contains {emissions_year} emissions, before BERDO "
-                f"limits took effect.** Figures show what would be owed if {emissions_year} emissions repeated.")
 
-    reporting = b["data_status"].isin(["Not submitted", "Extension granted", "Incomplete data"])
+    if pre_limits:
+        st.info(f"**Reporting year {year} contains {emissions_year} emissions, before BERDO emissions "
+                f"limits took effect.** Limits first apply to 2025 emissions (reported in 2026). The "
+                f"figures below show which buildings would exceed the 2025–29 limit, and the ACP they "
+                f"would owe, if their {emissions_year} emissions repeated.")
+    elif "emissions_status" in ev.columns and ev["emissions_status"].notna().any():
+        st.warning("**Provisional data.** In this disclosure the City withheld energy and emissions data "
+                   "for buildings under review, with extensions, or with pending revisions. Buildings over "
+                   "their limit are routinely flagged for review, so the number of over-limit buildings "
+                   "below is likely an **undercount**.")
+
+    status = b["berdo_status"].astype(str)
     over = b["status_group"] == "Over its 2025–29 limit"
     acp = pd.to_numeric(b.loc[over, "est_acp"], errors="coerce")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Buildings", f"{counts['buildings']:,}",
-              help=f"Excludes {counts['campus_assessments']} campus summary records, counted separately.")
-    c2.metric("Need reporting support", f"{int(reporting.sum()):,}",
-              help="Not submitted, extension, or incomplete data.")
-    c3.metric("Would exceed 2025–29 limit" if pre_limits else "Over 2025–29 limit", f"{int(over.sum()):,}")
-    c4.metric(f"Projected annual ACP (if {emissions_year} repeats)" if pre_limits else "Est. annual ACP (2025–29)",
-              _money(acp.sum()) if acp.notna().any() else "N/A",
-              help=(f"Exact: ${acp.sum():,.0f}/yr across {int(acp.notna().sum())} buildings with an estimate. "
-                    f"{int(acp.isna().sum())} over-limit buildings have no estimate and are not included.")
-              if acp.notna().any() else "No building has an ACP estimate.")
-    st.caption(f"All counts are buildings. The City's data also has {counts['campus_assessments']} campus "
-               "summary records (a whole campus's totals); they are not added to building counts.")
+    not_subject = status.str.startswith("Not assessed") | status.eq("Vacant (exempt)")
+    unknown = (status.str.startswith("Unknown") | status.eq("Coverage year not reported")
+               | status.isin(["Under City review", "Pending reporting (City)"]))
+
+    r1 = st.columns(4)
+    r1[0].metric("Covered buildings", f"{counts['buildings']:,}",
+                 delta=f"+{counts['campus_assessments']} campus records" if counts["campus_assessments"] else None,
+                 delta_color="off",
+                 help="Buildings only. Campus records hold a whole campus's totals and are counted "
+                      "separately, never added to the building counts on this page.")
+    r1[1].metric("Reported, usable data", f"{int((b['data_status'] == 'Reported').sum()):,}")
+    r1[2].metric("Did not report", f"{int((b['data_status'] == 'Not submitted').sum()):,}")
+    r1[3].metric("Would exceed 2025–29 limit" if pre_limits else "Over 2025–29 limit", f"{int(over.sum()):,}")
+    r2 = st.columns(4)
+    r2[0].metric(f"Projected annual ACP (if {emissions_year} repeats)" if pre_limits else "Est. annual ACP (2025–29)",
+                 _money(acp.sum()) if acp.notna().any() else "N/A",
+                 help=(f"Exact: ${acp.sum():,.0f}/yr. Uses each building's official 2025–29 standard where the "
+                       "City publishes one, otherwise its sector default, at $234 per metric ton. Excludes "
+                       "State-owned and vacant buildings." if acp.notna().any() else
+                       "No building has an ACP estimate."))
+    r2[1].metric("Not yet covered (2030)", f"{int(status.eq('Not yet covered').sum()):,}")
+    r2[2].metric("Not subject (State / Vacant)", f"{int(not_subject.sum()):,}")
+    r2[3].metric("Compliance unknown", f"{int(unknown.sum()):,}",
+                 help="Data incomplete, coverage year missing, under City review, or pending reporting.")
+    st.caption("Not an official City of Boston determination.")
 
     st.markdown("---")
     _map(b)

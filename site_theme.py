@@ -137,6 +137,32 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 /* Sidebar */
 [data-testid="stSidebar"] {{ border-right: 1px solid var(--site-border); }}
 
+/* Brand block: large BERDO wordmark with a spaced uppercase tagline */
+.site-brand-block {{ padding: 4px 0 16px; }}
+.site-logo {{ font-size: 2.3rem; font-weight: 800; color: var(--site-accent); line-height: 1;
+             letter-spacing: -0.01em; }}
+.site-tagline {{ font-size: 0.72rem; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+                color: var(--site-accent); margin-top: 10px; }}
+.st-key-site_header {{ border-bottom: 1px solid var(--site-border); }}
+
+/* Top navigation: the page tabs sit in the brand row on wide screens.
+   On narrow screens they stack below the brand (no overlap). */
+@media (min-width: 900px) {{
+  .st-key-site_nav {{ margin-top: -96px; }}
+  .st-key-site_nav [role="tablist"] {{
+    margin-left: 300px; min-height: 80px; align-items: center;
+    justify-content: space-between; border-bottom: none !important;
+  }}
+}}
+.st-key-site_nav [role="tab"][aria-selected="true"] p {{ color: var(--site-accent) !important; }}
+/* The last tab, About, is drawn as an outlined button */
+.st-key-site_nav [role="tab"]:last-child {{
+  border: 1.5px solid var(--site-accent) !important; border-radius: 10px;
+  padding: 8px 16px !important;
+}}
+.st-key-site_nav [role="tab"]:last-child p {{ color: var(--site-accent) !important; opacity: 1; font-weight: 600; }}
+.st-key-site_nav [role="tab"]:last-child[aria-selected="true"] {{ background: rgba(40, 139, 228, 0.12) !important; }}
+
 /* Site footer */
 .site-footer {{
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
@@ -154,6 +180,17 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 
 def apply_theme():
     st.markdown(_CSS, unsafe_allow_html=True)
+
+
+def render_brand(name: str = "BERDO", tagline: str = "Priority screening tool"):
+    """Large wordmark and tagline at the top left of every page."""
+    st.markdown(
+        '<div class="site-brand-block" role="banner">'
+        f'<div class="site-logo">{html.escape(name)}</div>'
+        f'<div class="site-tagline">{html.escape(tagline)}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_topbar(badge: str, brand: str = "Outreach workspace"):
