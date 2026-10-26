@@ -5,6 +5,7 @@ This file only loads data, builds the shared `page` context, and lays out the ta
 Every calculation lives in berdo/ (tested by tests/), and every tab's interface
 lives in ui/. Nothing here computes compliance, ACP, or payback.
 """
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 import site_theme
-from berdo.data import lookup_owner_portfolio, prepare_dataframe, year_from_filename
+from berdo.data import MissingColumnsError, lookup_owner_portfolio, prepare_dataframe
 from berdo.emissions import effective_grid_ef
 from berdo.predictions import load_predictions
 from ui.address_lookup import render_address_lookup_tab
@@ -28,21 +29,36 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 
 
+#Only files named exactly berdo_<year>.csv are yearly disclosures. Exports and lookups
+#such as berdo_2026_unmapped_buildings.csv or berdo_coordinates.csv are not loaded.
+YEAR_FILE = re.compile(r"^berdo_(\d{4})\.csv$")
+
+
 @st.cache_data(show_spinner="Loading BERDO data…")
-def load_all_years(data_dir: str) -> dict:
-    """Reporting year -> prepared DataFrame, for every data/berdo_<year>.csv."""
-    years = {}
+def load_all_years(data_dir: str):
+    """
+    (reporting year -> prepared DataFrame, list of problems). A file that can't be
+    loaded is skipped and reported, so one bad file never stops the whole app.
+    """
+    years, problems = {}, []
     for fp in sorted(Path(data_dir).glob("berdo_*.csv")):
-        year = year_from_filename(fp.name)
-        if year is None:                        #e.g. berdo_coordinates.csv
+        m = YEAR_FILE.match(fp.name)
+        if not m:
             continue
-        years[year] = prepare_dataframe(pd.read_csv(fp, low_memory=False))
-    return years
+        try:
+            years[int(m.group(1))] = prepare_dataframe(pd.read_csv(fp, low_memory=False))
+        except MissingColumnsError as e:
+            problems.append(f"{fp.name}: missing required columns {', '.join(map(str, e.missing))}")
+        except Exception as e:                  # noqa: BLE001 - report, don't crash
+            problems.append(f"{fp.name}: {type(e).__name__}: {e}")
+    return years, problems
 
 
-all_years = load_all_years(str(DATA_DIR))
+all_years, load_problems = load_all_years(str(DATA_DIR))
+if load_problems:
+    st.warning("Some data files were skipped:\n\n" + "\n".join(f"- {p}" for p in load_problems))
 if not all_years:
-    st.error("No data found. Add data/berdo_<year>.csv files (see convert_berdo_2026.py).")
+    st.error("No usable data found. Add data/berdo_<year>.csv files (see convert_berdo_2026.py).")
     st.stop()
 years_sorted = sorted(all_years)
 multi_year_mode = len(years_sorted) >= 2
