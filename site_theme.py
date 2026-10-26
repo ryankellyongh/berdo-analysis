@@ -295,6 +295,12 @@ def _brand_markup(brand="Priority screening tool"):
     )
 
 
+
+def render_brand(brand: str = "Priority screening tool"):
+    """Render the standalone BERDO brand used by app.py."""
+    st.markdown(_brand_markup(brand), unsafe_allow_html=True)
+
+
 def _open_about():
     st.query_params["page"] = "about"
 
