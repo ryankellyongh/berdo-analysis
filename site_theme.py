@@ -88,8 +88,22 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] p,
 [data-baseweb="tab"][aria-selected="true"] p {{ opacity: 1; font-weight: 600; }}
 [data-testid="stTabs"] [role="tab"]:hover p, [data-baseweb="tab"]:hover p {{ opacity: 1; }}
-/* Streamlit's own moving underline and divider: hidden in favour of the border above */
+/* Streamlit's own selected-tab underline uses its default red (primaryColor). Hide it in
+   every form Streamlit has used, so the single blue border above is the only line:
+   - BaseWeb highlight and divider elements (older versions)
+   - an empty bar element inside the tab list (newer versions)
+   - shadows or pseudo-element lines on the tab itself */
 [data-baseweb="tab-highlight"], [data-baseweb="tab-border"] {{ display: none !important; }}
+[data-testid="stTabs"] [role="tablist"] > div:not([role="tab"]):empty {{ display: none !important; }}
+[data-testid="stTabs"] [role="tab"], [data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
+  box-shadow: none !important; background-image: none !important;
+}}
+[data-testid="stTabs"] [role="tab"]::after, [data-testid="stTabs"] [role="tab"]::before {{
+  display: none !important;
+}}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
+  border-bottom: 3px solid var(--site-accent) !important;
+}}
 [data-testid="stTabs"] [role="tabpanel"], [data-baseweb="tab-panel"] {{ padding-top: 22px; }}
 
 /* Panels: metrics, bordered containers, expanders, alerts, tables, charts */
