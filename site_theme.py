@@ -199,6 +199,7 @@ a.site-about-button:focus-visible {{ outline: 2px solid var(--site-accent); outl
 
 /* Panels: metrics, bordered containers, expanders, alerts, tables, charts */
 [data-testid="stMetric"] {{
+  box-sizing: border-box; min-height: 10rem;
   border: 1px solid var(--site-border); border-radius: var(--site-radius);
   background: var(--site-panel); padding: 16px 18px;
 }}
