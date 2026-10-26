@@ -12,22 +12,31 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from berdo.data import buildings_only, headline_counts
-from berdo.emissions import evaluate_building, map_property_type
+from berdo.emissions import building_limits, calculate_compliance_gap, evaluate_building, map_property_type
 from ui.outlook import city_access
 
 #Status groups for colour. Reporting gaps and emissions gaps stay separate; no risk score.
+#Status groups and colours. A warm-to-cool ramp carries the meaning (red over the
+#limit -> orange -> amber -> green compliant), and other groups use distinct, softer
+#hues. Reporting gaps and emissions gaps stay separate; there is no risk score.
 STATUS_GROUPS = [
-    ("Over its 2025–29 limit", "#D62728", {"Over 2025–29 limit", "Action needed (City)"}),
-    ("Fails 2030–34",          "#FF7F0E", {"Fails 2030–34"}),
-    ("Compliant through 2034", "#E3B505", {"Compliant through 2034"}),
-    ("Compliant through 2039+", "#2CA02C", {"Compliant through 2039+", "Meets 2025 limit (City)"}),
-    ("Not yet covered",        "#9467BD", {"Not yet covered"}),
-    ("Assessed with a portfolio or campus", "#17BECF",
+    ("Over its 2025–29 limit", "#E5484D", {"Over 2025–29 limit", "Action needed (City)"}),
+    ("Fails 2030–34",          "#F76B15", {"Fails 2030–34"}),
+    ("Compliant through 2034", "#FFB224", {"Compliant through 2034"}),
+    ("Compliant through 2039+", "#30A46C", {"Compliant through 2039+"}),
+    ("Not yet covered",        "#8E4EC6", {"Not yet covered"}),
+    ("Assessed with a portfolio or campus", "#0090FF",
      {"Assessed in a Building Portfolio", "Assessed at campus level", "Campus member (water only)"}),
-    ("Under City review or pending", "#8C564B", {"Under City review", "Pending reporting (City)"}),
+    ("Under City review or pending", "#D6409F", {"Under City review", "Pending reporting (City)"}),
 ]
-OTHER_GROUP, OTHER_COLOR = "Not assessed or data incomplete", "#9E9E9E"
-HIDDEN_BY_DEFAULT = {OTHER_GROUP, "Not yet covered", "Assessed with a portfolio or campus"}
+OTHER_GROUP, OTHER_COLOR = "Not assessed or data incomplete", "#8B8D98"
+OUTLINE = "rgba(28, 32, 36, 0.85)"     #soft charcoal edge around each dot
+#Basemaps (first is the default). Voyager needs plotly's newer map traces.
+BASEMAPS = {"Voyager": "carto-voyager", "Street map": "open-street-map",
+            "Light": "carto-positron", "Dark": "carto-darkmatter"}
+HIDDEN_BY_DEFAULT = {OTHER_GROUP, "Not yet covered", "Assessed with a portfolio or campus",
+                     "Under City review or pending"}
+CITY_COMPLIANT = "Meets 2025 limit (City)"
 
 
 def status_group(status: str) -> str:
@@ -56,6 +65,19 @@ def evaluate_year(df: pd.DataFrame) -> pd.DataFrame:
     out.columns = ["data_status", "berdo_status", "est_acp", "notes"]
     df = pd.concat([df.reset_index(drop=True), out.reset_index(drop=True)], axis=1)
     df["status_group"] = df["berdo_status"].map(status_group)
+    #The City's "In Compliance" covers 2025-29 only. Place those buildings on the same
+    #ramp as the rest by checking their reported emissions against later limits.
+    for i in df.index[df["berdo_status"] == CITY_COMPLIANT]:
+        r = df.loc[i]
+        lim = building_limits(r.get("property_type"), r.get("all_property_types"))["limits"]
+        ghg, sqft = r.get("ghg_intensity_kgco2e_sqft"), r.get("gross_floor_area")
+        if lim is None or pd.isna(ghg) or pd.isna(sqft) or sqft <= 0:
+            df.at[i, "status_group"] = "Compliant through 2034"     #2025-29 confirmed; later unknown
+            continue
+        g = calculate_compliance_gap(float(ghg), float(sqft), None, limits=lim)
+        df.at[i, "status_group"] = ("Fails 2030–34" if not g[1]["compliant"] else
+                                    "Compliant through 2034" if not g[2]["compliant"] else
+                                    "Compliant through 2039+")
     df["berdo_category"] = df["property_type"].map(map_property_type).fillna("Unmapped or missing")
     return df
 
@@ -93,49 +115,67 @@ def _map(b: pd.DataFrame):
     if b["lat"].notna().sum() == 0:
         st.info("No coordinates available. Add data/berdo_coordinates.csv to enable the map.")
         return
+    Scatter = getattr(go, "Scattermap", None) or go.Scattermapbox
+    newer = Scatter is getattr(go, "Scattermap", None)
+    key = "map" if newer else "mapbox"
+    basemaps = BASEMAPS if newer else {k: v for k, v in BASEMAPS.items() if k != "Voyager"}
+
     present = [n for n, _, _ in STATUS_GROUPS if n in set(b["status_group"])]
     if OTHER_GROUP in set(b["status_group"]):
         present.append(OTHER_GROUP)
-    c1, c2 = st.columns([3, 1])
+    c1, c2, c3 = st.columns([3, 1.2, 1])
     with c1:
         show = st.multiselect("Status", present, key="cw_map_status",
                               default=[g for g in present if g not in HIDDEN_BY_DEFAULT])
     with c2:
         cats = ["All categories"] + sorted(c for c in b["berdo_category"].unique() if c != "Unmapped or missing")
         cat = st.selectbox("Building category", cats, key="cw_map_cat")
+    with c3:
+        base = st.selectbox("Basemap", list(basemaps), key="cw_map_base")
     m = b[b["status_group"].isin(show) & b["lat"].notna()]
     if cat != "All categories":
         m = m[m["berdo_category"] == cat]
     if m.empty:
         st.caption("No buildings match these filters.")
         return
-    #One dot per location, coloured by the most serious status there
+
+    #One dot per location, coloured by the most serious status there and sized by
+    #the combined floor area of the buildings at that spot.
     order = {n: i for i, (n, _, _) in enumerate(STATUS_GROUPS)}
     m = m.assign(_r=m["status_group"].map(order).fillna(len(order)),
                  _k=m["lat"].round(5).astype(str) + "," + m["lon"].round(5).astype(str),
-                 _addr=m["Building Address"].fillna("Address not reported").astype(str)).sort_values("_r")
+                 _addr=m["Building Address"].fillna("Address not reported").astype(str),
+                 _sqft=pd.to_numeric(m["gross_floor_area"], errors="coerce").fillna(0)).sort_values("_r")
     pts = m.groupby("_k", sort=False).agg(
         lat=("lat", "first"), lon=("lon", "first"), group=("status_group", "first"),
-        n=("_addr", "size"), names=("_addr", lambda s: "<br>".join(list(s)[:6])))
-    Scatter = getattr(go, "Scattermap", None) or go.Scattermapbox
-    key = "map" if Scatter is getattr(go, "Scattermap", None) else "mapbox"
+        n=("_addr", "size"), sqft=("_sqft", "sum"), names=("_addr", lambda s: "<br>".join(list(s)[:6])))
+    pts["size"] = 7 + (pts["sqft"].clip(upper=1_500_000) / 1_500_000) ** 0.5 * 17
+
     fig = go.Figure()
+    #Lowest-priority groups first, so red and orange are drawn on top
     for g in reversed([n for n in present if n in show]):
         p = pts[pts["group"] == g]
         if p.empty:
             continue
-        hover = "<b>" + p["names"] + "</b><br>" + g + p["n"].map(lambda k: f"<br>{k} buildings here" if k > 1 else "")
-        fig.add_trace(Scatter(lat=p["lat"], lon=p["lon"], mode="markers", hoverinfo="skip", showlegend=False,
-                              legendgroup=g, marker=dict(size=13, color="#000000")))
+        hover = ("<b>" + p["names"] + "</b><br>" + g
+                 + p["sqft"].map(lambda v: f"<br>{v:,.0f} sq ft" if v > 0 else "")
+                 + p["n"].map(lambda k: f"<br>{k} buildings here" if k > 1 else ""))
+        fig.add_trace(Scatter(lat=p["lat"], lon=p["lon"], mode="markers", hoverinfo="skip",
+                              showlegend=False, legendgroup=g,
+                              marker=dict(size=p["size"] + 3, color=OUTLINE)))
         fig.add_trace(Scatter(lat=p["lat"], lon=p["lon"], mode="markers", name=f"{g} ({len(p):,})",
-                              legendgroup=g, marker=dict(size=9, color=_color(g)),
-                              hovertext=hover, hoverinfo="text"))
-    fig.update_layout(**{key: dict(style="open-street-map", center=dict(lat=42.32, lon=-71.08), zoom=11.2),
-                         "height": 620, "margin": dict(t=0, b=70, l=0, r=0),
-                         "legend": dict(orientation="h", yanchor="top", y=-0.01, x=0, traceorder="reversed")})
+                              legendgroup=g, marker=dict(size=p["size"], color=_color(g), opacity=0.92),
+                              hovertext=hover, hoverinfo="text",
+                              hoverlabel=dict(bgcolor="white", bordercolor=_color(g),
+                                              font=dict(color="#1C2024", size=12))))
+    fig.update_layout(**{key: dict(style=basemaps[base], center=dict(lat=42.32, lon=-71.08), zoom=11.2),
+                         "height": 640, "margin": dict(t=0, b=80, l=0, r=0),
+                         "legend": dict(orientation="h", yanchor="top", y=-0.01, x=0,
+                                        traceorder="reversed", itemsizing="constant",
+                                        font=dict(size=12))})
     st.plotly_chart(fig, use_container_width=True)
     unmapped = int((b["status_group"].isin(show) & b["lat"].isna()).sum())
-    st.caption(f"{len(m):,} buildings at {len(pts):,} locations."
+    st.caption(f"{len(m):,} buildings at {len(pts):,} locations. Dot size shows floor area."
                + (f" {unmapped:,} matching buildings have no coordinates." if unmapped else ""))
 
 
