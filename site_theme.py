@@ -72,8 +72,9 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 /* Tabs: muted labels, blue underline on the selected tab.
    Targets both the older BaseWeb tab markup and newer role-based markup, and
    overrides Streamlit's own selected-tab colour, which otherwise uses primaryColor. */
+/* No divider under the tab row: the selected tab's blue underline is the only line */
 [data-testid="stTabs"] [role="tablist"], [data-baseweb="tab-list"] {{
-  gap: 6px; border-bottom: 1px solid var(--site-border);
+  gap: 6px; border-bottom: none !important; box-shadow: none !important;
 }}
 [data-testid="stTabs"] [role="tab"], [data-baseweb="tab"] {{
   padding: 10px 12px !important; height: auto !important; background: transparent !important;
@@ -157,7 +158,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
              letter-spacing: -0.01em; }}
 .site-tagline {{ font-size: 0.72rem; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
                 color: var(--site-accent); margin-top: 10px; }}
-.st-key-site_header {{ border-bottom: 1px solid var(--site-border); }}
+.st-key-site_header {{ border-bottom: none !important; }}
 
 /* Top navigation: the page tabs sit in the brand row on wide screens.
    On narrow screens they stack below the brand (no overlap). */
