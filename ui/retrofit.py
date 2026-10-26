@@ -21,7 +21,6 @@ from berdo.emissions import (
     coverage_from_prefill,
     fmt_share,
     limits_for_category,
-    period_covered,
     rec_connector_price,
     rec_pathway,
     resolve_elec_share,
@@ -30,9 +29,6 @@ from berdo.retrofit import (
     PAYBACK_CAP_YEARS,
     acp_schedule,
     acp_totals,
-    avoided_acp,
-    avoided_acp_schedule,
-    remaining_acp,
     estimate_incentives,
     first_year_reduction_kg,
     headline_payback,
@@ -208,9 +204,7 @@ def _retrofit_cost_estimate(scopes_selected, sqft):
 
 
 def _retrofit_planned_project(sqft, prefill, berdo_category):
-    """Whether a planned energy reduction closes the 2025-29 gap.
-    Returns the building's GHG intensity after the project, or None if not entered."""
-    new_intensity_out = None
+    """Whether a planned energy reduction closes the 2025-29 gap."""
     #Planned project, emissions reduction calculator
     st.markdown("---")
     st.subheader("Planned project: will it close the compliance gap?")
@@ -265,7 +259,6 @@ def _retrofit_planned_project(sqft, prefill, berdo_category):
             limit_2025 = limits_for_category(berdo_category, prefill)[0]
             impact = planned_project_impact(proj_emission_reduction_kg, sqft, prefill_ghg_proj, limit_2025)
             new_intensity = impact["new_intensity"]
-            new_intensity_out = new_intensity
             gap_before, gap_after = impact["gap_before"], impact["gap_after"]
 
             with res_cols[2]:
@@ -311,21 +304,9 @@ def _retrofit_planned_project(sqft, prefill, berdo_category):
         st.caption(
             "Enter a planned annual energy reduction above to see its compliance impact."
         )
-    return new_intensity_out
 
 
-def _retrofit_avoided(prefill, berdo_category, sqft, new_intensity):
-    """Baseline, remaining, and avoided ACP (2025-29, per year). Unknown values are None."""
-    baseline = prefill.get("annual_fine_usd")
-    if not berdo_category or berdo_category not in BERDO_STANDARDS:
-        return baseline, None, None
-    limit_2025 = limits_for_category(berdo_category, prefill)[0]
-    covered = period_covered(coverage_from_prefill(prefill), 0)
-    remaining = remaining_acp(new_intensity, sqft, limit_2025, covered)
-    return baseline, remaining, avoided_acp(baseline, remaining)
-
-
-def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill, avoided=None):
+def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill):
     """Matched incentives: headline, summary, ranking, stacking order, and checklist."""
     #Match incentives
     matched = [
@@ -350,37 +331,31 @@ def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft,
     #National baselines, understating cost whenever the Boston multiplier applied.)
     #total_cost_low / total_cost_high already set above.
 
-    #Net cost: only funding the owner has confirmed reduces cost. Potential incentives
-    #are shown separately as leads to verify and are never subtracted.
+    #Net cost (incentives capped at gross cost)
+    net_low, net_high = net_retrofit_cost(total_cost_low, total_cost_high,
+                                          total_incentive_low, total_incentive_high)
+
+    #Headline summary card
     st.markdown("---")
-    confirmed_funding = st.number_input(
-        "Confirmed funding secured (USD)",
-        min_value=0.0, value=0.0, step=5_000.0, key="opt_confirmed_funding",
-        help="Grants, rebates, or other funding the owner has in writing. Only this amount "
-             "reduces the net cost. Potential incentives below are not deducted.",
-    )
-    net_low, net_high = net_retrofit_cost(total_cost_low, total_cost_high, confirmed_funding)
 
     #Build the headline sentence
     incentive_str   = _fmt_dollars(total_incentive_high).replace("$", "USD ")
-    net_low_display = ("fully covered by confirmed funding" if net_low == 0
-                       else _fmt_dollars(net_low).replace("$", "USD "))
-    _kind, _years = headline_payback(net_low, avoided, sqft)
+    net_low_display = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
+    prefill_fine_val = prefill.get("annual_fine_usd", 0) or 0
+    _kind, _years = headline_payback(net_low, prefill_fine_val, sqft)
     if _kind == "years":
-        payback_str = (f" Estimated payback: {_years} years from avoided ACP plus "
-                       "USD 1/sq ft/yr in energy savings.")
+        payback_str = f", with an estimated {_years}-year payback including energy savings"
     elif _kind == "energy_driven":
-        payback_str = " Energy savings are the primary return driver for a building this size."
+        payback_str = ". Energy savings are the primary return driver for a building this size"
     elif _kind == "covered":
-        payback_str = ""
+        payback_str = ", with the retrofit fully covered by incentives"
     else:
-        payback_str = (" Enter the project's energy saved under Planned project to estimate "
-                       "avoided ACP and payback.")
+        payback_str = ""
 
     headline = (
-        f"Net retrofit cost after confirmed funding: {net_low_display}. "
-        f"Potential incentives to investigate: up to {incentive_str} "
-        f"(eligibility unverified, not deducted).{payback_str}"
+        f"For this building, you may be eligible for up to {incentive_str} "
+        f"in incentives, reducing your estimated net retrofit cost to {net_low_display}"
+        f"{payback_str}."
     )
 
     st.info(headline)
@@ -477,7 +452,7 @@ def _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft,
     return matched, net_high, net_low
 
 
-def _retrofit_payback(prefill_fine, avoided, remaining, sqft, net_low, net_high):
+def _retrofit_payback(prefill_fine, sqft, net_low, net_high):
     """Payback from avoided ACP and energy savings, with the cash flow chart."""
     #Cash flow & payback
     st.markdown("---")
@@ -535,24 +510,8 @@ def _retrofit_payback(prefill_fine, avoided, remaining, sqft, net_low, net_high)
                 "Use 0 to see a conservative avoided-ACP-only view."
             )
 
-        #Payback counts AVOIDED ACP (baseline minus remaining after the project),
-        #never the whole baseline ACP.
-        if avoided is None:
-            st.info(
-                "Avoided ACP isn't estimated yet. Enter the project's annual energy saved under "
-                "**Planned project** above. Until then, payback below counts energy savings only."
-            )
-        else:
-            st.caption(
-                f"Avoided ACP: {_fmt_dollars(annual_fine)}/yr baseline minus "
-                f"{_fmt_dollars(remaining)}/yr remaining after the project = "
-                f"**{_fmt_dollars(avoided)}/yr**."
-            )
-        pb = payback_estimates(net_low, net_high, avoided or 0.0, energy_savings_annual)
-        #A payback that never arrives (no annual benefit) is shown as not paying back.
-        for _k in ("low_acp_only", "high_acp_only", "low_combined", "high_combined"):
-            if pb[_k] is None:
-                pb[_k] = float("inf")
+        #Combined annual benefit
+        pb = payback_estimates(net_low, net_high, annual_fine, energy_savings_annual)
         total_annual_benefit = pb["total_annual_benefit"]
 
         #Payback metrics: cap at 50 years; beyond that avoided ACP is the wrong frame
@@ -679,7 +638,7 @@ def _retrofit_payback(prefill_fine, avoided, remaining, sqft, net_low, net_high)
         best_payback = payback_low_combined if energy_savings_psf > 0 else payback_low_fine_only
         if best_payback == 0:
             st.success(
-                "At the low net cost estimate, the retrofit is fully covered by confirmed funding, "
+                "At the low net cost estimate, the retrofit is fully covered by incentives, "
                 "so any energy savings and avoided ACP are pure return from day one."
             )
         elif best_payback <= 7:
@@ -714,8 +673,7 @@ def _retrofit_payback(prefill_fine, avoided, remaining, sqft, net_low, net_high)
     return annual_fine
 
 
-def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_low, net_high,
-                          new_intensity=None):
+def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_low, net_high):
     """Retrofit vs. RECs vs. ACP, with a recommendation and the ACP table."""
     #Retrofit vs. compliance decision
     st.subheader("Three paths: retrofit, RECs, or pay the ACP")
@@ -737,21 +695,9 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
         #ACP across each compliance period, if emissions stay flat
         limits = limits_for_category(berdo_category, prefill)
         prefill_ghg_val = prefill.get("ghg_intensity")
-        _cov = coverage_from_prefill(prefill)
-        period_fines = (acp_schedule(prefill_ghg_val, sqft, limits, _cov) if prefill_ghg_val else [])
-        #Compare the retrofit with the ACP it AVOIDS (baseline minus remaining after the
-        #project), period by period. Without a planned project, no comparison is made.
-        avoided_rows = (avoided_acp_schedule(prefill_ghg_val, new_intensity, sqft, limits, _cov)
-                        if (prefill_ghg_val and new_intensity is not None) else None)
-        if avoided_rows is None:
-            st.info(
-                "Enter the project's annual energy saved under **Planned project** above to compare "
-                "the retrofit's cost with the ACP it would avoid. The table below shows ACP at "
-                "current emissions."
-            )
-            _totals = acp_totals(annual_fine, period_fines, net_low)
-        else:
-            _totals = acp_totals(avoided_rows[0]["annual_fine"], avoided_rows, net_low)
+        period_fines = (acp_schedule(prefill_ghg_val, sqft, limits, coverage_from_prefill(prefill))
+                        if prefill_ghg_val else [])
+        _totals = acp_totals(annual_fine, period_fines, net_low)
         fine_5yr = _totals["fine_5yr"]
 
         #Decision matrix
@@ -764,26 +710,21 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
         cumulative_fine_all = _totals["cumulative_all"]
         cum_fine_10yr = _totals["cumulative_10yr"]
 
-        _lbl = "Avoided ACP" if avoided_rows is not None else "ACP at current emissions"
         d1, d2, d3 = st.columns(3)
         d1.metric(
-            f"{_lbl}: current period (5 yrs)",
+            "ACP: current period (5 yrs)",
             _fmt_dollars(fine_5yr),
-            delta="Baseline minus remaining after the project" if avoided_rows is not None
-                  else "No project entered yet",
-            delta_color="off",
+            delta="Grows each period as limits tighten",
         )
         d2.metric(
-            f"{_lbl}: cumulative through 2049",
+            "ACP: cumulative through 2050",
             _fmt_dollars(cumulative_fine_all),
-            delta="Five-year periods; 2050+ has no end date",
-            delta_color="off",
+            delta="If no retrofit is ever made",
         )
         d3.metric(
             "Retrofit: net cost (low estimate)",
-            "Fully covered by confirmed funding" if net_low == 0 else _fmt_dollars(net_low),
-            delta="After confirmed funding only",
-            delta_color="off",
+            "Fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low),
+            delta="One-time outlay, ACP avoided permanently",
         )
 
                 #REC pathway: the third option
@@ -869,15 +810,12 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
         #Recommendation
         st.markdown("Recommendation")
 
-        #Key insight: ACP rises, so compare retrofit against cumulative AVOIDED ACP,
+        #Key insight: ACP rises, so compare retrofit against cumulative ACP
         #not just one period. Also compute crossover period.
         crossover_period = _totals["crossover_period"]
-        _rec_choice = (retrofit_recommendation(net_low, fine_5yr, cum_fine_10yr, cumulative_fine_all)
-                       if avoided_rows is not None else None)
-        if _rec_choice is None:
-            st.caption("A recommendation needs the planned project's avoided ACP (see above).")
+        _rec_choice = retrofit_recommendation(net_low, fine_5yr, cum_fine_10yr, cumulative_fine_all)
 
-        net_low_str      = "fully covered by confirmed funding" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
+        net_low_str      = "fully covered by incentives" if net_low == 0 else _fmt_dollars(net_low).replace("$", "USD ")
         fine_5yr_str     = _fmt_dollars(fine_5yr).replace("$", "USD ")
         cum_str          = _fmt_dollars(cumulative_fine_all).replace("$", "USD ")
         cum_10yr_str     = _fmt_dollars(cum_fine_10yr).replace("$", "USD ")
@@ -889,7 +827,7 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
                 f"({net_low_str}) is less than or equal to one period of ACP "
                 f"({fine_5yr_str} for 2025–29 alone). "
                 "And ACP only grows from here. Each period the limit tightens and the "
-                "gap widens. These figures count only the ACP the project avoids, not all ACP."
+                "gap widens. Retrofitting eliminates all future ACP exposure permanently."
             )
         elif _rec_choice == "retrofit_soon":
             #Retrofit pays back within 2 periods (10 years) of escalating fines
@@ -912,8 +850,8 @@ def _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_
                 "A phased approach (lower-cost measures now, deeper retrofit before the next "
                 "period tightens) may be the most cost-effective path."
             )
-        elif _rec_choice == "acp_alone_insufficient":
-            #Even cumulative avoided ACP is less than net retrofit cost
+        else:
+            #Even cumulative ACP is less than net retrofit cost
             net_high_str = _fmt_dollars(net_high).replace("$", "USD ")
             low_sav_str  = _fmt_dollars(round(sqft * 1.0)).replace("$", "USD ")
             high_sav_str = _fmt_dollars(round(sqft * 2.0)).replace("$", "USD ")
@@ -1053,11 +991,10 @@ def render_retrofit_optimizer_tab(page, prefill: dict = None):
     try:
         berdo_category, fuel, ownership, prefill_fine, scopes_selected, sqft = _retrofit_inputs(prefill)
         total_cost_high, total_cost_low = _retrofit_cost_estimate(scopes_selected, sqft)
-        new_intensity = _retrofit_planned_project(sqft, prefill, berdo_category)
-        _baseline, _remaining, _avoided = _retrofit_avoided(prefill, berdo_category, sqft, new_intensity)
-        matched, net_high, net_low = _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill, _avoided)
-        annual_fine = _retrofit_payback(prefill_fine, _avoided, _remaining, sqft, net_low, net_high)
-        _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_low, net_high, new_intensity)
+        _retrofit_planned_project(sqft, prefill, berdo_category)
+        matched, net_high, net_low = _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill)
+        annual_fine = _retrofit_payback(prefill_fine, sqft, net_low, net_high)
+        _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_low, net_high)
         _retrofit_phasing_and_notes(matched)
     except _EndTab:
         return

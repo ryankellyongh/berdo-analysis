@@ -56,11 +56,11 @@ def _portfolio_classify(buildings_df):
     return excluded_rows, skipped, total_buildings, usable_buildings, valid
 
 
-def _portfolio_totals(valid, n_excluded=0, n_total=None):
+def _portfolio_totals(valid):
     """Portfolio intensity, blended standard, and the plain-English summary."""
-    #Portfolio-level aggregates. Emissions, floor area, and the blended standard all use
-    #the same included buildings; with any exclusions the result is a subtotal.
-    summary = portfolio_summary(valid, n_excluded=n_excluded)
+    #Portfolio-level aggregates
+    
+    summary = portfolio_summary(valid)
     valid               = summary["valid"]
     total_sqft          = summary["total_sqft"]
     total_emissions     = summary["total_emissions"]
@@ -82,16 +82,6 @@ def _portfolio_totals(valid, n_excluded=0, n_total=None):
     total_5yr              = summary["total_5yr"]
     indefinite_annual_fine = summary["indefinite_annual_fine"]
 
-    if summary["is_subtotal"]:
-        _n_all = n_total if n_total is not None else summary["n_included"] + summary["n_excluded"]
-        st.warning(
-            f"**Assessable subtotal, not a full portfolio estimate.** These results cover "
-            f"{summary['n_included']} of this owner's {_n_all} buildings. The other "
-            f"{summary['n_excluded']} are excluded (see the list below), so the full portfolio "
-            "ACP is N/A until their data is complete."
-        )
-    _subject = (f"The {summary['n_included']} assessable buildings are"
-                if summary["is_subtotal"] else "This portfolio is")
         #Plain-English summary
     if current_compliant:
         #Off-by-one guard: non_compliant_periods[0] is the first period the
@@ -108,13 +98,13 @@ def _portfolio_totals(valid, n_excluded=0, n_total=None):
                     f"then exceeds the {COMPLIANCE_PERIODS[first_fail_idx]} limit"
                 )
         st.success(
-            f"{_subject} **compliant** in the current 2025–2029 period under the "
+            f"This portfolio is **compliant** in the current 2025–2029 period under the "
             f"blended emissions standard of {current_limit:.3f} kg CO₂e/sf/yr. "
             f"If emissions remain unchanged, it stays compliant through {horizon_str}."
         )
     else:
         error_msg = (
-            f"{_subject} **non-compliant** in the current 2025–2029 period. "
+            f"This portfolio is **non-compliant** in the current 2025–2029 period. "
             f"At current emissions, it would owe an estimated USD {current_fine:,.0f}/year in ACP "
             f"and USD {total_5yr:,.0f} in cumulative payments across "
             f"{len(finite_non_compliant)} five-year non-compliant period(s) through 2050 "
@@ -393,7 +383,7 @@ def render_portfolio_section(buildings_df, selected_year, elec_share, all_years,
 
     try:
         excluded_rows, skipped, total_buildings, usable_buildings, valid = _portfolio_classify(buildings_df)
-        summary = _portfolio_totals(valid, n_excluded=skipped, n_total=total_buildings)
+        summary = _portfolio_totals(valid)
         valid = summary["valid"]
         _portfolio_metrics(usable_buildings, summary)
         _portfolio_chart(summary, elec_share, use_reported_share, selected_year)

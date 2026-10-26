@@ -778,10 +778,7 @@ def _lookup_building_result(page, result, address_input):
         st.metric("BERDO status", top["BERDO Status"])
     with col3:
         acp = top["Est. ACP (2025–29)"]
-        st.metric("Est. ACP (2025–29)",
-                  "N/A" if acp is None or pd.isna(acp) else f"${acp:,.0f}/yr",
-                  help="N/A means ACP can't be estimated (data incomplete, not yet covered, "
-                       "or not assessed), not that the building owes nothing.")
+        st.metric("Est. ACP (2025–29)", f"${acp:,.0f}/yr" if acp else "$0")
 
     st.write("**Notes:**", top["Notes"])
 
@@ -1035,8 +1032,7 @@ def _lookup_pdf(page, use_mix_limits, _bl_ctx, _ghg_ctx, _sqft_ctx, _cov, projec
          f"Not estimated ({_gov.lower()} record)" if _gov else
          "Not applicable (not yet covered)" if (_cov["known"] and not period_covered(_cov, 0)) else
          "Not estimated (coverage year not reported)" if not _cov["known"] else
-         ("N/A" if top["Est. ACP (2025–29)"] is None or pd.isna(top["Est. ACP (2025–29)"])
-          else f"USD {top['Est. ACP (2025–29)']:,.0f}"),
+         (f"USD {top['Est. ACP (2025–29)']:,.0f}" if top["Est. ACP (2025–29)"] else "USD 0"),
          "Estimated"),
     ]
     _limit_basis = (
@@ -1123,7 +1119,7 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
 
     #Calculate fine for 2025–29 period if possible
     if (
-        pd.notna(ghg_val) and ghg_val >= 0
+        pd.notna(ghg_val) and ghg_val > 0
         and pd.notna(sqft_val) and sqft_val > 0
         and (use_mix_limits is not None or berdo_cat in BERDO_STANDARDS)
     ):
