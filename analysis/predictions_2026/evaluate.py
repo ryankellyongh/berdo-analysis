@@ -46,9 +46,31 @@ for name, cols in SETS.items():
 oof = results["Ratio to limit only"]
 k = rule.sum()
 top = np.argsort(-oof)[:k]
-print(f"Model flagging the same {k} buildings: catches {y[top].sum()} of {y.sum()}")
+print(f"Ratio-only model flagging the same {k} buildings: catches {y[top].sum()} of {y.sum()}")
+
+# The model the app uses (ratio + building traits), compared with the rule at several
+# outreach capacities: sort buildings by risk, contact the top k, count Action Needed found.
+# The rule ranks by last year's emissions relative to the limit, highest first.
+oof_model = results["Ratio + building traits"]
+ratio = lab.ratio_to_limit.values
+print("\nOUTREACH CAPACITY: Action Needed found among the top k (of", y.sum(), ")")
+print(f"{'top k':>6} | {'rule':>12} | {'model':>12}")
+for k in (25, 50, 88, 133, 200):
+    r, m_ = y[np.argsort(-ratio)[:k]].sum(), y[np.argsort(-oof_model)[:k]].sum()
+    print(f"{k:>6} | {r:>4} ({r/k:>4.0%}) | {m_:>4} ({m_/k:>4.0%})")
+
+# 95% interval for the model's AUC: bootstrap the pooled out-of-fold predictions
+rng = np.random.default_rng(0)
+boot = []
+for _ in range(2000):
+    i = rng.integers(0, len(y), len(y))
+    if y[i].min() != y[i].max():
+        boot.append(roc_auc_score(y[i], oof_model[i]))
+print(f"\nModel AUC (pooled out-of-fold): {roc_auc_score(y, oof_model):.3f}, "
+      f"95% bootstrap interval {np.percentile(boot, 2.5):.2f}-{np.percentile(boot, 97.5):.2f}")
 print("base rate (Brier of always guessing 5.8%):", round(brier_score_loss(y, np.full(len(y), y.mean())), 4))
 # calibration check: predicted vs actual by bin
-bins = pd.cut(oof, [0, .02, .05, .1, .3, .6, 1.0], include_lowest=True)
-print(pd.DataFrame({"pred": oof, "y": y, "bin": bins}).groupby("bin", observed=True).agg(n=("y", "size"), predicted=("pred", "mean"), actual=("y", "mean")).round(3))
-pd.DataFrame({"berdo_id": lab.berdo_id, "y": y, "oof": oof, "ratio": lab.ratio_to_limit}).to_csv(HERE / "oof.csv", index=False)
+print("\nCALIBRATION (model with building traits): predicted vs actual by bin")
+bins = pd.cut(oof_model, [0, .02, .05, .1, .3, .6, 1.0], include_lowest=True)
+print(pd.DataFrame({"pred": oof_model, "y": y, "bin": bins}).groupby("bin", observed=True).agg(n=("y", "size"), predicted=("pred", "mean"), actual=("y", "mean")).round(3))
+pd.DataFrame({"berdo_id": lab.berdo_id, "y": y, "oof": oof_model, "ratio": lab.ratio_to_limit}).to_csv(HERE / "oof.csv", index=False)
