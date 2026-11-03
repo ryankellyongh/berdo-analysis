@@ -39,8 +39,24 @@ placed in three tiers by how last year's emissions compare with the limit:
 
 - The tiers find **43 of 47** Action Needed buildings (Likely over plus Watch), and a
   "Likely compliant" building ends up Action Needed less than 1% of the time.
-- Ranking accuracy (cross-validated AUC): **0.91**. The model's added value over the tiers
-  is a probability for each building, not more buildings caught.
+- Ranking accuracy (cross-validated AUC): **0.91** (95% bootstrap interval 0.84–0.96).
+  Last year's ratio to the limit alone reaches 0.90, so the building traits add a little.
+- **Model vs. the simple rule at the same outreach capacity** (Action Needed found among the
+  top-ranked buildings, of 47):
+
+  | Buildings contacted | Rule (highest ratio first) | Model |
+  |---|---|---|
+  | 25 | 10 | 13 |
+  | 50 | 23 | 30 |
+  | 88 | 35 | 36 |
+  | 133 | 43 | 40 |
+
+  The model catches more when only a few buildings can be contacted; with larger outreach
+  budgets the rule does about as well or slightly better. With only 47 positives, these
+  differences are suggestive rather than conclusive.
+- **Calibration:** estimates run slightly high for low-risk buildings, and too low in the
+  middle range: buildings rated 30–60% (about 41% on average) turned out Action Needed 66%
+  of the time (35 buildings). `evaluate.py` prints all of these figures.
 - The misses were mostly multifamily buildings just under their limit that crossed it in 2025,
   and two buildings whose emissions jumped sharply (likely occupancy or data changes).
 
