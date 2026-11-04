@@ -162,7 +162,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 
 /* Top navigation: the page tabs sit in the brand row on wide screens.
    On narrow screens they stack below the brand (no overlap). */
-@media (min-width: 900px) {{
+@media (min-width: 1360px) {{
   .st-key-site_nav {{ margin-top: -96px; }}
   .st-key-site_nav [role="tablist"] {{
     margin-left: 300px; min-height: 80px; align-items: center;
@@ -177,6 +177,36 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 }}
 .st-key-site_nav [role="tab"]:last-child p {{ color: var(--site-accent) !important; opacity: 1; font-weight: 600; }}
 .st-key-site_nav [role="tab"]:last-child[aria-selected="true"] {{ background: rgba(40, 139, 228, 0.12) !important; }}
+
+/* Readable text: nothing truncated with an ellipsis, nothing too big for its box */
+/* 1. Metric labels wrap onto a second line instead of being cut off */
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {{
+  white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+}}
+[data-testid="stMetricLabel"] p {{ line-height: 1.35 !important; }}
+/* 2. Metric values scale with the screen and wrap if they still don't fit */
+[data-testid="stMetricValue"] {{
+  font-size: clamp(1.35rem, 1.05rem + 1vw, 2rem) !important; line-height: 1.15 !important;
+}}
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] *,
+[data-testid="stMetricDelta"], [data-testid="stMetricDelta"] * {{
+  white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+  overflow-wrap: anywhere;
+}}
+[data-testid="stMetric"] {{ overflow: visible; }}
+/* 3. Tabs wrap onto a second row rather than hiding behind a horizontal scroll */
+.st-key-site_nav [role="tablist"] {{
+  flex-wrap: wrap !important; overflow: visible !important; row-gap: 4px; column-gap: 6px;
+}}
+.st-key-site_nav [role="tab"] p {{ font-size: 0.92rem !important; white-space: nowrap; }}
+/* 4. Headings and expander titles scale down and wrap on narrow screens */
+.site-hero h1 {{ font-size: clamp(1.5rem, 1.1rem + 1.4vw, 2rem) !important; overflow-wrap: anywhere; }}
+.stMarkdown h4 {{ font-size: clamp(1rem, 0.95rem + 0.3vw, 1.15rem); }}
+[data-testid="stExpander"] summary, [data-testid="stExpander"] summary * {{
+  white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+}}
+/* Captions and alerts wrap long words instead of running off the edge */
+[data-testid="stCaptionContainer"], [data-testid="stAlert"] p {{ overflow-wrap: anywhere; }}
 
 /* Site footer */
 .site-footer {{
