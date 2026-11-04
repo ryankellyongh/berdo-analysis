@@ -26,7 +26,6 @@ def _layout(fig, height=300, **kw):
 
 
 def render_trends(all_years):
-    st.markdown("#### Citywide trends")
     t = _trends(all_years, tuple(sorted(all_years)))
     if not t or "index" not in t:
         st.info("Trends need at least three years of data.")

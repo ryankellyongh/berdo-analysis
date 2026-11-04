@@ -20,6 +20,8 @@ def render_about(years):
             st.markdown(
                 "- **Citywide Overview:** reporting and emissions status for every covered building, "
                 "with a map. Access code required.\n"
+                "- **Trends:** how energy use and emissions have changed over time, and how much of "
+                "the change comes from a cleaner grid.\n"
                 "- **Address Lookup:** one building's evidence, limits, estimated ACP, compliance "
                 "pathways, and a one-page PDF summary.\n"
                 "- **Owner Portfolio:** buildings that share an owner name, with a blended standard.\n"

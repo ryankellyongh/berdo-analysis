@@ -155,7 +155,7 @@ with st.container(key="site_header"):
                     '<div class="site-tagline">Priority screening tool</div></div>',
                     unsafe_allow_html=True)
 with st.container(key="site_nav"):
-    tabs = st.tabs(["Citywide Overview", "Address Lookup", "Owner Portfolio",
+    tabs = st.tabs(["Citywide Overview", "Trends", "Address Lookup", "Owner Portfolio",
                     "Retrofit & Incentives", "Emissions Planner", "About"])
 
 with tabs[0]:
@@ -165,17 +165,24 @@ with tabs[0]:
         st.markdown("---")
         with st.expander("2025 Outlook: predicted results for buildings without a City result"):
             render_outlook_tab(page)
-    #Citywide totals only, so trends are shown without the access code
-    if multi_year_mode:
-        st.markdown("---")
-        render_trends(all_years)
 
 with tabs[1]:
+    #Citywide totals only (no building identified), so no access code is needed.
+    #Trends span every year, so this tab has no reporting-year selector.
+    site_theme.render_hero(
+        "How Boston's buildings are changing.",
+        "Energy use and emissions over time, and how much of the change comes from a cleaner grid.")
+    if multi_year_mode:
+        render_trends(all_years)
+    else:
+        st.info("Trends need at least three years of data in data/.")
+
+with tabs[2]:
     page_heading("lookup")
     projection_settings("lookup")
     render_address_lookup_tab(page)
 
-with tabs[2]:
+with tabs[3]:
     page_heading("portfolio")
     projection_settings("portfolio")
     owner = st.text_input("Enter property owner name", placeholder="Example: City of Boston", key="owner_input")
@@ -195,18 +202,18 @@ with tabs[2]:
             else:
                 st.info("Only one building found; use Address Lookup for single-building analysis.")
 
-with tabs[3]:
+with tabs[4]:
     page_heading("retrofit")
     render_retrofit_optimizer_tab(page, st.session_state.get("optimizer_prefill", {}))
 
-with tabs[4]:
+with tabs[5]:
     page_heading("planner")
     projection_settings("planner")
     render_emissions_planner_tab(st.session_state.get("planner_prefill", {}),
                                  show_grid_decarb=show_grid_decarb, elec_share=page.elec_share,
                                  use_reported_share=use_reported_share)
 
-with tabs[5]:
+with tabs[6]:
     render_about(years_sorted)
 
 site_theme.render_footer(
