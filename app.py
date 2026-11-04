@@ -146,7 +146,13 @@ page = SimpleNamespace(
 #Header row: brand at left; the page tabs are styled into the same row (site_theme)
 site_theme.apply_theme()
 with st.container(key="site_header"):
-    site_theme.render_brand()
+    #Fall back to plain markup if an older site_theme.py without render_brand is deployed
+    if hasattr(site_theme, "render_brand"):
+        site_theme.render_brand()
+    else:
+        st.markdown('<div class="site-brand-block"><div class="site-logo">BERDO</div>'
+                    '<div class="site-tagline">Priority screening tool</div></div>',
+                    unsafe_allow_html=True)
 with st.container(key="site_nav"):
     tabs = st.tabs(["Citywide Overview", "Address Lookup", "Owner Portfolio",
                     "Retrofit & Incentives", "Emissions Planner", "About"])

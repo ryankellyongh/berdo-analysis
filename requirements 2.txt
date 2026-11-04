@@ -1,0 +1,10 @@
+pandas
+numpy
+matplotlib
+openpyxl
+streamlit==1.57.0
+# Starlette 1.8+ (Oct 13, 2026) breaks Streamlit's gzip file serving: interface files fail
+# to load ("Failed to fetch dynamically imported module"). Keep it below 1.8.
+starlette<1.8
+plotly
+reportlab
