@@ -175,8 +175,19 @@ def _map(b: pd.DataFrame):
                                         font=dict(size=12))})
     st.plotly_chart(fig, use_container_width=True)
     unmapped = int((b["status_group"].isin(show) & b["lat"].isna()).sum())
-    st.caption(f"{len(m):,} buildings at {len(pts):,} locations. Dot size shows floor area."
-               + (f" {unmapped:,} matching buildings have no coordinates." if unmapped else ""))
+    n_bldg, n_dots = len(m), len(pts)
+    caption = f"Showing {n_bldg:,} building{'s' if n_bldg != 1 else ''}"
+    if n_dots < n_bldg:
+        caption += (f" as {n_dots:,} dots. Buildings at the same location share one dot; "
+                    "hover over a dot to see them all.")
+    else:
+        caption += "."
+    caption += " Larger dots are larger buildings."
+    if unmapped:
+        caption += (f" {unmapped:,} matching building{'s' if unmapped != 1 else ''} "
+                    f"{'aren’t' if unmapped != 1 else 'isn’t'} shown because "
+                    f"{'they have' if unmapped != 1 else 'it has'} only a street name, with no number to map.")
+    st.caption(caption)
 
 
 def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
