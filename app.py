@@ -23,6 +23,7 @@ from ui.outlook import render_outlook_tab
 from ui.planner import render_emissions_planner_tab
 from ui.portfolio import render_portfolio_section
 from ui.retrofit import render_retrofit_optimizer_tab
+from ui.trends import render_trends
 
 st.set_page_config(page_title="BERDO · Outreach workspace", layout="wide")
 
@@ -164,6 +165,10 @@ with tabs[0]:
         st.markdown("---")
         with st.expander("2025 Outlook: predicted results for buildings without a City result"):
             render_outlook_tab(page)
+    #Citywide totals only, so trends are shown without the access code
+    if multi_year_mode:
+        st.markdown("---")
+        render_trends(all_years)
 
 with tabs[1]:
     page_heading("lookup")
