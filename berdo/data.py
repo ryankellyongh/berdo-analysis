@@ -251,7 +251,10 @@ def mark_campus_rows(df: pd.DataFrame) -> pd.DataFrame:
     notes = (df["city_notes"] if "city_notes" in df.columns
              else pd.Series("", index=df.index)).fillna("").astype(str)
     campus_ids = set(campus_col.dropna())
-    id_is_campus = ids.isin(campus_ids) & ids.notna()
+    #The City gives every campus record an ID starting with "C" (e.g. "C10002"). Check
+    #that too, so a campus whose member buildings haven't reported yet (no building
+    #points to it) is still recognized as a campus record, not counted as a building.
+    id_is_campus = (ids.isin(campus_ids) | ids.astype(str).str.fullmatch(r"C\d+")) & ids.notna()
     df["is_campus_summary"] = notes.str.strip().str.startswith("This is a campus") | id_is_campus
     df["campus_key"] = ids.where(id_is_campus, campus_col)
     df["is_campus_member"] = campus_col.notna() & ~df["is_campus_summary"]
