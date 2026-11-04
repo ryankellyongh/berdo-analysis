@@ -1,126 +1,145 @@
 """
-Citywide trends section (shown on Citywide Overview, outside the access code: citywide totals only).
-Calculations come from berdo.trends; this module only displays them.
+Citywide trends in energy use and emissions across reporting years. No Streamlit.
+
+Same method as analysis/time_series/time_series.py:
+- results are labeled by ENERGY year (reporting year - 1);
+- trends use balanced panels (the same buildings every year, linked by BERDO ID);
+- citywide figures are floor-area weighted (total / total floor area);
+- the grid effect restates electricity emissions at a fixed grid factor;
+- campus records are excluded, and the provisional latest year is kept out of the panels.
 """
-import plotly.graph_objects as go
-import streamlit as st
+import numpy as np
+import pandas as pd
 
-from berdo.trends import compute_trends
-
-BLUE, ORANGE, GREY, RED = "#288BE4", "#F76B15", "#8B8D98", "#E5484D"
+from berdo.emissions import building_limits, effective_grid_ef, map_property_type
 
 
-@st.cache_data(show_spinner="Calculating citywide trends…")
-def _trends(_all_years, years_key):
-    """Cached by the tuple of reporting years; the data itself isn't hashed."""
-    return compute_trends(_all_years)
+def combine_years(all_years: dict) -> pd.DataFrame:
+    """One long table of buildings (no campus records) across reporting years, with derived columns."""
+    frames = []
+    for year, d in all_years.items():
+        if not year:
+            continue
+        d = d[~d["is_campus_summary"]] if "is_campus_summary" in d.columns else d
+        d = d.copy()
+        d["energy_year"] = int(year) - 1
+        frames.append(d)
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    df["berdo_id"] = df["berdo_id"].astype("string") if "berdo_id" in df.columns else pd.NA
+    sqft = pd.to_numeric(df.get("gross_floor_area"), errors="coerce")
+    df["_sqft"] = sqft.where(sqft > 0)
+    df["_ghg"] = pd.to_numeric(df.get("ghg_emissions"), errors="coerce")
+    df["_energy"] = pd.to_numeric(df.get("total_site_energy_kbtu"), errors="coerce")
+    df["_elec"] = pd.to_numeric(df.get("elec_emissions_kg"), errors="coerce")
+    df["_intensity"] = df["_ghg"] / df["_sqft"]
+    return df
 
 
-def _layout(fig, height=300, **kw):
-    fig.update_layout(height=height, margin=dict(t=10, b=10, l=10, r=10),
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", **kw)
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
-    return fig
+def balanced(df, years, need):
+    """Rows for buildings (by BERDO ID) with every `need` column present in every year."""
+    d = df[df["energy_year"].isin(years) & df["berdo_id"].notna()].dropna(subset=need)
+    d = d.drop_duplicates(["berdo_id", "energy_year"])
+    n = d.groupby("berdo_id")["energy_year"].nunique()
+    return d[d["berdo_id"].isin(n[n == len(years)].index)]
 
 
-def render_trends(all_years):
-    st.markdown("#### Citywide trends")
-    t = _trends(all_years, tuple(sorted(all_years)))
-    if not t or "index" not in t:
-        st.info("Trends need at least three years of data.")
-        return
-    i, prov = t["index"], t["provisional_year"]
-    first, last = int(i["emissions"].index.min()), int(i["emissions"].index.max())
-    st.caption(f"Energy years {first}–{last}, using the same buildings every year so changes in who "
-               f"reported don't skew the trend. Energy year {prov} (reporting year {prov + 1}) is "
-               "provisional and left out. Citywide totals only; no building is identified.")
+def _years_with(df, col, minimum=500):
+    """Energy years with at least `minimum` buildings reporting `col`."""
+    #Only years with BERDO IDs can be linked across years (the 2021 disclosure has none)
+    c = df[df["berdo_id"].notna()].dropna(subset=[col]).groupby("energy_year").size()
+    return sorted(int(y) for y in c[c >= minimum].index)
 
-    #Headline numbers
-    c = st.columns(4)
-    c[0].metric(f"Emissions per sq ft, {first}→{last}", f"{t['emissions_change']:+.0%}",
-                help=f"{i['n_emissions']:,} buildings reporting every year, floor-area weighted.")
-    if "grid" in t:
-        g = t["grid"]
-        share = g["grid_pct"] / g["total_pct"] if g["total_pct"] else None
-        c[1].metric(f"Share of {g['years'][0]}→{g['years'][1]} drop from a cleaner grid",
-                    f"{share:.0%}" if share is not None else "N/A",
-                    help=f"{g['n']:,} buildings. Electricity emissions restated at the "
-                         f"{g['years'][0]} grid factor to separate the grid from the buildings.")
-    so = t["share_over"]
-    c[2].metric(f"Over the 2025–29 limit, {first}→{last}",
-                f"{so.loc[first]:.0%} → {so.loc[last]:.0%}",
-                help="Same buildings every year, compared with their sector's 2025–29 limit.")
-    if "persistence" in t:
-        p = t["persistence"]
-        c[3].metric(f"Over the limit in {p['years'][0]} and still over in {p['years'][1]}",
-                    f"{p['stay_over']:.0%}" if p["stay_over"] is not None else "N/A",
-                    help=f"{p['n']:,} buildings. Year-to-year correlation of emissions intensity: "
-                         f"r = {p['r']:.2f} (log scale).")
 
-    #Trend and grid charts
-    left, right = st.columns(2)
-    with left:
-        st.markdown(f"**Energy use and emissions per sq ft** ({i['base_year']} = 100)")
-        fig = go.Figure()
-        if len(i["energy"]):
-            fig.add_trace(go.Scatter(x=i["energy"].index, y=i["energy"].round(1), mode="lines+markers",
-                                     name=f"Energy use ({i['n_energy']:,} buildings)",
-                                     line=dict(color=BLUE, width=2.5)))
-        fig.add_trace(go.Scatter(x=i["emissions"].index, y=i["emissions"].round(1), mode="lines+markers",
-                                 name=f"Emissions ({i['n_emissions']:,} buildings)",
-                                 line=dict(color=ORANGE, width=2.5)))
-        fig.update_xaxes(dtick=1)
-        st.plotly_chart(_layout(fig), width="stretch")
-    with right:
-        if "grid" in t:
-            g = t["grid"]
-            st.markdown(f"**What drove the {g['years'][0]}→{g['years'][1]} change**")
-            labels = ["Total change", "Cleaner grid", "Buildings (energy use, fuel mix)"]
-            vals = [g["total_t"], g["grid_t"], g["building_t"]]
-            pcts = [g["total_pct"], g["grid_pct"], g["building_pct"]]
-            fig = go.Figure(go.Bar(x=vals, y=labels, orientation="h", marker_color=[GREY, BLUE, ORANGE],
-                                   text=[f"{v:,.0f} t ({p:+.1%})" for v, p in zip(vals, pcts)],
-                                   textposition="auto", hovertemplate="%{y}: %{x:,.0f} metric tons<extra></extra>"))
-            fig.update_yaxes(autorange="reversed")
-            fig.update_xaxes(title="Metric tons CO₂e")
-            st.plotly_chart(_layout(fig, showlegend=False), width="stretch")
+def _limit_2025(row):
+    lim = building_limits(row.get("property_type"), row.get("all_property_types"))["limits"]
+    return lim[0] if lim else np.nan
 
-    #Share over limit and categories
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Buildings above the 2025–29 limit**")
-        fig = go.Figure(go.Scatter(x=so.index, y=(so * 100).round(1), mode="lines+markers+text",
-                                   text=[f"{v:.0%}" for v in so], textposition="top center",
-                                   line=dict(color=RED, width=2.5), hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
-        fig.update_xaxes(dtick=1)
-        fig.update_yaxes(title="% of buildings", rangemode="tozero")
-        st.plotly_chart(_layout(fig, showlegend=False), width="stretch")
-    with right:
-        w = t.get("by_category")
-        if w is not None and len(w):
-            y0, y1 = t["category_years"]
-            st.markdown(f"**Emissions per sq ft by category, {y0}→{y1}**")
-            fig = go.Figure(go.Bar(x=(w["change"] * 100).round(1), y=w.index, orientation="h",
-                                   marker_color=[BLUE if v < 0 else RED for v in w["change"]],
-                                   text=[f"{v:+.0%} ({int(n)})" for v, n in zip(w["change"], w["buildings"])],
-                                   textposition="auto",
-                                   hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
-            fig.update_xaxes(title="% change (buildings in parentheses)")
-            st.plotly_chart(_layout(fig, height=max(260, 28 * len(w)), showlegend=False), width="stretch")
 
-    with st.expander("How to read these trends"):
-        st.markdown(
-            "- **Same buildings every year:** each chart follows only buildings that reported in every "
-            "year shown, linked by BERDO ID.\n"
-            "- **Floor-area weighted:** total energy or emissions divided by total floor area, so larger "
-            "buildings count more.\n"
-            "- **Cleaner grid vs. buildings:** electricity emissions are restated at a fixed grid factor. "
-            "What remains is the buildings' own change in energy use and fuel mix.\n"
-            "- **Persistence:** buildings over their limit one year are usually over the next, which is "
-            "why last year's emissions are the strongest predictor in the 2025 Outlook.\n"
-            "- **Caution:** the drop from the first to the second emissions year is larger than energy use "
-            "and the grid explain, and may partly reflect a change in how the City calculated emissions.\n"
-            "- Weather isn't adjusted for. Details and code: `analysis/time_series/`."
-        )
+def compute_trends(all_years: dict, provisional_year=None) -> dict:
+    """
+    Everything the Citywide trends section shows. `provisional_year` is an ENERGY year left out
+    of the panels (default: the latest year, whose disclosure is provisional).
+    Returns {} when there isn't enough multi-year data.
+    """
+    df = combine_years(all_years)
+    if df.empty or df["energy_year"].nunique() < 3:
+        return {}
+    latest = int(df["energy_year"].max())
+    prov = latest if provisional_year is None else provisional_year
+    out = {"provisional_year": prov}
+
+    #Coverage by energy year
+    out["coverage"] = df.groupby("energy_year").agg(
+        buildings=("berdo_id", "size"),
+        with_energy=("_energy", lambda s: int(s.notna().sum())),
+        with_emissions=("_ghg", lambda s: int(s.notna().sum()))).reset_index()
+
+    #Energy and emissions panels (complete years only)
+    ey = [y for y in _years_with(df, "_energy") if y != prov]
+    gy = [y for y in _years_with(df, "_ghg") if y != prov]
+    if len(gy) >= 2:
+        pe = balanced(df, ey, ["_energy", "_sqft"]) if len(ey) >= 2 else df.iloc[0:0]
+        pg = balanced(df, gy, ["_ghg", "_sqft"])
+        base = gy[0]
+        e = pe.groupby("energy_year").agg(energy=("_energy", "sum"), sqft=("_sqft", "sum"))
+        g = pg.groupby("energy_year").agg(ghg=("_ghg", "sum"), sqft=("_sqft", "sum"))
+        e_idx = (e["energy"] / e["sqft"]) / (e.loc[base, "energy"] / e.loc[base, "sqft"]) * 100 \
+            if base in e.index else pd.Series(dtype=float)
+        g_idx = (g["ghg"] / g["sqft"]) / (g.loc[base, "ghg"] / g.loc[base, "sqft"]) * 100
+        out["index"] = {"base_year": base, "energy": e_idx, "emissions": g_idx,
+                        "n_energy": int(pe["berdo_id"].nunique()), "n_emissions": int(pg["berdo_id"].nunique())}
+        out["emissions_change"] = float(g_idx.iloc[-1] / 100 - 1)
+
+        #Share over the 2025-29 limit, same buildings
+        pl = pg.assign(_limit=pg.apply(_limit_2025, axis=1)).dropna(subset=["_limit"])
+        out["share_over"] = (pl["_intensity"] > pl["_limit"]).groupby(pl["energy_year"]).mean()
+
+        #By building category, first to last panel year
+        pc = pg.assign(category=pg["property_type"].map(map_property_type)).dropna(subset=["category"])
+        cat = pc.groupby(["category", "energy_year"]).agg(ghg=("_ghg", "sum"), sqft=("_sqft", "sum"),
+                                                          n=("berdo_id", "nunique")).reset_index()
+        cat["intensity"] = cat["ghg"] / cat["sqft"]
+        w = cat.pivot(index="category", columns="energy_year", values="intensity")
+        w["buildings"] = cat[cat["energy_year"] == gy[0]].set_index("category")["n"]
+        w["change"] = w[gy[-1]] / w[gy[0]] - 1
+        out["by_category"] = w[w["buildings"] >= 30].sort_values("change")[["buildings", "change"]]
+        out["category_years"] = (gy[0], gy[-1])
+
+    #Grid vs. building change: the last two complete years with electricity emissions
+    ly = [y for y in _years_with(df, "_elec") if y != prov and y in gy]
+    if len(ly) >= 2:
+        y0, y1 = ly[-2], ly[-1]
+        pdx = balanced(df, [y0, y1], ["_ghg", "_sqft", "_elec"])
+        ef0 = effective_grid_ef(y0)
+        pdx = pdx.assign(_fixed=pdx["_ghg"] - pdx["_elec"]
+                         + pdx["_elec"] * ef0 / pdx["energy_year"].map(effective_grid_ef))
+        s = pdx.groupby("energy_year")[["_ghg", "_fixed", "_elec"]].sum()
+        total = s.loc[y1, "_ghg"] - s.loc[y0, "_ghg"]
+        building = s.loc[y1, "_fixed"] - s.loc[y0, "_fixed"]
+        out["grid"] = {"years": (y0, y1), "n": int(pdx["berdo_id"].nunique()),
+                       "total_t": total / 1000, "grid_t": (total - building) / 1000, "building_t": building / 1000,
+                       "total_pct": total / s.loc[y0, "_ghg"], "grid_pct": (total - building) / s.loc[y0, "_ghg"],
+                       "building_pct": building / s.loc[y0, "_ghg"],
+                       "elec_share": s.loc[y0, "_elec"] / s.loc[y0, "_ghg"],
+                       "ef": (effective_grid_ef(y0), effective_grid_ef(y1))}
+
+        #Persistence between the same two years
+        a = df[df["energy_year"] == y0].dropna(subset=["_intensity"]).drop_duplicates("berdo_id")
+        b = df[df["energy_year"] == y1].dropna(subset=["_intensity"]).drop_duplicates("berdo_id")
+        m = a.merge(b, on="berdo_id", suffixes=("_0", "_1"))
+        m = m[(m["_intensity_0"] > 0) & (m["_intensity_1"] > 0)]
+        m["_limit"] = [_limit_2025({"property_type": p, "all_property_types": u})
+                       for p, u in zip(m["property_type_1"], m["all_property_types_1"])]
+        m = m.dropna(subset=["_limit"])
+        if len(m) > 30:
+            o0, o1 = m["_intensity_0"] > m["_limit"], m["_intensity_1"] > m["_limit"]
+            out["persistence"] = {
+                "years": (y0, y1), "n": len(m),
+                "r": float(np.corrcoef(np.log(m["_intensity_0"]), np.log(m["_intensity_1"]))[0, 1]),
+                "stay_over": float((o0 & o1).sum() / o0.sum()) if o0.sum() else None,
+                "become_over": float((~o0 & o1).sum() / (~o0).sum()) if (~o0).sum() else None,
+                "points": m[["_intensity_0", "_intensity_1"]].rename(
+                    columns={"_intensity_0": "before", "_intensity_1": "after"})}
+    return out
