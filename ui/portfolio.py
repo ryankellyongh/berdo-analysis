@@ -7,6 +7,12 @@ import streamlit as st
 from berdo.regulations import (
     COMPLIANCE_PERIODS,
 )
+from berdo.data import (
+    PORTFOLIO_ICS_COL,
+    PORTFOLIO_STANDARD_COL,
+    latest_year_with_member_emissions,
+    official_portfolio_members,
+)
 from berdo.emissions import (
     _fmt_deadline,
     fmt_share,
@@ -56,11 +62,11 @@ def _portfolio_classify(buildings_df):
     return excluded_rows, skipped, total_buildings, usable_buildings, valid
 
 
-def _portfolio_totals(valid, n_excluded=0, n_total=None):
+def _portfolio_totals(valid, n_excluded=0, n_total=None, official_limit_2025=None):
     """Portfolio intensity, blended standard, and the plain-English summary."""
     #Portfolio-level aggregates. Emissions, floor area, and the blended standard all use
     #the same included buildings; with any exclusions the result is a subtotal.
-    summary = portfolio_summary(valid, n_excluded=n_excluded)
+    summary = portfolio_summary(valid, n_excluded=n_excluded, official_limit_2025=official_limit_2025)
     valid               = summary["valid"]
     total_sqft          = summary["total_sqft"]
     total_emissions     = summary["total_emissions"]
@@ -86,12 +92,14 @@ def _portfolio_totals(valid, n_excluded=0, n_total=None):
         _n_all = n_total if n_total is not None else summary["n_included"] + summary["n_excluded"]
         st.warning(
             f"**Assessable subtotal, not a full portfolio estimate.** These results cover "
-            f"{summary['n_included']} of this owner's {_n_all} buildings. The other "
+            f"{summary['n_included']} of {_n_all} buildings. The other "
             f"{summary['n_excluded']} are excluded (see the list below), so the full portfolio "
             "ACP is N/A until their data is complete."
         )
     _subject = (f"The {summary['n_included']} assessable buildings are"
                 if summary["is_subtotal"] else "This portfolio is")
+    _std_name = ("City's applicable portfolio standard" if summary.get("limit_source") == "official"
+                 else "blended emissions standard")
         #Plain-English summary
     if current_compliant:
         #Off-by-one guard: non_compliant_periods[0] is the first period the
@@ -109,7 +117,7 @@ def _portfolio_totals(valid, n_excluded=0, n_total=None):
                 )
         st.success(
             f"{_subject} **compliant** in the current 2025–2029 period under the "
-            f"blended emissions standard of {current_limit:.3f} kg CO₂e/sf/yr. "
+            f"{_std_name} of {current_limit:.3f} kg CO₂e/sf/yr. "
             f"If emissions remain unchanged, it stays compliant through {horizon_str}."
         )
     else:
@@ -279,16 +287,23 @@ def _portfolio_chart(summary, elec_share, use_reported_share, selected_year):
     )
 
 
-def _portfolio_guidance(current_compliant, current_limit, valid, current_fine):
+def _portfolio_guidance(current_compliant, current_limit, valid, current_fine, approved=False):
     """Guidance for owners and policymakers."""
+    _std = "City's applicable" if approved else "blended"
+    if approved:
+        _apply = ("This is an approved City portfolio, so compliance is assessed for the "
+                  "portfolio as a whole.")
+    else:
+        _apply = (f"If you haven't already, consider filing a Building Portfolio application with "
+                  f"the BERDO Review Board. Applications are due **September 1** each year "
+                  f"(next: {_fmt_deadline('portfolio_ics')}); see the City's deadline table for "
+                  "which reporting year applies.")
     #What should I do? expander
     with st.expander("What should I do?"):
         if current_compliant:
             st.markdown(f"""
-**For building owners:** Your portfolio currently meets the blended 2025–2029 standard of
-{current_limit:.3f} kg CO₂e/sf/yr. If you haven't already, consider filing a Building Portfolio
-application with the BERDO Review Board. Applications are due **September 1** each year
-(next: {_fmt_deadline('portfolio_ics')}); see the City's deadline table for which reporting year applies.
+**For building owners:** Your portfolio currently meets the {_std} 2025–2029 standard of
+{current_limit:.3f} kg CO₂e/sf/yr. {_apply}
 
 **For policymakers:** This portfolio is currently compliant. Monitor whether high-emitting
 buildings within the portfolio are being offset by efficient ones; the per-building table below
@@ -300,19 +315,21 @@ shows individual gaps.
             
             worst_addr, worst_gap_tons = worst_building(valid)
 
+            _file = ("" if approved else
+                     f"\n- **File a portfolio application by September 1** (next: {_fmt_deadline('portfolio_ics')})\n"
+                     "  to use the blended compliance pathway. Without it, each building is assessed individually.")
+            _who = "This approved portfolio" if approved else "This owner's portfolio"
             st.markdown(f"""
-**For building owners:** This portfolio exceeds the blended 2025–2029 standard and faces an
+**For building owners:** This portfolio exceeds the {_std} 2025–2029 standard and faces an
 estimated USD {current_fine:,.0f}/year in ACP payments. To come into compliance:
 
 - **Prioritize retrofits at your highest-emitting buildings first.** The building with the
   largest individual gap is **{worst_addr}** ({worst_gap_tons:,.0f} excess metric tons in 2025–29).
   Reducing emissions there has the greatest impact on the portfolio total.
 - **Resolve missing data for excluded buildings.** If any of your buildings didn't report,
-  their emissions are not counted here, so your actual exposure may be higher.
-- **File a portfolio application by September 1** (next: {_fmt_deadline('portfolio_ics')})
-  to use the blended compliance pathway. Without it, each building is assessed individually.
+  their emissions are not counted here, so your actual exposure may be higher.{_file}
 
-**For policymakers:** This owner's portfolio is non-compliant. The per-building table below
+**For policymakers:** {_who} is non-compliant. The per-building table below
 identifies which buildings are driving the deficit and which are providing surplus. Buildings
 marked "Did not report" in the excluded table represent additional unknown exposure.
 """)
@@ -338,7 +355,7 @@ def _portfolio_breakdown(valid):
         )
 
 
-def _portfolio_exclusions(excluded_rows, skipped, total_buildings):
+def _portfolio_exclusions(excluded_rows, skipped, total_buildings, approved=False):
     """Excluded buildings and the application deadline note."""
     #Excluded buildings
     if excluded_rows:
@@ -372,7 +389,9 @@ def _portfolio_exclusions(excluded_rows, skipped, total_buildings):
 
     st.markdown("---")
 
-    #Application deadline callout
+    #Application deadline callout (not for an approved portfolio: it has already applied)
+    if approved:
+        return
     st.info(
         f"**Portfolio applications are due September 1 each year** (next: "
         f"{_fmt_deadline('portfolio_ics')}). See the City's deadline table for which "
@@ -383,23 +402,98 @@ def _portfolio_exclusions(excluded_rows, skipped, total_buildings):
 
 
 def render_portfolio_section(buildings_df, selected_year, elec_share, all_years, show_yoy,
-                             use_reported_share=True):
+                             use_reported_share=True, official_limit_2025=None, approved=False):
     """
     Renders BERDO compliance analysis for a multi-building owner portfolio.
     Shows portfolio-level blended standard, aggregate gap, fine exposure,
     and a per-building surplus/deficit breakdown table.
+    For an approved City portfolio, `official_limit_2025` is the City's applicable
+    standard (used as the 2025-29 limit) and `approved` drops the "apply" guidance.
     """
     st.subheader("Portfolio Compliance Analysis")
 
     try:
         excluded_rows, skipped, total_buildings, usable_buildings, valid = _portfolio_classify(buildings_df)
-        summary = _portfolio_totals(valid, n_excluded=skipped, n_total=total_buildings)
+        summary = _portfolio_totals(valid, n_excluded=skipped, n_total=total_buildings,
+                                    official_limit_2025=official_limit_2025)
         valid = summary["valid"]
         _portfolio_metrics(usable_buildings, summary)
+        if summary.get("limit_source") == "official":
+            st.caption(f"2025–29 limit: the City's applicable standard for this portfolio "
+                       f"({official_limit_2025:g} kg CO₂e/sf/yr). Later periods use the blended "
+                       "default standards, since the City publishes only the current one.")
         _portfolio_chart(summary, elec_share, use_reported_share, selected_year)
         p0 = summary["periods"][0]
-        _portfolio_guidance(p0["compliant"], p0["limit"], valid, p0["annual_fine"])
+        _portfolio_guidance(p0["compliant"], p0["limit"], valid, p0["annual_fine"], approved=approved)
         _portfolio_breakdown(valid)
-        _portfolio_exclusions(excluded_rows, skipped, total_buildings)
+        _portfolio_exclusions(excluded_rows, skipped, total_buildings, approved=approved)
     except _EndTab:
         return
+
+
+def _fmt_or_na(v, fmt):
+    return fmt.format(v) if v is not None and pd.notna(v) else "N/A"
+
+
+def render_official_portfolio(portfolio, all_years, selected_year, elec_share, show_yoy,
+                              use_reported_share=True):
+    """
+    One City-approved Building Portfolio: the City's own record first, then a
+    member-level estimate from the latest year with building-level emissions.
+    Members are joined on BERDO ID, so owner-name spelling doesn't matter.
+    """
+    pid, owner = portfolio["Portfolio ID"], portfolio.get("Portfolio Owner Name")
+    member_ids = portfolio["member_ids"]
+    st.markdown(f"#### {owner} · approved Building Portfolio {pid}")
+
+    city_std = portfolio.get(PORTFOLIO_STANDARD_COL)
+    ics_target = portfolio.get(PORTFOLIO_ICS_COL)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("City compliance status", str(portfolio.get("Emissions Compliance Status") or "N/A"))
+    c2.metric("Member buildings", f"{len(member_ids):,}")
+    c3.metric("Total floor area", _fmt_or_na(portfolio.get("Gross Floor Area (sq ft)"), "{:,.0f} sq ft"))
+    if pd.notna(city_std):
+        c4.metric("City's applicable standard", f"{city_std:g} kg CO₂e/sf/yr")
+    else:
+        c4.metric("City's applicable standard", "Individual schedule" if pd.notna(ics_target) else "N/A")
+
+    city_ghg = portfolio.get("Total GHG Emissions (kgCO2e)")
+    city_int = portfolio.get("GHG Emissions Intensity (kgCO2e/sq ft)")
+    if pd.notna(city_ghg):
+        st.caption(f"City-reported portfolio emissions: {city_ghg / 1000:,.0f} metric tons CO₂e "
+                   f"({_fmt_or_na(city_int, '{:.2f}')} kg CO₂e/sf/yr).")
+    st.caption(f"Approved {portfolio.get('Portfolio Approval Date') or 'N/A'} · "
+               f"Flexibility measures: {portfolio.get('Flexibility Measures') or 'N/A'} · "
+               "Source: City of Boston approved Building Portfolios list.")
+
+    if pd.notna(ics_target):
+        st.info(f"This portfolio follows an **Individual Compliance Schedule** with a City target of "
+                f"{ics_target:,.0f} kg CO₂e, not a per-square-foot standard. The tool can't assess "
+                "compliance or ACP against a custom schedule, so only the member buildings are listed "
+                "below. Confirm the schedule with the BERDO team.")
+
+    year, n_with_ghg = latest_year_with_member_emissions(all_years, member_ids, selected_year)
+    if year is None:
+        st.warning("No member building has building-level emissions in any reporting year up to "
+                   f"{selected_year}, so a member-level estimate isn't possible.")
+        return
+    members, missing = official_portfolio_members(all_years[year], member_ids)
+    if year != selected_year:
+        st.info(f"The City reports this portfolio's {selected_year} emissions only at portfolio level. "
+                f"Member data below is building-level data from reporting year **{year}** "
+                f"({n_with_ghg:,} of {len(member_ids):,} members reported emissions that year).")
+    if missing:
+        with st.expander(f"Members not found in the {year} data ({len(missing)})"):
+            st.caption("Listed by the City as portfolio members but absent from this year's building "
+                       "data (new IDs, campus records, or buildings that didn't report).")
+            st.write(", ".join(missing))
+    if members is None:
+        return
+    st.dataframe(members[[c for c in ("Building Address", "BERDO ID", "Property Owner Name", "Property Type",
+                                      "Gross Floor Area", "BERDO Status") if c in members.columns]],
+                 use_container_width=True, hide_index=True)
+    if pd.notna(ics_target):
+        return
+    render_portfolio_section(members, year, elec_share, all_years, show_yoy,
+                             use_reported_share=use_reported_share,
+                             official_limit_2025=city_std, approved=True)

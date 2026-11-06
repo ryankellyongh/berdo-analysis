@@ -82,10 +82,13 @@ def classify_portfolio_buildings(buildings_df: pd.DataFrame):
     return valid, excluded_rows
 
 
-def portfolio_summary(valid: pd.DataFrame, n_excluded: int = 0) -> dict:
+def portfolio_summary(valid: pd.DataFrame, n_excluded: int = 0, official_limit_2025=None) -> dict:
     """
     Portfolio totals, blended standard, and ACP exposure.
     `blended_limits` is None when no building's use can be mapped to a BERDO standard.
+    `official_limit_2025`: the City's applicable standard for an approved portfolio.
+    When given it replaces the 2025-29 blended limit (later periods keep the blended
+    defaults), and `limit_source` is "official"; otherwise "blended".
 
     periods: for each compliance period, the blended limit, gap, compliance, excess
     tons, and annual ACP (excess tons rounded to 0.1 before applying the ACP rate).
@@ -101,7 +104,8 @@ def portfolio_summary(valid: pd.DataFrame, n_excluded: int = 0) -> dict:
     """
     if valid is None or valid.empty:
         return {"valid": pd.DataFrame(), "total_sqft": 0.0, "total_emissions": 0.0, "intensity": None,
-                "n_included": 0, "n_excluded": int(n_excluded), "is_subtotal": True, "blended_limits": None}
+                "n_included": 0, "n_excluded": int(n_excluded), "is_subtotal": True, "blended_limits": None,
+                "limit_source": "blended"}
     valid = valid.copy()
     valid["Gross Floor Area"]       = pd.to_numeric(valid["Gross Floor Area"], errors="coerce")
     valid["GHG Emissions (kgCO2e)"] = pd.to_numeric(valid["GHG Emissions (kgCO2e)"], errors="coerce")
@@ -117,10 +121,15 @@ def portfolio_summary(valid: pd.DataFrame, n_excluded: int = 0) -> dict:
     out = {"valid": valid, "total_sqft": total_sqft, "total_emissions": total_emissions,
            "intensity": intensity, "n_included": len(valid), "n_excluded": n_excluded,
            "is_subtotal": n_excluded > 0,
-           "blended_limits": calculate_blended_standard(valid) if not valid.empty else None}
+           "blended_limits": calculate_blended_standard(valid) if not valid.empty else None,
+           "limit_source": "blended"}
     limits = out["blended_limits"]
     if limits is None:
         return out
+    if official_limit_2025 is not None and pd.notna(official_limit_2025):
+        limits = [float(official_limit_2025)] + list(limits[1:])
+        out["blended_limits"] = limits
+        out["limit_source"] = "official"
 
     periods = []
     for i, limit in enumerate(limits):

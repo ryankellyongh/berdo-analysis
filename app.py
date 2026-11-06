@@ -13,7 +13,8 @@ import pandas as pd
 import streamlit as st
 
 import site_theme
-from berdo.data import MissingColumnsError, lookup_owner_portfolio, prepare_dataframe
+from berdo.data import (MissingColumnsError, find_official_portfolios, load_official_portfolios,
+                        lookup_owner_portfolio, prepare_dataframe)
 from berdo.emissions import effective_grid_ef
 from berdo.predictions import load_predictions
 from ui.about import render_about
@@ -21,7 +22,7 @@ from ui.address_lookup import render_address_lookup_tab
 from ui.citywide import render_citywide_tab
 from ui.outlook import render_outlook_tab
 from ui.planner import render_emissions_planner_tab
-from ui.portfolio import render_portfolio_section
+from ui.portfolio import render_official_portfolio, render_portfolio_section
 from ui.retrofit import render_retrofit_optimizer_tab
 from ui.trends import render_trends
 
@@ -56,7 +57,14 @@ def load_all_years(data_dir: str):
     return years, problems
 
 
+@st.cache_data(show_spinner=False)
+def load_portfolios(path: str):
+    """The City's approved Building Portfolios (empty if the file is missing)."""
+    return load_official_portfolios(path)
+
+
 all_years, load_problems = load_all_years(str(DATA_DIR))
+official_portfolios = load_portfolios(str(DATA_DIR / "portfolios_2026.csv"))
 if load_problems:
     st.warning("Some data files were skipped:\n\n" + "\n".join(f"- {p}" for p in load_problems))
 if not all_years:
@@ -185,22 +193,40 @@ with tabs[2]:
 with tabs[3]:
     page_heading("portfolio")
     projection_settings("portfolio")
-    owner = st.text_input("Enter property owner name", placeholder="Example: City of Boston", key="owner_input")
+    owner = st.text_input("Enter property owner name or portfolio ID",
+                          placeholder="Example: Boston Properties, or P10030", key="owner_input")
     if owner:
-        result = lookup_owner_portfolio(page.df_full, owner)
-        if result is None:
-            st.warning("No buildings found for that owner name.")
-        else:
-            st.caption(f"{len(result)} buildings whose owner name contains “{owner}”. Name matches are "
-                       "candidates: confirm common ownership before treating them as a portfolio.")
-            st.dataframe(result[[c for c in ("Building Address", "Property Owner Name", "Property Type",
-                                             "Gross Floor Area", "BERDO Status") if c in result.columns]],
-                         use_container_width=True, hide_index=True)
-            if len(result) > 1:
-                render_portfolio_section(result, selected_year, page.elec_share, all_years,
-                                         page.show_yoy, use_reported_share=use_reported_share)
+        #Approved City portfolios first (members joined on BERDO ID); owner-name
+        #matching is only a fallback for owners without an approved portfolio.
+        official = find_official_portfolios(official_portfolios, owner, page.df_full)
+        if not official.empty:
+            if len(official) > 1:
+                labels = [f"{r['Portfolio ID']} · {r['Portfolio Owner Name']}" for _, r in official.iterrows()]
+                pick = st.selectbox(f"{len(official)} approved portfolios match “{owner}”", labels,
+                                    key="official_portfolio_pick")
+                chosen = official.iloc[labels.index(pick)]
             else:
-                st.info("Only one building found; use Address Lookup for single-building analysis.")
+                chosen = official.iloc[0]
+            render_official_portfolio(chosen, all_years, selected_year, page.elec_share, page.show_yoy,
+                                      use_reported_share=use_reported_share)
+        else:
+            result = lookup_owner_portfolio(page.df_full, owner)
+            if result is None:
+                st.warning("No approved portfolio or buildings found for that name.")
+            else:
+                _n = len(result)
+                st.caption(f"No approved City portfolio matches “{owner}”. Showing {_n} building"
+                           f"{'' if _n == 1 else 's'} whose owner name contains it. Name matches are "
+                           "candidates, not an approved City portfolio: confirm common ownership before "
+                           "treating them as one.")
+                st.dataframe(result[[c for c in ("Building Address", "Property Owner Name", "Property Type",
+                                                 "Gross Floor Area", "BERDO Status") if c in result.columns]],
+                             use_container_width=True, hide_index=True)
+                if len(result) > 1:
+                    render_portfolio_section(result, selected_year, page.elec_share, all_years,
+                                             page.show_yoy, use_reported_share=use_reported_share)
+                else:
+                    st.info("Only one building found; use Address Lookup for single-building analysis.")
 
 with tabs[4]:
     page_heading("retrofit")

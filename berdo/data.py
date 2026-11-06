@@ -470,6 +470,102 @@ def lookup_owner_portfolio(df, owner_name):
     return pd.DataFrame(results)
 
 
+#Official Building Portfolios (City-approved, portfolios_<year>.csv)
+
+PORTFOLIO_STANDARD_COL = "Applicable Emissions Compliance Standard (kgCO2e/sq ft)"
+PORTFOLIO_ICS_COL      = "Applicable Emissions Compliance Standard for Individual Compliance Schedules (kg CO2e)"
+
+
+def load_official_portfolios(path) -> pd.DataFrame:
+    """
+    The City's approved Building Portfolios, one row per portfolio, with
+    `member_ids` as a list of normalized BERDO IDs. Empty if the file is missing
+    or unreadable, so the Owner Portfolio tab falls back to owner-name matching.
+    """
+    try:
+        p = pd.read_csv(path, dtype={"Portfolio ID": str, "Member BERDO IDs": str})
+    except (OSError, ValueError, pd.errors.EmptyDataError):
+        return pd.DataFrame()
+    if "Portfolio ID" not in p.columns or "Member BERDO IDs" not in p.columns:
+        return pd.DataFrame()
+    p = p[p["Portfolio ID"].notna()].copy()
+    p["Portfolio ID"] = p["Portfolio ID"].str.strip()
+    p["member_ids"] = p["Member BERDO IDs"].map(
+        lambda s: [i for i in (normalize_id(x) for x in str(s).split(",")) if i]
+        if pd.notna(s) else [])
+    for col in (PORTFOLIO_STANDARD_COL, PORTFOLIO_ICS_COL, "Gross Floor Area (sq ft)",
+                "Total GHG Emissions (kgCO2e)", "GHG Emissions Intensity (kgCO2e/sq ft)"):
+        if col in p.columns:
+            p[col] = pd.to_numeric(p[col], errors="coerce")
+    return p.reset_index(drop=True)
+
+
+def find_official_portfolios(portfolios: pd.DataFrame, query, df=None) -> pd.DataFrame:
+    """
+    Approved portfolios matching `query`: an exact Portfolio ID (e.g. P10015), the
+    portfolio owner name, or (when `df` is given) the owner name of any member
+    building, since members often have different owner names from the portfolio.
+    Case-insensitive substring match on names. Ordered with portfolio-name matches
+    first, then by how many of the matching owner's buildings each portfolio holds.
+    Empty DataFrame if nothing matches.
+    """
+    q = str(query or "").strip()
+    if portfolios is None or portfolios.empty or not q:
+        return pd.DataFrame()
+    by_id = portfolios["Portfolio ID"].str.upper() == q.upper()
+    if by_id.any():
+        return portfolios[by_id]
+    name_hit = portfolios["Portfolio Owner Name"].astype(str).str.contains(re.escape(q), case=False, na=False)
+    overlap = pd.Series(0, index=portfolios.index)
+    if df is not None and "berdo_id" in df.columns and "Property Owner Name" in df.columns:
+        owned = df[df["Property Owner Name"].astype(str).str.contains(re.escape(q), case=False, na=False)]
+        owned_ids = set(owned["berdo_id"].map(normalize_id).dropna())
+        if owned_ids:
+            overlap = portfolios["member_ids"].map(lambda ids: len(owned_ids.intersection(ids)))
+    hit = name_hit | (overlap > 0)
+    order = (pd.DataFrame({"name": name_hit, "overlap": overlap})[hit]
+             .sort_values(["name", "overlap"], ascending=False, kind="stable").index)
+    return portfolios.loc[order]
+
+
+def official_portfolio_members(df, member_ids):
+    """
+    A portfolio's member buildings in one year's data, joined on BERDO ID (not owner
+    name), as lookup rows. Returns (members_df or None, ids not found in this year).
+    """
+    ids = [normalize_id(i) for i in member_ids]
+    ids = [i for i in ids if i]
+    df = buildings_only(df)
+    if "berdo_id" not in df.columns or not ids:
+        return None, ids
+    norm = df["berdo_id"].map(normalize_id)
+    matches = df[norm.isin(ids)]
+    found = set(norm[matches.index])
+    missing = [i for i in ids if i not in found]
+    if matches.empty:
+        return None, missing
+    return pd.DataFrame([lookup_result_row(r, include_fuel=False) for _, r in matches.iterrows()]), missing
+
+
+def latest_year_with_member_emissions(all_years: dict, member_ids, at_or_before: int):
+    """
+    The latest reporting year, no later than `at_or_before`, in which any portfolio
+    member has building-level GHG emissions. The City reports approved portfolios
+    only at portfolio level from 2026, so member-level estimates use an earlier year.
+    Returns (year, n_members_with_ghg), or (None, 0).
+    """
+    ids = {i for i in (normalize_id(x) for x in member_ids) if i}
+    for year in sorted((y for y in all_years if y <= at_or_before), reverse=True):
+        df = all_years[year]
+        if "berdo_id" not in df.columns or "ghg_emissions" not in df.columns:
+            continue
+        sub = df[df["berdo_id"].map(normalize_id).isin(ids)]
+        n = int(pd.to_numeric(sub["ghg_emissions"], errors="coerce").notna().sum())
+        if n:
+            return year, n
+    return None, 0
+
+
 #Assigning each data file its year
 
 def year_from_filename(file_name: str):
