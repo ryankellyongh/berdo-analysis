@@ -12,7 +12,10 @@ COLS = ["ratio_to_limit", "elec_share", "log_sqft", "mixed_use", "city_owned"]
 def X_of(df):
     X = df[COLS].copy(); X["log_ratio"] = np.log(X.pop("ratio_to_limit").clip(0.05, 10))
     X = X.astype(float); return X.fillna(MED)
-def tier(r): return "Likely over" if r > 1 else ("Watch" if r > 0.9 else "Likely compliant")
+def tier(r):
+    #No mapped BERDO standard means no ratio; don't let NaN fall through to "Likely compliant"
+    if pd.isna(r): return "No limit mapped"
+    return "Likely over" if r > 1 else ("Watch" if r > 0.9 else "Likely compliant")
 
 lab = F[F.city_status.isin(["In Compliance", "Action Needed"]) & F.has_prior].copy()
 y = (lab.city_status == "Action Needed").astype(int).values

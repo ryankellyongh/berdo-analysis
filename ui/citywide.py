@@ -24,6 +24,8 @@ STATUS_GROUPS = [
     ("Fails 2030–34",          "#F76B15", {"Fails 2030–34"}),
     ("Compliant through 2034", "#FFB224", {"Compliant through 2034"}),
     ("Compliant through 2039+", "#30A46C", {"Compliant through 2039+"}),
+    #City confirms 2025-29 compliance, but the data can't be checked against later limits
+    ("Meets 2025–29 limit; later periods unknown", "#7C8DA6", {"Meets 2025–29 limit; later periods unknown"}),
     ("Not yet covered",        "#8E4EC6", {"Not yet covered"}),
     ("Assessed with a portfolio or campus", "#0090FF",
      {"Assessed in a Building Portfolio", "Assessed at campus level", "Campus member (water only)"}),
@@ -72,7 +74,9 @@ def evaluate_year(df: pd.DataFrame) -> pd.DataFrame:
         lim = building_limits(r.get("property_type"), r.get("all_property_types"))["limits"]
         ghg, sqft = r.get("ghg_intensity_kgco2e_sqft"), r.get("gross_floor_area")
         if lim is None or pd.isna(ghg) or pd.isna(sqft) or sqft <= 0:
-            df.at[i, "status_group"] = "Compliant through 2034"     #2025-29 confirmed; later unknown
+            #2025-29 confirmed by the City; later periods can't be assessed without a
+            #limit, intensity, and floor area, so don't imply a 2030-34 result.
+            df.at[i, "status_group"] = "Meets 2025–29 limit; later periods unknown"
             continue
         g = calculate_compliance_gap(float(ghg), float(sqft), None, limits=lim)
         df.at[i, "status_group"] = ("Fails 2030–34" if not g[1]["compliant"] else

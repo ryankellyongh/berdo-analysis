@@ -24,6 +24,9 @@ new = new.rename(columns={"BERDO ID": "berdo_id", "Emissions Compliance Status":
 m = pred.merge(new[["berdo_id", "new_status"]], on="berdo_id", how="left")
 scored = m[m.new_status.isin(["In Compliance", "Action Needed"])].copy()
 scored["action_needed"] = (scored.new_status == "Action Needed").astype(int)
+#The saved file tiers buildings with no mapped standard as "Likely compliant" (NaN ratio).
+#Score them separately so they don't inflate that tier's track record.
+scored.loc[scored.ratio_to_limit.isna() & scored.tier.ne("No earlier data"), "tier"] = "No limit mapped"
 print(f"\n{len(scored)} of {len(pred)} predicted buildings now have a City result")
 print("\nBy tier (share that turned out Action Needed):")
 print(scored.groupby("tier").action_needed.agg(buildings="size", action_needed="sum", share="mean").round(3))

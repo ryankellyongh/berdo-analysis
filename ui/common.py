@@ -16,10 +16,11 @@ def apply_prefill_once(marker_key: str, building_key: str, values: dict):
     """
     Write a looked-up building's values into a tab's input fields, but only when a
     different building (or data year) arrives, so a user's edits survive reruns.
-    Values that are None are skipped.
+    Every value is written, including None: an unknown value clears the field rather
+    than leaving the previous building's number in place. Callers pass the selectbox
+    placeholder (not None) for an unknown category.
     """
     if building_key and building_key != st.session_state.get(marker_key, ""):
         for key, value in values.items():
-            if value is not None:
-                st.session_state[key] = value
+            st.session_state[key] = value
         st.session_state[marker_key] = building_key

@@ -6,6 +6,7 @@ ROOT = HERE.parents[1]
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_loss
+from sklearn.impute import SimpleImputer
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 warnings.filterwarnings("ignore")
@@ -18,7 +19,9 @@ def X_of(df, cols):
     if "eui_change" in cols:
         X["eui_change_missing"] = X.eui_change.isna().astype(int); X["eui_change"] = X.eui_change.fillna(0).clip(-0.5, 0.5)
     if "ratio_to_limit" in cols: X["log_ratio"] = np.log(X.pop("ratio_to_limit").clip(0.05, 10))
-    return X.fillna(X.median(numeric_only=True)).astype(float).values
+    #Leave remaining gaps as NaN: the pipeline's SimpleImputer learns medians from each
+    #training fold only, so held-out rows never inform their own imputation.
+    return X.astype(float).values
 
 SETS = {
     "Ratio to limit only": ["ratio_to_limit"],
@@ -36,7 +39,8 @@ for name, cols in SETS.items():
     X = X_of(lab, cols); aucs, aps, briers = [], [], []
     oof = np.zeros(len(y)); counts = np.zeros(len(y))
     for tr, te in cv.split(X, y):
-        m = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, class_weight=None, max_iter=1000)).fit(X[tr], y[tr])
+        m = make_pipeline(SimpleImputer(strategy="median"), StandardScaler(),
+                          LogisticRegression(C=1.0, class_weight=None, max_iter=1000)).fit(X[tr], y[tr])
         p = m.predict_proba(X[te])[:, 1]
         aucs.append(roc_auc_score(y[te], p)); aps.append(average_precision_score(y[te], p)); briers.append(brier_score_loss(y[te], p))
         oof[te] += p; counts[te] += 1

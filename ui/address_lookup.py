@@ -1111,7 +1111,7 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
 
     opt_prefill = {
         "address":       top.get("Building Address", address_input),
-        "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else 50_000,
+        "sqft":          int(sqft_val) if pd.notna(sqft_val) and sqft_val > 0 else None,   #unknown, not assumed
         "berdo_category": berdo_cat,
         "primary_fuel":  top.get("Primary Fuel", "Mixed / unknown"),
         "building_key":  f"{top.get('BERDO ID') or ''}|{top.get('Building Address', address_input)}|{page.selected_year}",
@@ -1139,7 +1139,7 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
     ghg_emissions_raw = top.get("GHG Emissions (kgCO2e)")
     planner_prefill = {
         "address":          opt_prefill.get("address", address_input),
-        "sqft":             opt_prefill.get("sqft", 50_000),
+        "sqft":             opt_prefill.get("sqft"),
         "berdo_category":   berdo_cat,
         "limits":           use_mix_limits,
         "coverage":         _cov,
@@ -1148,11 +1148,12 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
         "data_year":        (page.selected_year - 1) if page.selected_year else None,
         #Full-precision intensity from reported totals, so the planner's editable
         #field reproduces the reported baseline exactly
+        #None means not reported; a reported 0.0 is kept as 0.0.
         "ghg_intensity":    (float(ghg_emissions_raw) / float(sqft_val)
-                             if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0
+                             if pd.notna(ghg_emissions_raw) and ghg_emissions_raw >= 0
                              and pd.notna(sqft_val) and sqft_val > 0
-                             else float(ghg_val) if pd.notna(ghg_val) and ghg_val > 0 else 0.0),
-        "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw > 0 else None,
+                             else float(ghg_val) if pd.notna(ghg_val) and ghg_val >= 0 else None),
+        "ghg_emissions_kg": float(ghg_emissions_raw) if pd.notna(ghg_emissions_raw) and ghg_emissions_raw >= 0 else None,
         #Identifies this building and data year; the planner pre-fills its fields
         #only when this changes, so user edits aren't overwritten on reruns
         "building_key":     f"{top.get('BERDO ID') or ''}|{top.get('Building Address', address_input)}|{page.selected_year}",
