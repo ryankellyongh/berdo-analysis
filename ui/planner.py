@@ -38,10 +38,13 @@ def _planner_inputs(prefill):
     #Pre-fill the fields only when a different building (or data year) is looked up.
     #This is the only place planner fields are set, so edits survive reruns.
     prefill_addr_key = prefill.get("address", "")
+    #Unknown values are written as None (empty field) so a new building or year never
+    #inherits the previous record's numbers. Check for None, not truthiness: 0.0 is real.
     apply_prefill_once("ep_last_injected_key", prefill.get("building_key") or prefill_addr_key, {
-        "ep_sqft":  int(prefill["sqft"]) if prefill.get("sqft") else None,
-        "ep_btype": prefill.get("berdo_category") or None,
-        "ep_ghg":   float(prefill["ghg_intensity"]) if prefill.get("ghg_intensity") else None,
+        "ep_sqft":  int(prefill["sqft"]) if prefill.get("sqft") is not None else None,
+        "ep_btype": (prefill.get("berdo_category") if prefill.get("berdo_category") in BERDO_STANDARDS
+                     else "Select a type"),
+        "ep_ghg":   float(prefill["ghg_intensity"]) if prefill.get("ghg_intensity") is not None else None,
     })
 
     col1, col2, col3 = st.columns(3)
@@ -49,7 +52,7 @@ def _planner_inputs(prefill):
         sqft = st.number_input(
             "Gross floor area (sq ft)",
             min_value=1, max_value=50_000_000,
-            value=st.session_state.get("ep_sqft", 50_000),
+            value=None, placeholder="Not reported: enter floor area",
             step=1_000, key="ep_sqft",
             help="Pre-filled from Address Lookup if available.",
         )
@@ -67,7 +70,7 @@ def _planner_inputs(prefill):
         ghg_intensity = st.number_input(
             "Current GHG intensity (kg CO₂e/sqft/yr)",
             min_value=0.0, max_value=1000.0,
-            value=float(st.session_state.get("ep_ghg", 0.0)),
+            value=None, placeholder="Not reported: enter intensity",
             step=0.001, format="%.3f", key="ep_ghg",
             help="Pre-filled from Address Lookup if available. Found on your BERDO report.",
         )
@@ -80,12 +83,16 @@ def _planner_inputs(prefill):
             "Change the building type above to use a single-category limit instead."
         )
 
-    #Zero is a valid intensity (e.g. all-electric with renewables) for a looked-up
-    #building; with nothing pre-filled, 0 means "not entered yet".
-    if not berdo_category or sqft <= 0 or ghg_intensity < 0 or (ghg_intensity == 0 and not prefill_addr_key):
+    #An empty field (None) means unknown and pauses the projection. Zero is a valid
+    #intensity (e.g. all-electric with renewables), so it is never treated as missing.
+    if not berdo_category or sqft is None or ghg_intensity is None:
+        missing = [name for name, v in (("building type", berdo_category), ("floor area", sqft),
+                                        ("GHG intensity", ghg_intensity)) if v is None]
         st.info(
-            "Enter your building type and current GHG intensity above to see the compliance projection. "
-            "Look up your building in the Address Lookup tab to pre-fill automatically."
+            f"Enter the {', '.join(missing)} above to see the compliance projection. "
+            + ("This building's record doesn't report these values for the selected year."
+               if prefill_addr_key else
+               "Look up your building in the Address Lookup tab to pre-fill automatically.")
         )
         raise _EndTab
     return berdo_category, ghg_intensity, prefill_addr_key, sqft
@@ -233,8 +240,8 @@ def _planner_projection(berdo_category, show_grid_decarb, prefill, elec_share, u
     total_emissions_kg = baseline_intensity * sqft
     _rep_i = prefill.get("ghg_intensity")
     _rep_sqft = prefill.get("sqft")
-    if _rep_i and prefill_addr_key:
-        if abs(ghg_intensity - _rep_i) < 5e-4 and _rep_sqft and int(sqft) == int(_rep_sqft):
+    if _rep_i is not None and prefill_addr_key:
+        if abs(ghg_intensity - _rep_i) < 5e-4 and _rep_sqft is not None and int(sqft) == int(_rep_sqft):
             st.caption(
                 f"Baseline: **{total_emissions_kg:,.0f} kg CO₂e/yr**, from the building's reported "
                 f"BERDO data ({baseline_intensity:.3f} kg CO₂e/sqft/yr). Edit the fields above to "

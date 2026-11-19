@@ -61,9 +61,12 @@ def _retrofit_inputs(prefill):
     
     apply_prefill_once("opt_last_injected_key",
                        prefill.get("building_key") or prefill.get("address", ""), {
-        "opt_sqft":  int(prefill["sqft"]) if prefill.get("sqft") else None,
-        "opt_btype": prefill.get("berdo_category") if prefill.get("berdo_category") in BERDO_STANDARDS else None,
-        "opt_fuel":  prefill.get("primary_fuel") if prefill.get("primary_fuel") in FUEL_TYPES_OPT else None,
+        "opt_sqft":  int(prefill["sqft"]) if prefill.get("sqft") is not None else None,
+        "opt_btype": (prefill.get("berdo_category") if prefill.get("berdo_category") in BERDO_STANDARDS
+                      else "Select a type"),
+        "opt_fuel":  (prefill.get("primary_fuel") if prefill.get("primary_fuel") in FUEL_TYPES_OPT
+                      else "Mixed / unknown" if "Mixed / unknown" in FUEL_TYPES_OPT
+                      else FUEL_TYPES_OPT[0]),
     })
 
     st.subheader("Building inputs")
@@ -73,7 +76,7 @@ def _retrofit_inputs(prefill):
         sqft = st.number_input(
             "Gross floor area (sq ft)",
             min_value=1, max_value=50_000_000,
-            value=st.session_state.get("opt_sqft", 50_000),
+            value=None, placeholder="Not reported: enter floor area",
             step=1_000,
             help="Pre-filled from Address Lookup if available.",
             key="opt_sqft",
@@ -104,6 +107,11 @@ def _retrofit_inputs(prefill):
             help="Affects which electrification incentives apply.",
             key="opt_fuel",
         )
+
+    if sqft is None:
+        st.info("Enter the gross floor area above to estimate costs, incentives, and ACP. "
+                "It isn't reported for this building in the selected year.")
+        raise _EndTab
 
     #Fine exposure context (pre-filled from address lookup)
     
@@ -315,13 +323,28 @@ def _retrofit_planned_project(sqft, prefill, berdo_category):
 
 
 def _retrofit_avoided(prefill, berdo_category, sqft, new_intensity):
-    """Baseline, remaining, and avoided ACP (2025-29, per year). Unknown values are None."""
-    baseline = prefill.get("annual_fine_usd")
-    if not berdo_category or berdo_category not in BERDO_STANDARDS:
-        return baseline, None, None
+    """Baseline, remaining, and avoided ACP (2025-29, per year). Unknown values are None.
+
+    Baseline and remaining must describe the same building: same floor area, category,
+    limit, and coverage. When the user hasn't edited the looked-up floor area or category,
+    the stored baseline is kept (it reflects the City's reported status). Otherwise the
+    baseline is recalculated from the edited inputs, so an edit can't credit the project
+    with ACP from a different-sized building.
+    """
+    stored = prefill.get("annual_fine_usd")
+    if not berdo_category or berdo_category not in BERDO_STANDARDS or sqft is None:
+        return stored, None, None
     limit_2025 = limits_for_category(berdo_category, prefill)[0]
     covered = period_covered(coverage_from_prefill(prefill), 0)
     remaining = remaining_acp(new_intensity, sqft, limit_2025, covered)
+    unedited = (prefill.get("sqft") is not None and int(sqft) == int(prefill["sqft"])
+                and berdo_category == prefill.get("berdo_category"))
+    if unedited:
+        baseline = stored
+    elif prefill.get("ghg_intensity") is not None:
+        baseline = remaining_acp(prefill["ghg_intensity"], sqft, limit_2025, covered)
+    else:
+        baseline = None
     return baseline, remaining, avoided_acp(baseline, remaining)
 
 
@@ -1056,7 +1079,7 @@ def render_retrofit_optimizer_tab(page, prefill: dict = None):
         new_intensity = _retrofit_planned_project(sqft, prefill, berdo_category)
         _baseline, _remaining, _avoided = _retrofit_avoided(prefill, berdo_category, sqft, new_intensity)
         matched, net_high, net_low = _retrofit_incentives(scopes_selected, fuel, ownership, berdo_category, sqft, total_cost_low, total_cost_high, prefill, _avoided)
-        annual_fine = _retrofit_payback(prefill_fine, _avoided, _remaining, sqft, net_low, net_high)
+        annual_fine = _retrofit_payback(_baseline, _avoided, _remaining, sqft, net_low, net_high)
         _retrofit_three_paths(page, annual_fine, berdo_category, prefill, sqft, net_low, net_high, new_intensity)
         _retrofit_phasing_and_notes(matched)
     except _EndTab:
