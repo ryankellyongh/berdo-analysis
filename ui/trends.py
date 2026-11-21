@@ -17,6 +17,8 @@ def _trends(_all_years, years_key):
 
 
 def _layout(fig, height=300, **kw):
+    #Labels on bars never shrink below a readable size (Plotly otherwise scales them to fit)
+    fig.update_layout(uniformtext=dict(minsize=12, mode="show"))
     fig.update_layout(height=height, margin=dict(t=10, b=10, l=10, r=10),
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", **kw)
@@ -81,12 +83,15 @@ def render_trends(all_years):
             pcts = [g["total_pct"], g["grid_pct"], g["building_pct"]]
             fig = go.Figure(go.Bar(x=vals, y=labels, orientation="h", marker_color=[GREY, BLUE, ORANGE],
                                    text=[f"{v:,.0f} t ({p:+.1%})" for v, p in zip(vals, pcts)],
-                                   textposition="auto", hovertemplate="%{y}: %{x:,.0f} metric tons<extra></extra>"))
+                                   textposition="auto", textfont=dict(size=13), cliponaxis=False,
+                                   hovertemplate="%{y}: %{x:,.0f} metric tons<extra></extra>"))
             fig.update_yaxes(autorange="reversed")
             fig.update_xaxes(title="Metric tons CO₂e")
             st.plotly_chart(_layout(fig, showlegend=False), width="stretch")
 
-    #Share over limit and categories
+    #Share over limit and categories: both charts get the same height so the panels line up
+    w = t.get("by_category")
+    row_h = max(320, 34 * len(w) + 90) if w is not None and len(w) else 320
     left, right = st.columns(2)
     with left:
         st.markdown("**Buildings above the 2025–29 limit**")
@@ -94,20 +99,23 @@ def render_trends(all_years):
                                    text=[f"{v:.0%}" for v in so], textposition="top center",
                                    line=dict(color=RED, width=2.5), hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
         fig.update_xaxes(dtick=1)
-        fig.update_yaxes(title="% of buildings", rangemode="tozero")
-        st.plotly_chart(_layout(fig, showlegend=False), width="stretch")
+        fig.update_yaxes(title="% of buildings", rangemode="tozero", range=[0, max(so * 100) * 1.18])
+        st.plotly_chart(_layout(fig, height=row_h, showlegend=False), width="stretch")
     with right:
-        w = t.get("by_category")
         if w is not None and len(w):
             y0, y1 = t["category_years"]
             st.markdown(f"**Emissions per sq ft by category, {y0}→{y1}**")
             fig = go.Figure(go.Bar(x=(w["change"] * 100).round(1), y=w.index, orientation="h",
                                    marker_color=[BLUE if v < 0 else RED for v in w["change"]],
                                    text=[f"{v:+.0%} ({int(n)})" for v, n in zip(w["change"], w["buildings"])],
-                                   textposition="auto",
+                                   textposition="outside", textfont=dict(size=12), cliponaxis=False,
                                    hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
-            fig.update_xaxes(title="% change (buildings in parentheses)")
-            st.plotly_chart(_layout(fig, height=max(260, 28 * len(w)), showlegend=False), width="stretch")
+            #Room on the left for the outside labels; largest change listed first
+            lo = float((w["change"] * 100).min())
+            fig.update_xaxes(title="% change (buildings in parentheses)", ticksuffix="%",
+                             range=[lo * 1.35 if lo < 0 else 0, max(0, float((w["change"] * 100).max())) + 2])
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(_layout(fig, height=row_h, showlegend=False), width="stretch")
 
     with st.expander("How to read these trends"):
         st.markdown(
