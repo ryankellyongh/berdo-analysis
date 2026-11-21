@@ -119,3 +119,38 @@ def test_city_compliant_with_limit_is_still_assessed():
         return
     ev = cw.evaluate_year(_city_compliant("Office"))                       # 4.0 kg/sf: 2030 limit 3.2
     assert ev.loc[0, "status_group"] == "Fails 2030–34"
+
+
+# 5. Blank and duplicate rows ---------------------------------------------------------
+
+def _raw_rows(rows):
+    base = {"BERDO ID": "1", "Building Address": "1 A St", "Property Owner Name": "OWNER LLC",
+            "Largest Property Type": "Office", "Reported Gross Floor Area (Sq Ft)": 50_000,
+            "Site EUI (Energy Use Intensity kBtu/ft²)": 60, "Estimated Total GHG Emissions (kgCO2e)": 300_000,
+            "Reporting Compliance Status": "In Compliance", "First Emissions Compliance Year (Projected)": 2025}
+    return pd.DataFrame([{k: None for k in base} if r is None else {**base, **r} for r in rows])
+
+
+def test_blank_separator_row_is_not_a_building():
+    df = D.prepare_dataframe(_raw_rows([{}, None, {"BERDO ID": "C1", "Building Address": None}]))
+    assert len(df) == 2 and df["berdo_id"].tolist() == ["1", "C1"]
+
+
+def test_exact_duplicate_rows_counted_once_but_conflicts_kept():
+    df = D.prepare_dataframe(_raw_rows([{}, {}, {"BERDO ID": "2"}, {"BERDO ID": "2", "Building Address": "2 B St"}]))
+    assert df["berdo_id"].tolist() == ["1", "2", "2"]      # same ID, different address: left for a person
+
+
+# 6. Outlook list never labels buildings under City review ---------------------------
+
+def test_outlook_list_hides_estimates_under_review():
+    ol = _ui("ui.outlook")
+    if ol is None:
+        return
+    from berdo.predictions import UNDER_REVIEW, load_predictions
+    d = ol._display_table(load_predictions())
+    review = d["city_status"].eq(UNDER_REVIEW)
+    assert review.sum() == 249
+    assert d.loc[review, "Tier"].eq("No estimate").all() and d.loc[review, "Chance"].isna().all()
+    assert d.loc[d["tier"].eq("No limit mapped"), "Chance"].isna().all()
+    assert d["Tier"].iloc[0] == "Likely over"                     # highest-risk buildings listed first

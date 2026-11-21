@@ -27,9 +27,9 @@ def test_tier_track_record():
 def test_prediction_summary():
     s = prediction_summary(_df()).set_index("Group")
     assert s.loc["Pending Reporting", "Buildings"] == 3 and s.loc["Under City review", "Buildings"] == 2
-    assert s.loc["Pending Reporting", "Expected Action Needed (model)"] == round(0.4 + 0.2 + 0.01)   # 1
+    assert s.loc["Pending Reporting", "Expected (model)"] == round(0.4 + 0.2 + 0.01)   # 1
     # tier rates: 35/88 + 8/45 + 4/676 = 0.58 -> 1
-    assert s.loc["Pending Reporting", "Expected Action Needed (tier rates)"] == 1
+    assert s.loc["Pending Reporting", "Expected (tier rates)"] == 1
     assert s.loc["Under City review", "With earlier data"] == 1
 
 
@@ -66,7 +66,17 @@ def test_saved_predictions_file():
     assert d is not None and len(d) == 1359
     assert (d["tier"] == "Likely over").sum() == 163 and (d["tier"] == "Watch").sum() == 54
     assert d["zip"].dropna().str.len().eq(5).all()                       # five-digit ZIP codes
+    assert (d["tier"] == "No limit mapped").sum() == 11                   # shown apart, not as Likely compliant
+    assert (d["tier"] == "Likely compliant").sum() == 545
     assert load_predictions("does/not/exist.csv") is None
+
+
+def test_saved_on_date_comes_from_the_hash_file(tmp_path):
+    from berdo.predictions import _saved_on
+    f = tmp_path / "prediction_hash.txt"
+    f.write_text("predictions_2026_pending.csv\nSHA-256: abc\nCreated: 2026-10-09\n")
+    assert _saved_on(f) == "October 9, 2026"
+    assert _saved_on(tmp_path / "missing.txt") == "October 9, 2026"       # fallback
 
 
 def test_probabilities_never_shown_as_certain():

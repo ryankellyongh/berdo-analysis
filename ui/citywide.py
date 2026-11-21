@@ -127,15 +127,16 @@ def _map(b: pd.DataFrame):
     present = [n for n, _, _ in STATUS_GROUPS if n in set(b["status_group"])]
     if OTHER_GROUP in set(b["status_group"]):
         present.append(OTHER_GROUP)
-    c1, c2, c3 = st.columns([3, 1.2, 1])
+    #Two dropdowns share one row; the status filter gets its own full-width row as pills,
+    #so long status names are never cut off and every control lines up.
+    c1, c2 = st.columns(2, vertical_alignment="bottom")
     with c1:
-        show = st.multiselect("Status", present, key="cw_map_status",
-                              default=[g for g in present if g not in HIDDEN_BY_DEFAULT])
-    with c2:
         cats = ["All categories"] + sorted(c for c in b["berdo_category"].unique() if c != "Unmapped or missing")
         cat = st.selectbox("Building category", cats, key="cw_map_cat")
-    with c3:
+    with c2:
         base = st.selectbox("Basemap", list(basemaps), key="cw_map_base")
+    show = st.pills("Status", present, selection_mode="multi", key="cw_map_status",
+                    default=[g for g in present if g not in HIDDEN_BY_DEFAULT]) or []
     m = b[b["status_group"].isin(show) & b["lat"].notna()]
     if cat != "All categories":
         m = m[m["berdo_category"] == cat]
@@ -226,9 +227,8 @@ def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
                | status.isin(["Under City review", "Pending reporting (City)"]))
 
     r1 = st.columns(4)
+    #No delta badge: it made this card taller than the rest. The campus count is in the caption.
     r1[0].metric("Covered buildings", f"{counts['buildings']:,}",
-                 delta=f"+{counts['campus_assessments']} campus records" if counts["campus_assessments"] else None,
-                 delta_color="off",
                  help="Buildings only. Campus records hold a whole campus's totals and are counted "
                       "separately, never added to the building counts on this page.")
     r1[1].metric("Reported, usable data", f"{int((b['data_status'] == 'Reported').sum()):,}")
@@ -245,7 +245,11 @@ def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
     r2[2].metric("Not subject (State / Vacant)", f"{int(not_subject.sum()):,}")
     r2[3].metric("Compliance unknown", f"{int(unknown.sum()):,}",
                  help="Data incomplete, coverage year missing, under City review, or pending reporting.")
-    st.caption("Not an official City of Boston determination.")
+    note = "Not an official City of Boston determination."
+    if counts["campus_assessments"]:
+        note = (f"Building counts exclude {counts['campus_assessments']:,} campus records, which hold a "
+                f"whole campus's totals. {note}")
+    st.caption(note)
 
     st.markdown("---")
     _map(b)

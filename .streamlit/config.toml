@@ -1,19 +1,4 @@
-#Switchable light and dark themes with the same City blue accent.
 [theme]
+# City of Boston Optimistic Blue for selected tabs, pills, toggles, sliders, and focus rings.
+# No "base" setting: the app follows each viewer's light or dark mode.
 primaryColor = "#288BE4"
-font = "sans serif"
-
-[theme.light]
-primaryColor = "#288BE4"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-textColor = "#262730"
-
-[theme.dark]
-primaryColor = "#288BE4"
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#1C2430"
-textColor = "#E6EDF3"
-
-[client]
-toolbarMode = "viewer"

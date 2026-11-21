@@ -24,7 +24,8 @@ def render_about(years):
                 "the change comes from a cleaner grid.\n"
                 "- **Address Lookup:** one building's evidence, limits, estimated ACP, compliance "
                 "pathways, and a one-page PDF summary.\n"
-                "- **Owner Portfolio:** buildings that share an owner name, with a blended standard.\n"
+                "- **Owner Portfolio:** the City's approved Building Portfolios, found by portfolio ID, name, "
+                "or member owner; owner-name matches are shown as candidates when no approved portfolio fits.\n"
                 "- **Retrofit & Incentives:** project cost, avoided ACP, payback, and programs to investigate.\n"
                 "- **Emissions Planner:** year-by-year emissions and ACP with planned projects."
             )

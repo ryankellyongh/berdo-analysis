@@ -130,6 +130,14 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip()
+    #Drop rows with nothing in them. The City's 2022, 2023, and 2025 files have a blank
+    #separator row between the buildings and the campus records, which would otherwise be
+    #counted as a building with incomplete data.
+    empty = df.apply(lambda c: c.isna() | c.astype(str).str.strip().eq(""))
+    df = df[~empty.all(axis=1)]
+    #Exact duplicate rows are one building listed twice (14 in the 2024 file). Rows that
+    #share a BERDO ID but differ in any value are kept: they need a person to resolve.
+    df = df.drop_duplicates().reset_index(drop=True)
     df = df.rename(columns=COLUMN_RENAME_MAP)
     #Stable identifiers for linking the same building across years
     for _id_col in ("berdo_id", "tax_parcel_id", "campus_id"):
