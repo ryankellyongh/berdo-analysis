@@ -111,17 +111,20 @@ def render_outlook_tab(page):
 
     summary = prediction_summary(df)
     risk = df[df["tier"].isin(["Likely over", "Watch"])]
-    exp_low = int(summary[["Expected Action Needed (model)", "Expected Action Needed (tier rates)"]].min(axis=1).sum())
-    exp_high = int(summary[["Expected Action Needed (model)", "Expected Action Needed (tier rates)"]].max(axis=1).sum())
+    exp_low = int(summary[["Expected (model)", "Expected (tier rates)"]].min(axis=1).sum())
+    exp_high = int(summary[["Expected (model)", "Expected (tier rates)"]].max(axis=1).sum())
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Buildings without a City result", f"{len(df):,}")
     c2.metric("Likely over", f"{int((df['tier'] == 'Likely over').sum()):,}")
     c3.metric("Watch", f"{int((df['tier'] == 'Watch').sum()):,}")
-    c4.metric("Expected Action Needed", f"about {exp_low} to {exp_high}")
+    c4.metric("Expected Action Needed (about)", f"{exp_low}–{exp_high}",
+              help="Low end: each tier's count times its track record. High end: the sum of the "
+                   "model's probabilities. Buildings with no earlier data aren't included.")
     st.dataframe(summary, use_container_width=True, hide_index=True)
     st.caption("Two estimates of how many will be Action Needed: the sum of the model's probabilities, "
                "and each tier's count times its track record (below). The model runs slightly high for "
-               "low-risk buildings. Buildings with no earlier data can't be predicted individually.")
+               "low-risk buildings. Buildings with no earlier data can't be predicted individually, and "
+               "buildings whose use has no mapped BERDO standard are shown as \"No limit mapped.\"")
 
     st.markdown("---")
     st.subheader("Where the at-risk buildings are")
