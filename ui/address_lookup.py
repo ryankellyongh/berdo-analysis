@@ -625,22 +625,15 @@ def render_yoy_trend(building, all_years: dict[int, pd.DataFrame]):
             delta=f"{eui_delta:+.1f} vs {int(prior['year'])}" if pd.notna(eui_delta) else None,
             delta_color="inverse",
         )
-    with col3:
-        n_ghg = trend_df["ghg_intensity"].notna().sum()
-        missing_ghg = trend_df.loc[trend_df["ghg_intensity"].isna(), "year"].astype(int).tolist()
-        st.metric(label="Years of GHG data", value=int(n_ghg))
-        if missing_ghg:
-            st.caption(f"No data: {', '.join(str(y) for y in missing_ghg)}")
-        else:
-            st.caption("All years present")
-    with col4:
-        n_eui = trend_df["site_eui"].notna().sum()
-        missing_eui = trend_df.loc[trend_df["site_eui"].isna(), "year"].astype(int).tolist()
-        st.metric(label="Years of EUI data", value=int(n_eui))
-        if missing_eui:
-            st.caption(f"No data: {', '.join(str(y) for y in missing_eui)}")
-        else:
-            st.caption("All years present")
+    #Coverage cards: "5 of 6" with the missing years in the help icon, so all four cards
+    #hold only a metric and line up (a caption under two of them made the row uneven).
+    n_years = len(trend_df)
+    for col, field, label in ((col3, "ghg_intensity", "Years of GHG data"), (col4, "site_eui", "Years of EUI data")):
+        missing = trend_df.loc[trend_df[field].isna(), "year"].astype(int).tolist()
+        with col:
+            st.metric(label=label, value=f"{int(trend_df[field].notna().sum())} of {n_years}",
+                      help=(f"No data for {', '.join(str(y) for y in missing)}." if missing
+                            else "Every reporting year has data."))
 
     #Trend chart
     fig = go.Figure()
@@ -686,34 +679,29 @@ def render_yoy_trend(building, all_years: dict[int, pd.DataFrame]):
 
     st.plotly_chart(fig, use_container_width=True)
 
+    #Notes under the chart, gathered into one full-width block so they read as one unit
+    notes = []
     if 2022 in [r["year"] for r in records] and trend_df.loc[trend_df["year"] == 2022, "ghg_intensity"].isna().all():
-        st.caption(
-            "2022 GHG intensity is not shown because the City of Boston did not publish "
-            "GHG emissions totals in that year's dataset."
-        )
-
+        notes.append("2022 GHG intensity is not shown because the City of Boston did not publish "
+                     "GHG emissions totals in that year's dataset.")
     #How each year was matched, so users can judge the trend
     by_method = {}
     for r in records:
         by_method.setdefault(r["matched_by"], []).append(str(int(r["year"])))
-    st.caption("Years linked by " + "; ".join(
+    notes.append("Years linked by " + "; ".join(
         f"{method}: {', '.join(yrs)}" for method, yrs in by_method.items()) + ".")
-    weaker = [r for r in records if r["matched_by"] != "BERDO ID"]
-    if weaker:
-        st.caption(
-            "Years not linked by BERDO ID are matched by tax parcel or exact address, "
-            "which is less certain. Check that the floor area and use look consistent."
-        )
+    if any(r["matched_by"] != "BERDO ID" for r in records):
+        notes.append("Years not linked by BERDO ID are matched by tax parcel or exact address, "
+                     "which is less certain. Check that the floor area and use look consistent.")
     dups = [str(int(r["year"])) for r in records if r["duplicates"]]
     if dups:
-        st.caption(
-            f"More than one record for this building in {', '.join(dups)}; the record with "
-            "emissions data (or the larger floor area) is shown."
-        )
+        notes.append(f"More than one record for this building in {', '.join(dups)}; the record with "
+                     "emissions data (or the larger floor area) is shown.")
     renamed = {r["address_that_year"] for r in records if r["address_that_year"]}
     if len(renamed) > 1:
-        st.caption("The address is written differently across years: " +
-                   "; ".join(sorted(str(a) for a in renamed)) + ".")
+        notes.append("The address is written differently across years: " +
+                     "; ".join(sorted(str(a) for a in renamed)) + ".")
+    st.caption("  \n".join(notes))
 
     prior_ghg   = prior["ghg_intensity"] if pd.notna(prior["ghg_intensity"]) else None
     prior_label = str(int(prior["year"]))
@@ -876,7 +864,7 @@ def _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note):
 - **Unknown (data incomplete)**: compliance can't be determined from what was reported.
 
 **Est. ACP (2025–29)**
-- Estimated annual Alternative Compliance Payment for the current period, at \$234 per metric ton CO₂e over the limit. Shows \$0 for compliant buildings and those not yet covered.""")    
+- Estimated annual Alternative Compliance Payment for the current period, at \$234 per metric ton CO₂e over the limit. Shows \$0 for covered buildings within their limit, and N/A when it can't be estimated (not yet covered, not assessed, or data missing).""")    
 
     st.markdown("---")
 
