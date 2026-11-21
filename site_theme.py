@@ -218,13 +218,10 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 /* Digits share one width, so numbers in neighbouring cards and tables line up */
 [data-testid="stMetricValue"], [data-testid="stMarkdownContainer"] table {{ font-variant-numeric: tabular-nums; }}
 
-/* Line length: paragraphs, lists, and captions stop at a readable width on wide screens.
-   Alerts, the hero, and the footer keep the full column. */
+/* Text runs the full width of the content column, with comfortable line spacing */
 [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li,
-[data-testid="stCaptionContainer"] {{ max-width: 78ch; line-height: 1.6; }}
+[data-testid="stCaptionContainer"] {{ max-width: none; line-height: 1.6; }}
 [data-testid="stMarkdownContainer"] li + li {{ margin-top: 0.25rem; }}
-[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
-.site-hero p, .site-footer {{ max-width: none; }}
 
 /* Pills (map status filter): selected pills use the site blue, not Streamlit's default red */
 [data-testid="stBaseButton-pillsActive"] {{
