@@ -147,8 +147,8 @@ def projection_settings(tab_id):
                       disabled=not st.session_state["grid_on"])
         _b, _e = effective_grid_ef(ey), effective_grid_ef(2050)
         st.caption(f"Grid factor {_b:.0f} kg/MWh in {ey} (the emissions year) → {_e:.0f} kg/MWh in 2050 "
-                   f"({round((1 - _e / _b) * 100)}% cleaner). Shared by Address Lookup, Owner Portfolio, "
-                   "and Emissions Planner.")
+                   f"({round((1 - _e / _b) * 100)}% cleaner). Shared by Address Lookup, Portfolios, "
+                   "and Planner.")
 
 
 selected_year = st.session_state["selected_year"]
@@ -181,8 +181,9 @@ with st.container(key="site_header"):
 #Order matters: Address Lookup (tabs[3]) writes optimizer_prefill and planner_prefill,
 #which Retrofit (tabs[5]) and Planner (tabs[6]) read later in the same run.
 with st.container(key="site_nav"):
-    tabs = st.tabs(["Citywide Overview", "Outreach", "Trends", "Address Lookup", "Owner Portfolio",
-                    "Retrofit & Incentives", "Emissions Planner", "About"])
+    #Short labels, so all eight fit on one row beside the brand, like a website menu
+    tabs = st.tabs(["Overview", "Outreach", "Trends", "Address Lookup", "Portfolios",
+                    "Retrofits", "Planner", "About"])
 
 with tabs[0]:
     page_heading("citywide")

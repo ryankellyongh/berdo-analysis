@@ -827,7 +827,7 @@ def _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note):
         dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
         st.caption(
             f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
-                    "Used to pre-fill the Retrofit & Incentives tab."
+                    "Used to pre-fill the Retrofits tab."
         )
     if bldg_share is not None:
         st.caption(
@@ -1149,7 +1149,7 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
     st.session_state["planner_prefill"] = planner_prefill
 
     st.info(
-        "Building data saved: open the **Retrofit & Incentives** or **Emissions Planner** tabs "
+        "Building data saved: open the **Retrofits** or **Planner** tabs "
                 "to model funding programs and compliance trajectory for this building."
     )
 

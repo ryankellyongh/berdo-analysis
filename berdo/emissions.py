@@ -581,7 +581,7 @@ def get_compliance_pathways(ctx: dict) -> list:
          "deadline": "Ongoing; plan around equipment replacement cycles",
          "links": L(("Retrofit Resource Hub", "retrofit_hub"),
                     ("Building Decarbonization Advisor Program", "advisor_program")),
-         "why": "model projects in the Retrofit & Incentives and Emissions Planner tabs.",
+         "why": "model projects in the Retrofits and Planner tabs.",
          "strong": over_now or fails_later},
         {"group": "Ways to comply", "name": "Renewable energy (RECs, PPAs)",
          "what": "Buy eligible renewable energy to offset electricity emissions. "
