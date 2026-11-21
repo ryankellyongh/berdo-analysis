@@ -166,7 +166,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
   .st-key-site_nav {{ margin-top: -96px; }}
   .st-key-site_nav [role="tablist"] {{
     margin-left: 300px; min-height: 80px; align-items: center;
-    justify-content: space-between; border-bottom: none !important;
+    justify-content: flex-end; border-bottom: none !important;
   }}
 }}
 .st-key-site_nav [role="tab"][aria-selected="true"] p {{ color: var(--site-accent) !important; }}
@@ -194,11 +194,16 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
   overflow-wrap: anywhere;
 }}
 [data-testid="stMetric"] {{ overflow: visible; }}
-/* 3. Tabs wrap onto a second row rather than hiding behind a horizontal scroll */
+/* 3. Menu: one row on wide screens, evenly spaced from the right like a site menu;
+   on narrower screens it wraps below the brand rather than hiding behind a scroll */
 .st-key-site_nav [role="tablist"] {{
-  flex-wrap: wrap !important; overflow: visible !important; row-gap: 4px; column-gap: 6px;
+  flex-wrap: wrap !important; overflow: visible !important; row-gap: 4px; column-gap: 4px;
 }}
-.st-key-site_nav [role="tab"] p {{ font-size: 0.92rem !important; white-space: nowrap; }}
+.st-key-site_nav [role="tab"] {{ padding: 10px 14px !important; }}
+.st-key-site_nav [role="tab"] p {{ font-size: 0.95rem !important; white-space: nowrap; }}
+@media (min-width: 1360px) {{
+  .st-key-site_nav [role="tablist"] {{ flex-wrap: nowrap !important; }}
+}}
 /* 4. Headings and expander titles scale down and wrap on narrow screens */
 .site-hero h1 {{ font-size: clamp(1.5rem, 1.1rem + 1.4vw, 2rem) !important; overflow-wrap: anywhere; }}
 .stMarkdown h4 {{ font-size: clamp(1rem, 0.95rem + 0.3vw, 1.15rem); }}
@@ -222,6 +227,11 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li,
 [data-testid="stCaptionContainer"] {{ max-width: none; line-height: 1.6; }}
 [data-testid="stMarkdownContainer"] li + li {{ margin-top: 0.25rem; }}
+
+/* About page: the two cards beside each other are the same height */
+.st-key-about_cards [data-testid="stHorizontalBlock"] {{ align-items: stretch; }}
+.st-key-about_cards [data-testid="stColumn"] > div,
+.st-key-about_cards [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] {{ height: 100%; }}
 
 /* Pills (map status filter): selected pills use the site blue, not Streamlit's default red */
 [data-testid="stBaseButton-pillsActive"] {{

@@ -13,36 +13,45 @@ def render_about(years):
         "Boston's Building Emissions Reduction and Disclosure Ordinance (BERDO): who needs help "
         "reporting, which buildings may exceed their emissions limits, and what owners can do next."
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        with st.container(border=True):
-            st.markdown("#### What each page does")
-            st.markdown(
-                "- **Address Lookup:** one building's evidence, limits, estimated ACP, compliance "
-                "pathways, and a one-page PDF summary. Start here for any single building.\n"
-                "- **Outreach:** every building that may need contact (City Action Needed results, "
-                "buildings estimated to be at risk, and buildings that didn't report) in one list, "
-                "with a detail panel and map. Access code required.\n"
-                "- **Citywide:** totals for the selected year and the category table, then trends over "
-                "time, including how much of the change comes from a cleaner grid.\n"
-                "- **Portfolios:** the City's approved Building Portfolios, found by portfolio ID, name, "
-                "or member owner; owner-name matches are shown as candidates when no approved portfolio fits.\n"
-                "- **Retrofits:** project cost, avoided ACP, payback, and programs to investigate.\n"
-                "- **Planner:** year-by-year emissions and ACP with planned projects."
-            )
-    with c2:
-        with st.container(border=True):
-            st.markdown("#### How the numbers work")
-            st.markdown(
-                f"- **ACP** (Alternative Compliance Payment) is estimated at ${ACP_RATE} per metric ton "
-                "of CO₂e above a building's limit.\n"
-                "- **Avoided ACP** is baseline ACP minus the ACP still owed after a project. Payback "
-                "uses avoided ACP plus energy savings.\n"
-                "- **N/A** means a value can't be estimated (missing data, not yet covered, or not "
-                "assessed). It never means $0.\n"
-                "- Potential incentives are leads to verify. Only confirmed funding reduces net cost.\n"
-                "- Each reporting year holds the previous calendar year's energy and emissions."
-            )
+    #The two cards sit in a keyed container so site_theme.py can give them equal heights
+    with st.container(key="about_cards"):
+        c1, c2 = st.columns(2)
+        with c1:
+            with st.container(border=True):
+                st.markdown("#### What each page provides")
+                st.markdown(
+                    "- **Address Lookup:** a building-level profile with reported energy use and emissions, "
+                    "applicable limits by compliance period, estimated ACP exposure, compliance pathways, "
+                    "and a one-page PDF summary.\n"
+                    "- **Outreach:** a prioritized list of buildings that may require follow-up: City "
+                    "Action Needed results, buildings estimated to be at risk, and buildings that did not "
+                    "report. Restricted to authorized users.\n"
+                    "- **Citywide:** aggregate reporting and compliance status for the selected year, "
+                    "buildings by compliance period, and multi-year trends in energy use and emissions.\n"
+                    "- **Portfolios:** approved City Building Portfolios and owner-level summaries with "
+                    "blended emissions standards.\n"
+                    "- **Retrofits:** retrofit cost ranges, avoided ACP, simple payback, and incentive "
+                    "programs to evaluate.\n"
+                    "- **Planner:** year-by-year emissions and ACP projections through 2050, including "
+                    "planned projects and grid decarbonization."
+                )
+        with c2:
+            with st.container(border=True):
+                st.markdown("#### How the figures are calculated")
+                st.markdown(
+                    f"- **Alternative Compliance Payment (ACP):** estimated at ${ACP_RATE} per metric ton "
+                    "of CO₂e above the applicable emissions standard, as set by the BERDO ordinance.\n"
+                    "- **Avoided ACP:** baseline ACP less the ACP remaining after a project. Simple payback "
+                    "combines avoided ACP with estimated energy savings.\n"
+                    "- **Reporting years:** each reporting year contains the previous calendar year's "
+                    "energy use and emissions.\n"
+                    "- **Missing values:** shown as N/A or “—” when a figure cannot be estimated (incomplete "
+                    "data, not yet covered, or not assessed); never shown as $0.\n"
+                    "- **Incentives:** listed programs are leads to verify. Only confirmed funding reduces "
+                    "net project cost.\n"
+                    "- **Projections:** emissions are held at last reported levels unless a scenario is "
+                    "applied. Predictions are screening estimates, not City determinations."
+                )
     with st.container(border=True):
         st.markdown("#### Sources")
         st.markdown(

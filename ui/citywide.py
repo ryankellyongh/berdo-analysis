@@ -15,6 +15,7 @@ from berdo.data import buildings_only, headline_counts
 from berdo.emissions import (building_limits, calculate_compliance_gap, coverage_for, evaluate_building,
                              limits_with_city_standard, map_property_type, period_covered)
 from berdo.regulations import ACP_RATE, COMPLIANCE_PERIODS
+from ui.common import open_in_address_lookup
 from ui.outlook import city_access
 
 #Status groups for colour. Reporting gaps and emissions gaps stay separate; no risk score.
@@ -531,9 +532,5 @@ def _period_building_card(b, i):
                 lines.append(f"City's 2025 result: {b['city_status']}")
             st.markdown("  \n".join(lines))
         with c2:
-            def handoff(address=b["address"]):
-                st.session_state["lookup_address"] = address
             st.button("Open in Address Lookup", type="primary", use_container_width=True,
-                      on_click=handoff, key=f"cw_period_open_{i}")
-            if st.session_state.get("lookup_address") == b["address"]:
-                st.caption("Filled in on the **Address Lookup** tab.")
+                      on_click=open_in_address_lookup, args=(b["address"],), key=f"cw_period_open_{i}")

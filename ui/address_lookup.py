@@ -409,7 +409,7 @@ def _compliance_exposure_summary(gaps, projected_intensities, proj_gap_for_perio
 
 
 def _compliance_caption(base_year, projected_intensities):
-    """Method caption and the About this tool expander."""
+    """Method caption. (What BERDO is and how the tool works are on the About tab.)"""
     #Caption
     base_ef = effective_grid_ef(base_year)
     caption = (
@@ -429,56 +429,6 @@ def _compliance_caption(base_year, projected_intensities):
     )
     st.caption(caption)
 
-    with st.expander("About this tool"):
-        st.markdown(r"""
-        
-**What is BERDO?**
-
-The Building Emissions Reduction and Disclosure Ordinance (BERDO) requires large buildings
-in Boston to reduce greenhouse gas emissions on a mandatory schedule toward net-zero by 2050.
-Buildings over 35,000 sq ft or with 35+ residential units must meet emissions limits starting
-in 2025. Smaller covered buildings (20,000–35,000 sq ft or 15–34 residential units) begin
-compliance in 2030.
-
-**How are buildings evaluated?**
-
-Each building gets two independent flags rather than a single blended score, because a
-building that didn't report needs a different intervention than one that reported and
-is over its limit: outreach versus retrofit capital.
-
-**Data Status** reflects reporting completeness: whether data was submitted at all, and
-whether property type, floor area, and GHG intensity are present and mappable to a BERDO
-category. Buildings marked "not submitted" face daily reporting fines and are the most
-urgent outreach targets.
-
-**BERDO Status** compares the building's actual GHG intensity against its own sector limit,
-not against a dataset average, so an energy-intensive hospital isn't penalized for using
-more energy than a warehouse. It shows whether the building is over the current 2025–29
-limit, will fail the 2030–34 limit at current emissions, or is compliant further out.
-Smaller covered buildings show "Not yet covered" until their 2030 compliance year.
-
-**How is the compliance gap calculated?**
-
-The tool compares each building's reported GHG intensity (kg CO₂e per square foot per year)
-against the BERDO 2.0 emissions limits for its property type. If the building exceeds the limit,
-the tool estimates the annual Alternative Compliance Payment (ACP) at \$234 per excess metric
-ton of CO₂e. Buildings that do not make ACPs and remain non-compliant face additional daily
-fines of \$1,000/day (buildings over 35,000 sq ft or 35+ units) or \$300/day (smaller covered
-buildings).
-
-**What is the grid decarbonization scenario?**
-
-The ISO New England electric grid is projected to become cleaner over time as renewable energy
-grows. This scenario holds fossil fuel use constant but scales down the electricity-attributed
-emissions using the City of Boston's official projected grid emissions factors (Appendix B of the
-BERDO Policies & Procedures) and the state RPS Class I schedule. It uses each building's
-reported electricity share of emissions (2024 data onward); the sidebar slider applies only
-when that share isn't reported.
-
-Sources: BERDO ordinance Table 1 and ACP rate; BERDO Policies & Procedures v5 (September 2026),
-Appendix B; 225 CMR 14.07. See "Sources & verification" in the sidebar.
-Not an official City of Boston compliance determination.
-""")
 
 
 def render_compliance_section(

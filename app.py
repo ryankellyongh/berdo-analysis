@@ -24,6 +24,7 @@ from ui.outlook import render_outlook_tab
 from ui.planner import render_emissions_planner_tab
 from ui.portfolio import render_official_portfolio, render_portfolio_section
 from ui.retrofit import render_retrofit_optimizer_tab
+from ui.common import switch_tab_if_requested
 from ui.trends import render_trends
 
 st.set_page_config(page_title="BERDO Priority Screening Tool", layout="wide")
@@ -86,7 +87,7 @@ HEROES = {
                   "City results, estimated risk, and missed reporting in one list, with the next step."),
     "lookup":    ("Look up a building.",
                   "One building's evidence, limits, estimated ACP, and options, with a one-page summary."),
-    "portfolio": ("Review an owner's buildings together.",
+    "portfolio": ("Review a building owner's portfolio.",
                   "Approved City Building Portfolios, or an owner's buildings with a blended standard."),
     "retrofit":  ("Compare retrofit costs with ACP.",
                   "Project cost, avoided ACP, payback, and incentive programs to investigate."),
@@ -264,3 +265,6 @@ site_theme.render_footer(
     "Screening tool · Not an official City of Boston BERDO compliance determination",
     f"Data: City of Boston BERDO disclosure ({years_sorted[0]}–{years_sorted[-1]})",
 )
+
+#Last: if a button asked to open another tab (e.g. "Open in Address Lookup"), switch to it
+switch_tab_if_requested()

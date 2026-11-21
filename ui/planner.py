@@ -382,57 +382,42 @@ def _planner_summary(_m, has_projects, has_grid, reduction_in_year, total_emissi
     combined_fines_cumul = _m["cumulative"]["combined"]
 
     st.markdown("---")
-    num_cols = 1 + (1 if has_projects else 0) + (1 if has_grid else 0) + (1 if has_projects and has_grid else 0)
-    s_cols = st.columns(max(num_cols, 2))
-
+    #Row 1: this period's annual ACP beside the no-action total, the two numbers owners ask for first
     current_annual_fine = _m["current_annual_fine"]
-    s_cols[0].metric(
-        "Annual ACP: current period (2025–29)",
-        f"${current_annual_fine:,.0f}",
-        delta="at current emissions, this period's cap",
-    )
-    s_cols[0].metric(
-        "Cumulative ACP 2025–2050: no action",
-        f"${baseline_fines_cumul:,.0f}",
-        delta="worst case: emissions flat, no retrofit",
-    )
-    col_idx = 1
+    r1 = st.columns(2)
+    r1[0].metric("Annual ACP: current period (2025–29)", f"${current_annual_fine:,.0f}",
+                 help="Per year at current emissions, against this period's limit.")
+    r1[1].metric("Cumulative ACP 2025–2050: no action", f"${baseline_fines_cumul:,.0f}",
+                 help="Worst case: emissions stay flat and no projects are completed.")
+
+    #Row 2: the scenarios, side by side, each compared with no action
+    scenarios = []
     if has_projects:
-        savings = baseline_fines_cumul - proj_fines_cumul
-        s_cols[col_idx].metric(
-            "Cumulative ACP: with projects",
-            f"${proj_fines_cumul:,.0f}",
-            delta=f"-${savings:,.0f} vs no action" if savings > 0 else "No change",
-        )
-        col_idx += 1
+        scenarios.append(("Cumulative ACP: with projects", proj_fines_cumul))
     if has_grid:
-        savings_g = baseline_fines_cumul - grid_fines_cumul
-        s_cols[col_idx].metric(
-            "Cumulative ACP: grid decarb only",
-            f"${grid_fines_cumul:,.0f}",
-            delta=f"-${savings_g:,.0f} vs no action" if savings_g > 0 else "No change",
-        )
-        col_idx += 1
+        scenarios.append(("Cumulative ACP: grid decarbonization only", grid_fines_cumul))
     if has_projects and has_grid:
-        savings_c = baseline_fines_cumul - combined_fines_cumul
-        s_cols[col_idx].metric(
-            "Cumulative ACP: grid + projects",
-            f"${combined_fines_cumul:,.0f}",
-            delta=f"-${savings_c:,.0f} vs no action" if savings_c > 0 else "No change",
-        )
-        
-        if has_projects:
-            total_reduction_mt = reduction_in_year(2050) / 1000   #all projects in place
-            gap_mt = max(total_emissions_kg - limits[0] * sqft, 0) / 1000
-            if gap_mt > 0:
-                pct = total_reduction_mt / gap_mt * 100
-                st.caption(
-                    f"Once in place, your projects reduce ~{total_reduction_mt:,.0f} MT/yr, about {pct:.1f}% of the "
-                    f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
-                    + ("Nowhere near enough to affect compliance." if pct < 5 else
-                       "Still short of compliance." if pct < 100 else
-                       "Enough to reach compliance this period.")
-                )
+        scenarios.append(("Cumulative ACP: grid + projects", combined_fines_cumul))
+    if scenarios:
+        r2 = st.columns(max(len(scenarios), 2))
+        for col, (label, value) in zip(r2, scenarios):
+            saved = baseline_fines_cumul - value
+            col.metric(label, f"${value:,.0f}",
+                       delta=f"-${saved:,.0f} vs. no action" if saved > 0 else "No change",
+                       delta_color="inverse" if saved > 0 else "off")
+
+    if has_projects:
+        total_reduction_mt = reduction_in_year(2050) / 1000   #all projects in place
+        gap_mt = max(total_emissions_kg - limits[0] * sqft, 0) / 1000
+        if gap_mt > 0:
+            pct = total_reduction_mt / gap_mt * 100
+            st.caption(
+                f"Once in place, your projects reduce ~{total_reduction_mt:,.0f} MT/yr, about {pct:.1f}% of the "
+                f"{gap_mt:,.0f} MT the building is over its 2025–29 cap. "
+                + ("Nowhere near enough to affect compliance." if pct < 5 else
+                   "Still short of compliance." if pct < 100 else
+                   "Enough to reach compliance this period.")
+            )
 
     _cp = _m["compliant_periods"]
     compliant_periods_baseline  = _cp["baseline"]

@@ -10,6 +10,8 @@ import hmac
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+from ui.common import open_in_address_lookup
 from berdo.predictions import (
     PREDICTIONS_FOR_YEAR,
     PREDICTIONS_SAVED_ON,
@@ -139,7 +141,7 @@ def _detail_panel(row):
     reason = row["Reason"]
     with st.container(border=True):
         top = st.columns([4, 1], vertical_alignment="center")
-        top[0].markdown(f"#### {row['address']}")
+        top[0].markdown(f"**{row['address']}**")
         top[1].button("Close", key="ol_close", on_click=lambda: st.session_state.pop("ol_table", None))
         st.caption(" · ".join(str(x) for x in (row.get("zip"), row.get("property_type"), reason)
                               if pd.notna(x) and x))
@@ -176,7 +178,7 @@ def _detail_panel(row):
                 color = TIER_TEXT.get(row["Tier"], "inherit")
                 st.markdown(
                     f"**Model estimate (not a City result)**  \n"
-                    f"<span style='color:{color};font-size:1.5rem;font-weight:700'>{row['Tier']}</span>"
+                    f"<span style='color:{color};font-weight:700'>{row['Tier']}</span>"
                     f" &nbsp;·&nbsp; {format_probability(row['Chance'])} chance of Action Needed",
                     unsafe_allow_html=True)
                 ratio = row.get("ratio_to_limit")
@@ -199,12 +201,8 @@ def _detail_panel(row):
                 + (", and 2025 energy data" if row.get("did_not_report") else ", and confirmed 2025 energy use")
                 + ".")
 
-        def handoff(address=row["address"]):
-            st.session_state["lookup_address"] = address
         st.button("Open in Address Lookup (next step)", type="primary", use_container_width=True,
-                  on_click=handoff, key="ol_handoff")
-        if st.session_state.get("lookup_address") == row["address"]:
-            st.caption("The address is filled in on the Address Lookup tab.")
+                  on_click=open_in_address_lookup, args=(row["address"],), key="ol_handoff")
 
 
 def _building_map(d, selected):
@@ -328,7 +326,7 @@ def render_outlook_tab(page, coords_path="data/berdo_coordinates.csv"):
 
     #Find a building
     st.markdown("---")
-    st.markdown("#### Find a building")
+    st.subheader("Find a building")
     d = _outreach_rows(df, ev)
     view, n_filters = _filters(d)
     #A selection points at a row of the filtered list, so clear it whenever the filters change
@@ -381,7 +379,7 @@ def render_outlook_tab(page, coords_path="data/berdo_coordinates.csv"):
                 st.caption("Change or reset the filters to see buildings.")
 
     #Map
-    st.markdown("#### Prediction map")
+    st.subheader("Map")
     mode = st.segmented_control("Map view", ["Individual buildings", "ZIP code"], default="Individual buildings",
                                 key="ol_map_mode", label_visibility="collapsed") or "Individual buildings"
     if mode == "ZIP code":
