@@ -663,11 +663,13 @@ def _lookup_building_result(page, result, address_input):
     """Building picker, results table, status metrics, notes, and campus panel."""
     top = None
     #Building result
-    result["Site EUI"] = result["Site EUI"].round(1)
-    result["GHG Intensity (kgCO2e/sqft)"] = (
-        pd.to_numeric(result["GHG Intensity (kgCO2e/sqft)"], errors="coerce")
-        .round(3)
-    )
+    #Round for display only. The selected row (top) keeps full precision, because the
+    #compliance analysis and ACP are calculated from it: a rounded intensity (8.835 instead
+    #of 8.8346…) changed ACP by about $26 on a 286,000 sq ft building.
+    shown = result.copy()
+    shown["Site EUI"] = pd.to_numeric(shown["Site EUI"], errors="coerce").round(1)
+    shown["GHG Intensity (kgCO2e/sqft)"] = (
+        pd.to_numeric(shown["GHG Intensity (kgCO2e/sqft)"], errors="coerce").round(3))
 
     st.subheader("Building Result")
     if page.selected_year and page.selected_year >= 2026:
@@ -689,7 +691,7 @@ def _lookup_building_result(page, result, address_input):
         "Site EUI", "GHG Intensity (kgCO2e/sqft)",
         "Data Status", "BERDO Status", "Est. ACP (2025–29)", "Notes",
     ]
-    st.dataframe(result[display_cols], use_container_width=True, hide_index=True)
+    st.dataframe(shown[display_cols], use_container_width=True, hide_index=True)
 
     if len(result) > 1:
         def _label(r):
