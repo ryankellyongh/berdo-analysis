@@ -79,8 +79,8 @@ def _planner_inputs(prefill):
         st.caption(f"Pre-filled from: {prefill_addr_key}")
     if prefill.get("limits") and berdo_category == prefill.get("berdo_category"):
         st.caption(
-            "Using the blended mixed-use limit from Address Lookup. "
-            "Change the building type above to use a single-category limit instead."
+            "Using this building's limits from Address Lookup (the City's applicable standard or a "
+            "blended standard for 2025–29). Change the building type above to use that type's default limits."
         )
 
     #An empty field (None) means unknown and pauses the projection. Zero is a valid
@@ -102,7 +102,7 @@ def _planner_projects():
     """The table where users add, edit, and remove planned projects."""
     #Emission Reduction Projects
     st.markdown("---")
-    st.subheader("Emission Reduction Projects")
+    st.subheader("Planned projects")
     st.caption(
         "Add planned projects to see how they affect your compliance trajectory. "
         "Uses the same emissions factors BERDO applies (EPA Portfolio Manager)."
@@ -112,9 +112,9 @@ def _planner_projects():
     if "ep_projects" not in st.session_state:
         st.session_state["ep_projects"] = []
 
-    col_add = st.columns([6, 1])
+    col_add = st.columns([5, 1.3])
     with col_add[1]:
-        if st.button("Add New", key="ep_add_project"):
+        if st.button("Add project", key="ep_add_project", use_container_width=True):
             st.session_state["ep_projects"].append({
                 "name": "",
                 "year": 2030,
@@ -134,17 +134,19 @@ def _planner_projects():
     projects = st.session_state["ep_projects"]
 
     if projects:
-        header_cols = st.columns([3, 1.5, 2, 1.5, 2, 1.5, 1])
+        #One set of column widths for the header and every row, so they line up
+        widths = [2.6, 1.3, 1.9, 1.4, 1.6, 1.7, 1.3]
+        header_cols = st.columns(widths)
         header_cols[0].caption("Project name")
         header_cols[1].caption("Year")
         header_cols[2].caption("Fuel type")
         header_cols[3].caption("Amount")
         header_cols[4].caption("Unit")
-        header_cols[5].caption("First-year reduction (kg CO₂e)")
+        header_cols[5].caption("Saves (kg CO₂e/yr)")
         header_cols[6].caption("")
 
         for idx, proj in enumerate(projects):
-            row = st.columns([3, 1.5, 2, 1.5, 2, 1.5, 1])
+            row = st.columns(widths, vertical_alignment="center")
             with row[0]:
                 proj["name"] = st.text_input(
                     "Name", value=proj.get("name", ""),
@@ -187,12 +189,13 @@ def _planner_projects():
                 proj["reduction_kg"] = calc_reduction_kg(proj["fuel"], proj["unit"], proj["amount"], proj["year"])
                 proj["elec_mwh"] = (fuel_to_kbtu(proj["fuel"], proj["unit"], proj["amount"]) / 3412.0
                                     if proj["fuel"] == "Electricity" else 0.0)
-                st.metric(
-                    "Reduction", f"{proj['reduction_kg']:,.1f}",
-                    label_visibility="collapsed"
-                )
+                #Shown like the inputs beside it (same height and size), not as a large metric
+                st.markdown(
+                    "<div style='padding:0.45rem 0.75rem;border:1px solid rgba(127,127,127,0.24);"
+                    "border-radius:10px;font-variant-numeric:tabular-nums;text-align:right'>"
+                    f"{proj['reduction_kg']:,.0f}</div>", unsafe_allow_html=True)
             with row[6]:
-                if st.button("Remove", key=f"ep_remove_{idx}"):
+                if st.button("Remove", key=f"ep_remove_{idx}", use_container_width=True):
                     projects_to_remove.append(idx)
 
     for idx in sorted(projects_to_remove, reverse=True):
@@ -202,10 +205,10 @@ def _planner_projects():
 
 def _planner_projection(berdo_category, show_grid_decarb, prefill, elec_share, use_reported_share, ghg_intensity, sqft, prefill_addr_key):
     """Baseline, grid scenario, and project reductions year by year, as table rows."""
-    #Grid decarbonization, read from sidebar
+    #Grid decarbonization, from the Projection settings
      
     st.markdown("---")
-    st.subheader("Emissions Compliance Projection")
+    st.subheader("Emissions projection")
 
     if berdo_category not in BERDO_STANDARDS:
         st.warning("Select a valid building type above to see the compliance projection.")
@@ -221,17 +224,16 @@ def _planner_projection(berdo_category, show_grid_decarb, prefill, elec_share, u
         base_ef = effective_grid_ef(_ep_base)
         ef_2050 = effective_grid_ef(2050)
         st.caption(
-            f"Grid decarbonization is ON (sidebar). "
+            f"Grid decarbonization is on. "
             f"Electricity share: {fmt_share(elec_share_val)} ({elec_share_src}). "
             f"Base year grid EF ({_ep_base}): {base_ef:.0f} kg/MWh → {ef_2050:.0f} kg/MWh at 2050 "
             f"({round((1 - ef_2050 / base_ef) * 100)}% cleaner). "
-            "Toggle in the sidebar to turn off."
+            "Turn it off under Projection settings at the top of this page."
         )
     else:
         st.caption(
-            "Grid decarbonization is OFF. "
-            "Enable it in the sidebar to model how ISO-NE grid cleaning reduces "
-            "electricity-attributed emissions over time."
+            "Grid decarbonization is off. Turn it on under Projection settings at the top of this "
+            "page to model how a cleaner ISO-NE grid reduces electricity emissions over time."
         )
         
     limits = limits_for_category(berdo_category, prefill)

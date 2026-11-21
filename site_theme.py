@@ -186,7 +186,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 [data-testid="stMetricLabel"] p {{ line-height: 1.35 !important; }}
 /* 2. Metric values scale with the screen and wrap if they still don't fit */
 [data-testid="stMetricValue"] {{
-  font-size: clamp(1.35rem, 1.05rem + 1vw, 2rem) !important; line-height: 1.15 !important;
+  font-size: clamp(1.2rem, 0.95rem + 0.7vw, 1.6rem) !important; line-height: 1.2 !important;
 }}
 [data-testid="stMetricValue"], [data-testid="stMetricValue"] *,
 [data-testid="stMetricDelta"], [data-testid="stMetricDelta"] * {{
@@ -207,6 +207,10 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 /* 4. Headings and expander titles scale down and wrap on narrow screens */
 .site-hero h1 {{ font-size: clamp(1.5rem, 1.1rem + 1.4vw, 2rem) !important; overflow-wrap: anywhere; }}
 .stMarkdown h4 {{ font-size: clamp(1rem, 0.95rem + 0.3vw, 1.15rem); }}
+/* Section headings in a readable range (st.subheader is h3, st.header is h2) */
+[data-testid="stMain"] h2 {{ font-size: clamp(1.35rem, 1.15rem + 0.6vw, 1.65rem) !important; }}
+[data-testid="stMain"] h3 {{ font-size: clamp(1.15rem, 1.05rem + 0.4vw, 1.35rem) !important; }}
+.site-hero h1 {{ font-size: clamp(1.45rem, 1.1rem + 1vw, 1.85rem) !important; }}
 [data-testid="stExpander"] summary, [data-testid="stExpander"] summary * {{
   white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
 }}

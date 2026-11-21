@@ -214,54 +214,28 @@ def render_use_mix_editor(top):
 #Compliance gap display
 
 def _compliance_cards(gaps, cov, proj_gap_for_period):
-    """Status, ACP, and gap cards for the first three periods."""
-    #Metric cards (first 3 periods)
+    """Status, ACP, and gap cards for the first three periods, all built the same way."""
     cols = st.columns(3)
     period_labels = ["2025–2029", "2030–2034", "2035–2039"]
     for i, col in enumerate(cols):
         g = gaps[i]
+        gap_txt = f"{g['gap']:+.2f} kg {'over' if g['gap'] > 0 else 'under'} limit".replace("+-", "-")
         with col:
             if not g["covered"]:
-                st.metric(
-                    label=f"{period_labels[i]}  |  {coverage_label(cov, i)}",
-                    value="$0",
-                    delta=(f"for reference: {'+' if g['gap'] > 0 else '−'}{abs(g['gap']):.2f} kg "
-                           f"{'over' if g['gap'] > 0 else 'under'}"),
-                    delta_color="off",
-                )
-                continue
-            status = "Compliant" if g["compliant"] else "Non-compliant"
-            fine_str = (
-                "$0"
-                if g["compliant"]
-                else f"${g['annual_fine_usd']:,.0f}/yr"
-            )
-            gap_delta = (
-                f"−{abs(g['gap']):.2f} kg under limit"
-                if g["compliant"]
-                else f"+{g['gap']:.2f} kg over limit"
-            )
-            st.metric(
-                label=f"{period_labels[i]}  |  {status}",
-                value=fine_str,
-                delta=gap_delta,
-                delta_color="normal" if g["compliant"] else "inverse",
-            )
-            if not g["compliant"]:
-                st.caption(
-                    f"Limit: {g['limit']} kg · "
-                    f"{g['excess_metric_tons']:,.0f} excess metric tons"
-                )
-                #Show projected outcome if available
+                st.metric(f"{period_labels[i]} · {coverage_label(cov, i)}", "$0",
+                          delta=f"{gap_txt} (reference only)", delta_color="off")
+                detail = f"Limit {g['limit']:.2f} kg · no ACP: not covered in this period"
+            else:
+                st.metric(f"{period_labels[i]} · {'Compliant' if g['compliant'] else 'Non-compliant'}",
+                          "$0" if g["compliant"] else f"${g['annual_fine_usd']:,.0f}/yr",
+                          delta=gap_txt, delta_color="inverse")
+                detail = (f"Limit {g['limit']:.2f} kg · "
+                          + ("within the limit" if g["compliant"] else f"{g['excess_metric_tons']:,.0f} t over"))
                 if proj_gap_for_period is not None:
                     pg = proj_gap_for_period[i]
-                    if pg["compliant"]:
-                        st.caption("Grid scenario: compliant")
-                    else:
-                        st.caption(
-                            f"Grid scenario: +{pg['gap']:.2f} kg over limit "
-                            f"(${pg['annual_fine_usd']:,.0f}/yr)"
-                        )
+                    detail += (" · grid scenario: compliant" if pg["compliant"] else
+                               f" · grid scenario: ${pg['annual_fine_usd']:,.0f}/yr")
+            st.caption(detail)
 
     st.markdown("---")
 
@@ -554,14 +528,16 @@ def render_yoy_trend(building, all_years: dict[int, pd.DataFrame]):
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric(
-            label=f"GHG Intensity {int(latest['year'])} (kg CO₂e/sf/yr)",
+            label=f"GHG intensity, {int(latest['year'])}",
+            help="kg CO₂e per sq ft per year. Compared with the previous reporting year.",
             value=f"{latest['ghg_intensity']:.3f}" if pd.notna(latest["ghg_intensity"]) else "N/A",
             delta=f"{ghg_delta:+.3f} vs {int(prior['year'])}" if pd.notna(ghg_delta) else None,
             delta_color="inverse",   #lower is better
         )
     with col2:
         st.metric(
-            label=f"Site EUI {int(latest['year'])} (kBtu/sf/yr)",
+            label=f"Site EUI, {int(latest['year'])}",
+            help="kBtu per sq ft per year. Compared with the previous reporting year.",
             value=f"{latest['site_eui']:.1f}" if pd.notna(latest["site_eui"]) else "N/A",
             delta=f"{eui_delta:+.1f} vs {int(prior['year'])}" if pd.notna(eui_delta) else None,
             delta_color="inverse",
@@ -830,11 +806,11 @@ def _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label):
             )
         else:
             share_for_grid = page.elec_share
-            why = ("the reported-share option is off in the sidebar"
+            why = ("the reported-share option is off in Projection settings"
                    if not page.use_reported_share
                    else "this year's data has no electricity breakdown for this building")
             st.caption(
-                f"Grid scenario uses the sidebar estimate of **{fmt_share(page.elec_share)}** "
+                f"Grid scenario uses the Projection settings estimate of **{fmt_share(page.elec_share)}** "
                         f"because {why}."
             )
         ghg_val = top.get("GHG Intensity (kgCO2e/sqft)")

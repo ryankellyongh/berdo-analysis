@@ -1024,7 +1024,7 @@ def _retrofit_phasing_and_notes(matched):
     st.markdown("---")
     st.warning(
         "**Screening tool only. Not professional financial or tax advice.** "
-        "Incentive amounts are estimates; see Sources & verification in the sidebar. "
+        "Incentive amounts are estimates; see Sources on the About tab. "
         "IRA credit stacking rules are complex; consult a tax advisor for your specific situation. "
         "Do not use these figures for contracts, loan applications, or compliance filings."
     )
