@@ -12,7 +12,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from berdo.data import buildings_only, headline_counts
-from berdo.emissions import building_limits, calculate_compliance_gap, evaluate_building, map_property_type
+from berdo.emissions import (building_limits, calculate_compliance_gap, coverage_for, evaluate_building,
+                             limits_with_city_standard, map_property_type, period_covered)
+from berdo.regulations import ACP_RATE, COMPLIANCE_PERIODS
 from ui.outlook import city_access
 
 #Status groups for colour. Reporting gaps and emissions gaps stay separate; no risk score.
@@ -331,3 +333,207 @@ def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv",
                           "category has an estimate; it does not mean $0.")})
     st.caption("— means no ACP estimate is available, not $0. Buildings with no property type mostly did "
                "not report; a type not in the BERDO list needs a person to classify it.")
+    st.markdown("---")
+    render_period_view(b)
+
+
+# ---------------------------------------------------------------------------------------
+# Buildings by compliance period: choose a period, see which buildings are over their limit
+# (or not yet covered), and open any building in Address Lookup.
+# ---------------------------------------------------------------------------------------
+PERIOD_STATUSES = [("Over the limit", "#E5484D"), ("Within the limit", "#30A46C"),
+                   ("Not yet covered", "#8E4EC6"), ("Under City review", "#D6409F"),
+                   ("Portfolio or campus", "#0090FF"), ("Not assessed or no data", "#8B8D98")]
+#The City's own 2025–29 status where it settles the question (it reflects exemptions,
+#flexibility measures, and reviews the public data can't show)
+_CITY_2025 = {"In Compliance": "Within the limit", "Action Needed": "Over the limit",
+              "N/A until 2030": "Not yet covered", "Pending Review from BERDO Team": "Under City review",
+              "Vacant": "Not assessed or no data", "State": "Not assessed or no data"}
+PERIOD_COLORS = dict(PERIOD_STATUSES)
+_PORTFOLIO_LEVEL = {"Assessed in a Building Portfolio", "Assessed at campus level", "Campus member (water only)"}
+
+
+@st.cache_data(show_spinner="Checking every building against each period's limit…")
+def period_table(ev: pd.DataFrame) -> pd.DataFrame:
+    """
+    One row per building with its status and excess tons in each compliance period, at its
+    reported emissions. 2025–29 uses the City's published result where there is one; later
+    periods compare reported emissions with the building's limit, as if emissions stay flat.
+    """
+    rows = []
+    for _, r in ev.iterrows():
+        cov = coverage_for(r.get("compliance_year"), r.get("compliance_status"), r.get("Property Owner Name"))
+        lim = building_limits(r.get("property_type"), r.get("all_property_types"))["limits"]
+        lim = limits_with_city_standard(lim, r.get("official_standard")) or lim
+        ghg, sqft = r.get("ghg_intensity_kgco2e_sqft"), r.get("gross_floor_area")
+        usable = lim is not None and pd.notna(ghg) and pd.notna(sqft) and sqft > 0
+        gaps = calculate_compliance_gap(float(ghg), float(sqft), None, limits=lim, coverage=cov) if usable else []
+        row = {"berdo_id": r.get("berdo_id"), "address": r.get("Building Address") or "Address not reported",
+               "property_type": r.get("property_type"), "sqft": sqft, "intensity": ghg,
+               "lat": r.get("lat"), "lon": r.get("lon"), "city_status": r.get("emissions_status")}
+        for i, period in enumerate(COMPLIANCE_PERIODS):
+            if r.get("berdo_status") in _PORTFOLIO_LEVEL or r.get("status_group") == "Assessed with a portfolio or campus":
+                status, tons, limit = "Portfolio or campus", None, None
+            elif cov.get("known") and not period_covered(cov, i):
+                status, tons, limit = "Not yet covered", None, (lim[i] if lim else None)
+            elif not gaps or not cov.get("known"):
+                status, tons, limit = "Not assessed or no data", None, (lim[i] if lim else None)
+            else:
+                g = gaps[i]
+                status = "Within the limit" if g["compliant"] else "Over the limit"
+                tons, limit = g["excess_metric_tons"], g["limit"]
+            city = _CITY_2025.get(r.get("emissions_status")) if i == 0 else None
+            if city and status != "Portfolio or campus":
+                status = city
+                if status != "Over the limit":
+                    tons = 0.0 if status == "Within the limit" else None
+            row[f"status_{i}"], row[f"tons_{i}"], row[f"limit_{i}"] = status, tons, limit
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def render_period_view(ev: pd.DataFrame):
+    """Period picker, map, and a linked list: select a building to open it in Address Lookup."""
+    st.markdown("### Buildings by compliance period")
+    st.caption("Choose a period to see which buildings would be over their limit at their reported "
+               "emissions, and which aren't covered yet. Select a building in the list (or click its dot) "
+               "to see it on the map and open it in Address Lookup.")
+    t = period_table(ev)
+    c1, c2 = st.columns([1.4, 1], vertical_alignment="bottom")
+    with c1:
+        period = st.segmented_control("Compliance period", COMPLIANCE_PERIODS, default=COMPLIANCE_PERIODS[0],
+                                      key="cw_period") or COMPLIANCE_PERIODS[0]
+    with c2:
+        cats = ["All categories"] + sorted(c for c in ev["berdo_category"].unique() if c not in (NO_TYPE, UNMAPPED_TYPE))
+        cat = st.selectbox("Building category", cats, key="cw_period_cat")
+    i = COMPLIANCE_PERIODS.index(period)
+    present = [s for s, _ in PERIOD_STATUSES if (t[f"status_{i}"] == s).any()]
+    show = st.pills("Show", present, selection_mode="multi", key=f"cw_period_show_{i}",
+                    default=[s for s in present if s in ("Over the limit", "Not yet covered")]) or []
+    v = t[t[f"status_{i}"].isin(show)].copy()
+    if cat != "All categories":
+        v = v[ev.set_index("berdo_id").reindex(v["berdo_id"])["berdo_category"].values == cat]
+    v["Status"], v["Excess t/yr"] = v[f"status_{i}"], v[f"tons_{i}"]
+    v["Est. ACP/yr"] = v["Excess t/yr"].map(lambda x: f"${x * ACP_RATE:,.0f}" if pd.notna(x) and x > 0 else "—")
+    v = v.sort_values(["Excess t/yr", "address"], ascending=[False, True], na_position="last").reset_index(drop=True)
+
+    counts = t[f"status_{i}"].value_counts()
+    m = st.columns(len(PERIOD_STATUSES))
+    for col, (s, _) in zip(m, PERIOD_STATUSES):
+        col.metric(s, f"{int(counts.get(s, 0)):,}")
+    over = t[f"tons_{i}"].where(t[f"status_{i}"] == "Over the limit")
+    st.caption(f"{period}: {int((t[f'status_{i}'] == 'Over the limit').sum()):,} buildings over their limit, "
+               f"about {over.sum():,.0f} t/yr over in total (≈ ${over.sum() * ACP_RATE:,.0f}/yr ACP) if "
+               "emissions stay where they were last reported. "
+               + ("2025–29 uses the City's published result where there is one." if i == 0 else
+                  "Later periods assume no change, so they show the size of the task, not a forecast."))
+
+    #Selection: a list row or a dot on the map, whichever the user used last. A new map click
+    #clears the list selection (before the list is drawn), so the two never disagree.
+    pick_key, click_key, tbl_key = f"cw_period_pick_{i}", f"cw_period_last_click_{i}", f"cw_period_table_{i}"
+    click_id = _clicked_building(st.session_state.get(f"cw_period_map_{i}"), v)
+    if click_id and click_id != st.session_state.get(click_key):
+        st.session_state[click_key] = click_id
+        st.session_state[pick_key] = click_id
+        st.session_state.pop(tbl_key, None)
+    left, right = st.columns([1.15, 1], gap="medium")
+    with left:
+        ev_tbl = st.dataframe(
+            v[["address", "Status", "Excess t/yr", "Est. ACP/yr"]].rename(columns={"address": "Address"}),
+            key=tbl_key, on_select="rerun", selection_mode="single-row",
+            hide_index=True, use_container_width=True, height=430,
+            column_config={"Excess t/yr": st.column_config.NumberColumn(format="%.1f")})
+    rows = ev_tbl.selection.rows if ev_tbl and ev_tbl.selection else []
+    if rows and rows[0] < len(v):
+        st.session_state[pick_key] = v.iloc[rows[0]]["berdo_id"]
+    hit = v[v["berdo_id"] == st.session_state.get(pick_key)]
+    picked = hit.iloc[0] if not hit.empty else None
+
+    with right:
+        fig = _period_map(v, i, picked)
+        st.plotly_chart(fig, use_container_width=True, key=f"cw_period_map_{i}",
+                        on_select="rerun", selection_mode="points")
+    if picked is not None:
+        _period_building_card(picked, i)
+    else:
+        st.caption("Select a building in the list, or click a dot on the map, to see its details here.")
+
+
+def _clicked_building(state, v):
+    """BERDO ID of the dot clicked on the period map, from the chart's selection state, or None."""
+    try:
+        pts = state["selection"]["points"] if state else []
+    except (KeyError, TypeError):
+        return None
+    if not pts:
+        return None
+    p = pts[0]
+    cd = p.get("customdata")
+    if cd:
+        return cd[0] if isinstance(cd, (list, tuple)) else cd
+    lat, lon = p.get("lat"), p.get("lon")                 #fallback: match the dot's location
+    if lat is not None and lon is not None:
+        hit = v[(v["lat"] - lat).abs().lt(1e-7) & (v["lon"] - lon).abs().lt(1e-7)]
+        if not hit.empty:
+            return hit.iloc[0]["berdo_id"]
+    return None
+
+
+def _period_map(v, i, picked):
+    Scatter = getattr(go, "Scattermap", None) or go.Scattermapbox
+    newer = Scatter is getattr(go, "Scattermap", None)
+    fig = go.Figure()
+    pts = v[v["lat"].notna() & v["lon"].notna()]
+    for status, color in reversed(PERIOD_STATUSES):
+        p = pts[pts["Status"] == status]
+        if p.empty:
+            continue
+        tons = p["Excess t/yr"].fillna(0)
+        fig.add_trace(Scatter(
+            lat=p["lat"], lon=p["lon"], mode="markers", name=f"{status} ({len(p):,})",
+            marker=dict(size=7 + (tons.clip(upper=500) / 500) ** 0.5 * 16, color=color, opacity=0.85),
+            customdata=p[["berdo_id"]].values,
+            text=p["address"] + "<br>" + status + tons.map(lambda x: f"<br>{x:,.0f} t/yr over" if x > 0 else ""),
+            hovertemplate="%{text}<extra></extra>"))
+    if picked is not None and pd.notna(picked.get("lat")):
+        for size, color in ((26, "#1F4E99"), (18, "white")):
+            fig.add_trace(Scatter(lat=[picked["lat"]], lon=[picked["lon"]], mode="markers",
+                                  marker=dict(size=size, color=color), hoverinfo="skip", showlegend=False))
+        fig.add_trace(Scatter(lat=[picked["lat"]], lon=[picked["lon"]], mode="markers", showlegend=False,
+                              marker=dict(size=11, color=PERIOD_COLORS.get(picked["Status"], OTHER_COLOR)),
+                              hoverinfo="skip"))
+        center, zoom = {"lat": picked["lat"], "lon": picked["lon"]}, 13.2
+    else:
+        center, zoom = {"lat": 42.32, "lon": -71.08}, 10.9
+    view = dict(style="carto-positron" if not newer else "carto-voyager", center=center, zoom=zoom)
+    fig.update_layout(height=430, margin=dict(t=0, b=0, l=0, r=0), clickmode="event+select",
+                      legend=dict(orientation="h", yanchor="bottom", y=0.01, x=0.01,
+                                  bgcolor="rgba(255,255,255,0.85)", font=dict(color="#1C2024", size=11)),
+                      **({"map": view} if newer else {"mapbox": view}))
+    return fig
+
+
+def _period_building_card(b, i):
+    """The picked building in this period, with a link to Address Lookup."""
+    with st.container(border=True):
+        c1, c2 = st.columns([3, 1.2], vertical_alignment="center")
+        with c1:
+            st.markdown(f"#### {b['address']}")
+            parts = [str(b.get("property_type") or ""), f"{b['sqft']:,.0f} sq ft" if pd.notna(b.get("sqft")) else ""]
+            st.caption(" · ".join(p for p in parts if p))
+            lines = [f"**{COMPLIANCE_PERIODS[i]}:** {b['Status']}"]
+            if pd.notna(b.get("intensity")) and pd.notna(b.get(f"limit_{i}")):
+                lines.append(f"Reported {b['intensity']:.2f} kg CO₂e/sq ft vs. a limit of {b[f'limit_{i}']:.2f}")
+            if pd.notna(b.get("Excess t/yr")) and b["Excess t/yr"] > 0:
+                lines.append(f"About {b['Excess t/yr']:,.0f} t/yr over (≈ ${b['Excess t/yr'] * ACP_RATE:,.0f}/yr ACP "
+                             "if emissions stay flat)")
+            if i == 0 and isinstance(b.get("city_status"), str):
+                lines.append(f"City's 2025 result: {b['city_status']}")
+            st.markdown("  \n".join(lines))
+        with c2:
+            def handoff(address=b["address"]):
+                st.session_state["lookup_address"] = address
+            st.button("Open in Address Lookup", type="primary", use_container_width=True,
+                      on_click=handoff, key=f"cw_period_open_{i}")
+            if st.session_state.get("lookup_address") == b["address"]:
+                st.caption("Filled in on the **Address Lookup** tab.")
