@@ -58,3 +58,8 @@ def switch_tab_if_requested():
         </script>""",
         height=0,
     )
+
+
+def open_tab(label: str):
+    """Button callback: switch to another tab (see switch_tab_if_requested)."""
+    st.session_state["goto_tab"] = label

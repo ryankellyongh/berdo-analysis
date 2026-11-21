@@ -51,42 +51,30 @@ from berdo.pdf_export import (
 
 
 def render_compliance_pathways(ctx: dict):
-    """On-screen version of get_compliance_pathways()."""
+    """Compliance options: one line each, with eligibility, deadlines, and sources on expand."""
     over_now = ctx.get("over_now", False)
-    title = "BERDO compliance pathways" + (": options for a building over its limit" if over_now else "")
-    with st.expander(title, expanded=over_now):
-        st.caption(
-            "BERDO offers several ways to comply. This list explains each option and why it "
-            "may or may not fit this building. It is not an eligibility determination. "
-            "Confirm details and deadlines on the City's pages."
-        )
-        current_group = None
-        for p in get_compliance_pathways(ctx):
-            if p["group"] != current_group:
-                current_group = p["group"]
-                st.markdown(f"#### {current_group}")
-            why = (f"**For this building:** {p['why']}" if p["strong"]
-                   else f"*For this building:* {p['why']}")
-            links = " · ".join(f"[{label}]({url})" for label, url in p["links"])
-            st.markdown(
-                f"**{p['name']}:** {p['what']}  \n"
-                f"Approval: {p['approval']} · Deadline: {p['deadline']}  \n"
-                f"{why}  \n"
-                f"{links}"
-            )
-        st.markdown("#### Get help")
-        st.markdown(
-            f"[Schedule a one-on-one call with BERDO staff]({BERDO_LINKS['one_on_one']}) · "
-            f"[What to do if you're out of compliance]({BERDO_LINKS['out_of_compliance']}) · "
-            f"[Review Board page and deadline table]({BERDO_LINKS['review_board']}) · "
-            f"[City's official BERDO Emissions Calculator]({BERDO_LINKS['city_calculator']}) · "
-            f"[Approved flexibility measures list]({BERDO_LINKS['approved_flex']})"
-        )
-        st.caption(
-            f"Pathway descriptions, deadlines, and links from boston.gov, verified "
-            f"{PATHWAYS_VERIFIED}. BERDO regulations are being updated; check the City's "
-            "pages before acting."
-        )
+    st.markdown("#### Compliance options" + (" for a building over its limit" if over_now else ""))
+    st.caption("BERDO offers several ways to comply. Options marked ★ fit this building's screening "
+               "result best. This is not an eligibility determination: confirm details and deadlines "
+               "on the City's pages.")
+    current_group = None
+    for p in get_compliance_pathways(ctx):
+        if p["group"] != current_group:
+            current_group = p["group"]
+            st.markdown(f"**{current_group}**")
+        title = ("★ " if p["strong"] else "") + p["name"]
+        with st.expander(title):
+            st.markdown(f"{p['what']}  \n**For this building:** {p['why']}")
+            st.markdown(f"**Approval:** {p['approval']} · **Deadline:** {p['deadline']}")
+            st.markdown(" · ".join(f"[{label}]({url})" for label, url in p["links"]))
+    st.markdown(
+        f"**Get help:** [one-on-one call with BERDO staff]({BERDO_LINKS['one_on_one']}) · "
+        f"[if you're out of compliance]({BERDO_LINKS['out_of_compliance']}) · "
+        f"[Review Board deadlines]({BERDO_LINKS['review_board']}) · "
+        f"[City's BERDO Emissions Calculator]({BERDO_LINKS['city_calculator']}) · "
+        f"[approved flexibility measures]({BERDO_LINKS['approved_flex']})")
+    st.caption(f"Pathway descriptions, deadlines, and links from boston.gov, verified {PATHWAYS_VERIFIED}. "
+               "BERDO regulations are being updated; check the City's pages before acting.")
 
 
 #Mixed-use editor
@@ -449,7 +437,7 @@ def render_compliance_section(
     raw_type = row.get("Property Type")
     berdo_category = map_property_type(raw_type)
 
-    st.subheader("Compliance Gap Analysis")
+    st.subheader("Emissions outlook")
 
     if pd.isna(ghg_intensity) or ghg_intensity == 0:
         st.warning(
@@ -502,11 +490,14 @@ def render_compliance_section(
         st.caption("City building: the ordinance's daily fines don't apply; emissions standards and "
                    "the ACP option still do.")
 
-    st.caption(
-        f"Current intensity: **{ghg_intensity:.3f} kg CO₂e/sf/yr** · "
-        f"Floor area: **{int(sqft):,} sq ft** · "
-        f"BERDO category: **{category_label}**"
-    )
+    #Assumptions next to the results they produce
+    assumptions = [f"Emissions held at the reported {base_year} level of **{ghg_intensity:.2f} kg CO₂e/sq ft**, "
+                   "with no projects", f"limits: **{category_label}**"]
+    if projected_intensities is not None:
+        assumptions.append("grid scenario: electricity emissions fall with the projected ISO-NE grid "
+                           "(Appendix B × RPS Class I); fuel use unchanged")
+    with st.container(border=True):
+        st.markdown("**Assumptions:** " + "; ".join(assumptions) + ".")
 
     _compliance_cards(gaps, cov, proj_gap_for_period)
     _compliance_chart(gaps, ghg_intensity, projected_intensities, prior_year_ghg_intensity, prior_year_label, sqft, berdo_category, cov)
@@ -659,76 +650,89 @@ def render_yoy_trend(building, all_years: dict[int, pd.DataFrame]):
 
 #Tab 1: single address lookup (unchanged behaviour)
 
-def _lookup_building_result(page, result, address_input):
-    """Building picker, results table, status metrics, notes, and campus panel."""
-    top = None
-    #Building result
-    #Round for display only. The selected row (top) keeps full precision, because the
-    #compliance analysis and ACP are calculated from it: a rounded intensity (8.835 instead
-    #of 8.8346…) changed ACP by about $26 on a 286,000 sq ft building.
-    shown = result.copy()
-    shown["Site EUI"] = pd.to_numeric(shown["Site EUI"], errors="coerce").round(1)
-    shown["GHG Intensity (kgCO2e/sqft)"] = (
-        pd.to_numeric(shown["GHG Intensity (kgCO2e/sqft)"], errors="coerce").round(3))
+def _year_label(page):
+    """'2026 reporting (2025 energy use)': the reporting year and the year it describes."""
+    y = page.selected_year
+    return f"{y} reporting ({y - 1} energy use)" if y else "reported data"
 
-    st.subheader("Building Result")
+
+def _pick_building(result, address_input):
+    """When a search matches several buildings, choose one first."""
+    if len(result) <= 1:
+        return result.iloc[0]
+    def _label(r):
+        owner = r.get("Property Owner Name")
+        owner = owner if isinstance(owner, str) and owner.strip() else "owner not reported"
+        bid = r.get("BERDO ID") or "no BERDO ID"
+        return f"{r.get('Building Address')} · {owner} · BERDO ID {bid}"
+    labels = [_label(r) for _, r in result.iterrows()]
+    pick = st.selectbox(f"{len(result)} buildings match this search. Choose one:",
+                        options=list(range(len(result))), format_func=lambda i: labels[i],
+                        key=f"lookup_pick_{address_input}")
+    return result.iloc[pick]
+
+
+def _profile(page, top):
+    """1. Building profile: address, owner, use, floor area, and reporting year."""
+    owner = top.get("Property Owner Name")
+    owner = owner if isinstance(owner, str) and owner.strip() else "Owner not reported"
+    sqft = pd.to_numeric(top.get("Gross Floor Area"), errors="coerce")
+    facts = [owner, top.get("Property Type") or "Property type not reported",
+             f"{sqft:,.0f} sq ft" if pd.notna(sqft) else "Floor area not reported",
+             f"BERDO ID {top.get('BERDO ID')}" if top.get("BERDO ID") else None, _year_label(page)]
+    st.markdown(f"### {top.get('Building Address')}")
+    st.caption(" · ".join(str(f) for f in facts if f))
+
+
+def _current_result(page, top):
+    """2. Current result: the status (once, with its source), estimated ACP, and emissions vs. limit."""
+    city = top.get("City Emissions Status")
+    has_city = isinstance(city, str) and city.strip() != ""
+    preview = bool(page.selected_year) and page.selected_year < 2026
+    status = city if has_city else top["BERDO Status"]
+    source = (f"City of Boston, {_year_label(page)}" if has_city else
+              f"Screening estimate from {_year_label(page)}" + (", before limits applied" if preview else ""))
+    acp = top["Est. ACP (2025–29)"]
+    ghg = pd.to_numeric(top.get("GHG Intensity (kgCO2e/sqft)"), errors="coerce")
+    limits = limits_with_city_standard(_bl_default_limits(top), top.get("Official Standard")) or _bl_default_limits(top)
+    c = st.columns(3)
+    c[0].metric("City status (2025–29)" if has_city else "Screening status (2025–29)", status,
+                help=f"Source: {source}.")
+    c[1].metric("Est. annual ACP (2025–29)", "N/A" if acp is None or pd.isna(acp) else f"${acp:,.0f}",
+                help="At $234 per metric ton over the limit. N/A means ACP can't be estimated (data "
+                     "incomplete, not yet covered, or not assessed), not that the building owes nothing.")
+    c[2].metric("Emissions vs. 2025–29 limit",
+                f"{ghg:.2f} vs. {limits[0]:.2f}" if pd.notna(ghg) and limits else "N/A",
+                help="kg CO₂e per sq ft per year: reported intensity vs. the applicable limit "
+                     "(the City's standard for this building where published).")
+    st.caption(f"Source: {source}. Data status: {top['Data Status']}.")
+    #Brief limitation notice near the result, details on demand
     if page.selected_year and page.selected_year >= 2026:
-        st.caption(
-            f"Reporting year {page.selected_year}: energy use from calendar year {page.selected_year - 1}. "
-                    "Statuses marked (City) are the City's own emissions compliance results. The City "
-                    "describes this disclosure as provisional: buildings with extensions or under review "
-                    "have no energy or emissions data yet, and an update is planned after October 15, 2026."
-        )
-    elif page.selected_year:
-        st.caption(
-            f"Reporting year {page.selected_year}: energy use from calendar year {page.selected_year - 1}. "
-                    "BERDO's first emissions compliance year is 2025 energy use, reported in 2026, so "
-                    "flags based on earlier data are a preview."
-        )
-
-    display_cols = [
-        "Building Address", "Property Owner Name", "Property Type",
-        "Site EUI", "GHG Intensity (kgCO2e/sqft)",
-        "Data Status", "BERDO Status", "Est. ACP (2025–29)", "Notes",
-    ]
-    st.dataframe(shown[display_cols], use_container_width=True, hide_index=True)
-
-    if len(result) > 1:
-        def _label(r):
-            owner = r.get("Property Owner Name")
-            owner = owner if isinstance(owner, str) and owner.strip() else "owner not reported"
-            bid = r.get("BERDO ID") or "no BERDO ID"
-            return f"{r.get('Building Address')} · {owner} · BERDO ID {bid}"
-        _labels = [_label(r) for _, r in result.iterrows()]
-        _pick = st.selectbox(
-            f"{len(result)} buildings match this search. Choose one:",
-            options=list(range(len(result))),
-            format_func=lambda i: _labels[i],
-            key=f"lookup_pick_{address_input}",
-        )
-        top = result.iloc[_pick]
+        note = ("Provisional data: the City withheld energy and emissions data for buildings with "
+                "extensions or under review, and plans an update.")
     else:
-        top = result.iloc[0]
-    bldg_share, bldg_share_note = building_elec_share(
-        top.get("GHG Emissions (kgCO2e)"), top.get("Electricity Emissions (kgCO2e)"))
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Data status", top["Data Status"])
-    with col2:
-        st.metric("BERDO status", top["BERDO Status"])
-    with col3:
-        acp = top["Est. ACP (2025–29)"]
-        st.metric("Est. ACP (2025–29)",
-                  "N/A" if acp is None or pd.isna(acp) else f"${acp:,.0f}/yr",
-                  help="N/A means ACP can't be estimated (data incomplete, not yet covered, "
-                       "or not assessed), not that the building owes nothing.")
+        note = ("BERDO's first compliance year is 2025 energy use (reported in 2026), so results for "
+                "earlier years are a preview.")
+    if top.get("Campus ID"):
+        note += " This building is part of a campus, so its emissions are less certain."
+    st.caption(note + " Screening estimate, not an official City determination.")
 
-    st.write("**Notes:**", top["Notes"])
 
-    _city_note = top.get("City Note")
-    if isinstance(_city_note, str) and _city_note.strip():
-        st.caption(f"**City note:** {_city_note.strip()}")
-
+def _reported_data(page, result, top):
+    """Supporting details: the reported record(s), notes, and any campus context."""
+    shown = result.copy()
+    #Round for display only; calculations use the unrounded values in `top`
+    shown["Site EUI"] = pd.to_numeric(shown["Site EUI"], errors="coerce").round(1)
+    shown["GHG Intensity (kgCO2e/sqft)"] = pd.to_numeric(shown["GHG Intensity (kgCO2e/sqft)"], errors="coerce").round(3)
+    cols = ["Building Address", "Property Owner Name", "Property Type", "Site EUI",
+            "GHG Intensity (kgCO2e/sqft)", "Data Status", "BERDO Status", "Est. ACP (2025–29)", "Notes"]
+    with st.expander("View reported data"):
+        st.dataframe(shown[cols], use_container_width=True, hide_index=True)
+        if isinstance(top.get("Notes"), str) and top["Notes"].strip():
+            st.markdown(f"**Screening notes:** {top['Notes']}")
+        _city_note = top.get("City Note")
+        if isinstance(_city_note, str) and _city_note.strip():
+            st.caption(f"**City note:** {_city_note.strip()}")
     if top.get("Campus ID"):
         _ctx = campus_context(page.df_full, top.get("Campus ID"))
         if _ctx:
@@ -758,7 +762,20 @@ def _lookup_building_result(page, result, address_input):
                 }), hide_index=True, use_container_width=True)
                 st.caption("Rows as reported in the City's disclosure. Campus totals come "
                                    "from the campus summary row in the same dataset.")
-    return bldg_share, bldg_share_note, top
+
+
+def _next_actions(pdf_step):
+    """3. Next actions: the summary PDF, then the Retrofits and Planner tabs (already pre-filled)."""
+    from ui.common import open_tab
+    st.markdown("#### Next steps")
+    c = st.columns(3)
+    with c[0]:
+        pdf_step()
+    c[1].button("Explore retrofits and incentives", use_container_width=True,
+                on_click=open_tab, args=("Retrofits",), key="lookup_go_retrofits")
+    c[2].button("Open the emissions planner", use_container_width=True,
+                on_click=open_tab, args=("Planner",), key="lookup_go_planner")
+    st.caption("Retrofits and Planner open with this building's data filled in.")
 
 
 def _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note):
@@ -768,14 +785,11 @@ def _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note):
     primary_fuel   = top.get("Primary Fuel", "Mixed / unknown")
     if fuel_breakdown:
         n_cols = min(len(fuel_breakdown), 5)  #cap at 5 cols
-        st.markdown(f"**Energy usage by fuel ({page.selected_year} reported)**")
+        st.markdown(f"**Energy use by fuel: {_year_label(page)}**")
         fuel_cols = st.columns(n_cols)
         for i, (label, kbtu, pct) in enumerate(fuel_breakdown[:n_cols]):
-            fuel_cols[i].metric(
-                label,
-                f"{kbtu/1_000:,.0f} MMBtu",
-                delta=f"{pct:.0f}% of total",
-            )
+            #A share of total, not a change over time, so no arrow or color
+            fuel_cols[i].metric(f"{label} · {pct:.0f}% of total", f"{kbtu/1_000:,.0f} MMBtu")
         dominant_note = "dominant fuel >60% of total" if primary_fuel != "Mixed / unknown" else "no single fuel >60% of total"
         st.caption(
             f"Primary fuel inferred: {primary_fuel} ({dominant_note}). "
@@ -789,36 +803,7 @@ def _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note):
         if bldg_share_note:
             st.caption(bldg_share_note)
 
-    with st.expander("What do these fields mean?"):
-        st.markdown(r"""
-**Compliance Status**
-- **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
-- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). For 2026, the City lists October 15 as the deadline for annual reporting with approved extensions. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
-- **Campus buildings**: Some buildings are reported as part of a campus. The City notes these rows may not reflect the full building's energy use; the tool flags them and shows the campus totals.
-- **State / Federal**: The City's data marks the building as owned by a state or federal agency. This tool shows its emissions for reference only, because BERDO's treatment of these buildings is unconfirmed.
 
-**Site EUI (Energy Use Intensity)**
-- Measures how much energy a building uses per square foot per year (kBtu/sq ft/yr). A higher EUI means the building uses more energy relative to its size. Missing EUI typically means the building did not submit complete energy data.
-
-**GHG Intensity (kg CO₂e/sq ft/yr)**
-- The building's greenhouse gas emissions per square foot per year, calculated from reported fuel and electricity use. This is the value compared against BERDO emissions limits to determine compliance.
-
-**Data Status**
-- **Reported**: energy and emissions data submitted and complete enough to evaluate.
-- **Incomplete data**: submitted, but property type, floor area, or GHG data is missing or unmappable, so compliance can't be calculated.
-- **Not submitted**: no data reported. Accruing daily reporting fines.
-
-**BERDO Status**
-- **Over 2025–29 limit**: currently exceeds its sector limit and accruing ACP.
-- **Fails 2030–34**: compliant now, but over the next limit at current emissions.
-- **Compliant through 2034** / **2039+**: how far the current trajectory holds.
-- **Not yet covered**: smaller covered building, not subject to an emissions limit until 2030.
-- **Unknown (data incomplete)**: compliance can't be determined from what was reported.
-
-**Est. ACP (2025–29)**
-- Estimated annual Alternative Compliance Payment for the current period, at \$234 per metric ton CO₂e over the limit. Shows \$0 for covered buildings within their limit, and N/A when it can't be estimated (not yet covered, not assessed, or data missing).""")    
-
-    st.markdown("---")
 
 
 def _lookup_trend(page, top):
@@ -884,9 +869,6 @@ def _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label):
         _off_std = _city_limits[0]
         st.caption(f"2025–29 limit uses the City's applicable standard for this building "
                            f"({float(_off_std):.2f} kg/sf/yr). Later periods use the default standards.")
-    _city_status = top.get("City Emissions Status")
-    if isinstance(_city_status, str) and _city_status:
-        st.info(f"**City emissions compliance status (2025 energy use):** {_city_status}")
     _pred = (prediction_for_building(getattr(page, "predictions", None), top.get("BERDO ID"))
              if page.selected_year == PREDICTIONS_FOR_YEAR else None)
     #Data-use policy: a building's own predicted label is shown only with City access,
@@ -897,10 +879,10 @@ def _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label):
             f"**Predicted 2025 result (saved {PREDICTIONS_SAVED_ON}): {_pred['tier']}**"
             + (f", {format_probability(_p)} chance of Action Needed" if pd.notna(_p) else "")
             + ". Based on this building's previous year's emissions; the City hasn't published "
-            "its result yet. See the Citywide Outlook tab for the method."
+            "its result yet. See the Outreach tab for the method."
         )
     elif _pred:
-        st.caption("The City hasn't published this building's 2025 result yet. The Citywide Outlook "
+        st.caption("The City hasn't published this building's 2025 result yet. The Outreach "
                    "tab shows predicted results by ZIP code and building type.")
 
     render_compliance_section(
@@ -1100,14 +1082,15 @@ def _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share):
     }
     st.session_state["planner_prefill"] = planner_prefill
 
-    st.info(
-        "Building data saved: open the **Retrofits** or **Planner** tabs "
-                "to model funding programs and compliance trajectory for this building."
-    )
-
 
 def render_address_lookup_tab(page):
-    """Address Lookup tab: search, building result, trend, compliance, pathways, PDF, and pre-fill."""
+    """
+    Address Lookup, as a building profile:
+      1. profile  2. current result  3. next steps  4. emissions outlook
+      5. energy use and history  6. supporting details (reported data, options, definitions)
+    Sections are computed in the order their inputs need, then shown in this order
+    through placeholders, so no calculation changes.
+    """
     address_input = st.text_input(
         "Enter building address",
         placeholder="Example: 1 Beacon St",
@@ -1123,10 +1106,62 @@ def render_address_lookup_tab(page):
         st.warning("No matching address found in the dataset.")
         return
 
-    bldg_share, bldg_share_note, top = _lookup_building_result(page, result, address_input)
-    _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note)
-    prior_ghg, prior_label = _lookup_trend(page, top)
-    _cov, _gov, _limits_source, projected_intensities, use_mix_limits = _lookup_compliance(page, bldg_share, top, prior_ghg, prior_label)
-    _bl_ctx, _ghg_ctx, _pathways_ctx, _sqft_ctx = _lookup_pathways(page, top, bldg_share)
-    _lookup_pdf(page, use_mix_limits, _bl_ctx, _ghg_ctx, _sqft_ctx, _cov, projected_intensities, top, bldg_share, _gov, _limits_source, address_input, _pathways_ctx)
+    top = _pick_building(result, address_input)
+    bldg_share, bldg_share_note = building_elec_share(
+        top.get("GHG Emissions (kgCO2e)"), top.get("Electricity Emissions (kgCO2e)"))
+
+    s_profile, s_result, s_actions, s_outlook, s_energy, s_details = (st.container() for _ in range(6))
+    with s_profile:
+        _profile(page, top)
+    with s_result:
+        _current_result(page, top)
+    with s_energy:
+        st.markdown("---")
+        st.subheader("Energy use and history")
+        _lookup_fuel_breakdown(page, top, bldg_share, bldg_share_note)
+        prior_ghg, prior_label = _lookup_trend(page, top)
+    with s_outlook:
+        st.markdown("---")
+        _cov, _gov, _limits_source, projected_intensities, use_mix_limits = _lookup_compliance(
+            page, bldg_share, top, prior_ghg, prior_label)
+    with s_details:
+        st.subheader("Supporting details")
+        _reported_data(page, result, top)
+        _bl_ctx, _ghg_ctx, _pathways_ctx, _sqft_ctx = _lookup_pathways(page, top, bldg_share)
+        with st.expander("What do these fields mean?"):
+            _field_definitions()
+    with s_actions:
+        _next_actions(lambda: _lookup_pdf(page, use_mix_limits, _bl_ctx, _ghg_ctx, _sqft_ctx, _cov,
+                                          projected_intensities, top, bldg_share, _gov, _limits_source,
+                                          address_input, _pathways_ctx))
     _lookup_prefill(page, top, address_input, use_mix_limits, _cov, bldg_share)
+
+def _field_definitions():
+    """What the fields mean (shown with the supporting details)."""
+    st.markdown(r"""
+**Compliance Status**
+- **Submitted**: The building owner reported energy and emissions data to the City of Boston for the previous calendar year.
+- **Not submitted**: No data was reported. Buildings required to report under BERDO face fines of \$150–\$300/day for missing the annual May 15 reporting deadline (\$300/day for buildings over 35,000 sq ft; \$150/day for smaller covered buildings). For 2026, the City lists October 15 as the deadline for annual reporting with approved extensions. Separate daily fines of \$1,000/day (buildings over 35,000 sq ft) or \$300/day (smaller covered buildings) apply for failing to meet emissions standards.
+- **Campus buildings**: Some buildings are reported as part of a campus. The City notes these rows may not reflect the full building's energy use; the tool flags them and shows the campus totals.
+- **State / Federal**: The City's data marks the building as owned by a state or federal agency. This tool shows its emissions for reference only, because BERDO's treatment of these buildings is unconfirmed.
+
+**Site EUI (Energy Use Intensity)**
+- Measures how much energy a building uses per square foot per year (kBtu/sq ft/yr). A higher EUI means the building uses more energy relative to its size. Missing EUI typically means the building did not submit complete energy data.
+
+**GHG Intensity (kg CO₂e/sq ft/yr)**
+- The building's greenhouse gas emissions per square foot per year, calculated from reported fuel and electricity use. This is the value compared against BERDO emissions limits to determine compliance.
+
+**Data Status**
+- **Reported**: energy and emissions data submitted and complete enough to evaluate.
+- **Incomplete data**: submitted, but property type, floor area, or GHG data is missing or unmappable, so compliance can't be calculated.
+- **Not submitted**: no data reported. Accruing daily reporting fines.
+
+**BERDO Status**
+- **Over 2025–29 limit**: currently exceeds its sector limit and accruing ACP.
+- **Fails 2030–34**: compliant now, but over the next limit at current emissions.
+- **Compliant through 2034** / **2039+**: how far the current trajectory holds.
+- **Not yet covered**: smaller covered building, not subject to an emissions limit until 2030.
+- **Unknown (data incomplete)**: compliance can't be determined from what was reported.
+
+**Est. ACP (2025–29)**
+- Estimated annual Alternative Compliance Payment for the current period, at \$234 per metric ton CO₂e over the limit. Shows \$0 for covered buildings within their limit, and N/A when it can't be estimated (not yet covered, not assessed, or data missing).""")
