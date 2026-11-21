@@ -184,7 +184,7 @@ def _zip_map(z):
     return fig
 
 
-def city_access():
+def city_access(where: str = "citywide"):
     """
     The Citywide Outlook tab is shown only after the access code is entered. The code is set in
     Streamlit's secrets (CITY_ACCESS_CODE), never in the code or the repository. Returns True when
@@ -202,7 +202,8 @@ def city_access():
         return False
     st.info("Predictions are available to Building Owners and the City of Boston on request. "
             "Enter your access code to view them.")
-    entered = st.text_input("Access code", type="password", key="city_access_code")
+    #One code box per tab (each needs its own widget key); entering it on either tab unlocks both
+    entered = st.text_input("Access code", type="password", key=f"city_access_code_{where}")
     if entered and hmac.compare_digest(str(entered), str(code)):
         st.session_state["city_access_granted"] = True
         st.success("Access granted.")
@@ -214,13 +215,12 @@ def city_access():
 
 def render_outlook_tab(page):
     """Find buildings without a City result that may need support."""
-    if not city_access():
+    if not city_access("outreach"):
         return
     df = page.predictions
     if df is None:
         st.warning("Predictions file not found (analysis/predictions_2026/predictions_2026_pending.csv).")
         return
-    st.markdown("### Find buildings that may need support")
     st.write("Filter the list, select a building, and review its supporting information. "
              "Estimates are screening results from earlier-year data, not City determinations.")
     if page.selected_year != PREDICTIONS_FOR_YEAR:
@@ -256,7 +256,9 @@ def render_outlook_tab(page):
     left, right = st.columns([1.75, 1], gap="medium")
     with left:
         note = "No filters applied." if n_filters == 0 else f"{n_filters} filter{'s' if n_filters > 1 else ''} applied."
-        st.markdown(f"**{len(view):,} of {len(d):,} buildings match.** {note} The list and the map use the same filters.")
+        on_map = int(view[["latitude", "longitude"]].notna().all(axis=1).sum())
+        st.markdown(f"**{len(view):,} of {len(d):,} buildings match**, {on_map:,} with a map location. {note} "
+                    "The list and the map use the same filters.")
         table = view[["address", "Tier", "Chance", "Estimate status"]].rename(columns={"address": "Address"})
         table["Chance"] = table["Chance"].map(lambda p: "No estimate" if pd.isna(p) else format_probability(p))
         styled = table.style.map(lambda t: f"color: {TIER_TEXT[t]}; font-weight: 600" if t in TIER_TEXT else "",
@@ -274,7 +276,9 @@ def render_outlook_tab(page):
             })
         st.caption("Select a row to see the building's details and its place on the map.")
         rows = event.selection.rows if event and event.selection else []
-        selected = view.iloc[rows[0]] if rows and rows[0] < len(view) else None
+        picked = bool(rows) and rows[0] < len(view)
+        #Until a row is picked, show the highest-ranked building so the panel is never empty
+        selected = view.iloc[rows[0]] if picked else (view.iloc[0] if len(view) else None)
         export = view.drop(columns=["Tier", "Chance", "Estimate status"]).assign(
             tier=view["Tier"], probability_action_needed=view["Chance"], estimate_status=view["Estimate status"])
         st.download_button("Download filtered results (CSV)", export.to_csv(index=False).encode(),
@@ -282,20 +286,13 @@ def render_outlook_tab(page):
                            key="outlook_download", type="primary")
     with right:
         if selected is not None:
+            if not picked:
+                st.caption("Showing the highest-ranked building. Select a row to see another.")
             _detail_panel(selected)
         else:
             with st.container(border=True):
-                st.markdown("**No building selected**")
-                st.caption("Select a row in the list to see its City status, the model estimate, "
-                           "and a link to Address Lookup.")
-        with st.container(border=True):
-            st.markdown("**Model estimate tier**")
-            legend = "".join(
-                f"<div style='display:flex;align-items:center;gap:8px;margin:4px 0'>"
-                f"<span style='width:12px;height:12px;border-radius:50%;background:{TIER_COLORS[t]};"
-                f"display:inline-block'></span>{t}</div>" for t in TIER_COLORS)
-            st.markdown(legend, unsafe_allow_html=True)
-            st.caption("The ringed marker on the map is the selected building.")
+                st.markdown("**No buildings match these filters**")
+                st.caption("Change or reset the filters to see buildings.")
 
     #Map
     st.markdown("#### Prediction map")
@@ -314,7 +311,7 @@ def render_outlook_tab(page):
     elif view[["latitude", "longitude"]].notna().all(axis=1).any():
         st.plotly_chart(_building_map(view, selected), use_container_width=True)
         missing = int(view["latitude"].isna().sum())
-        st.caption("Map data © OpenStreetMap contributors." +
+        st.caption("The ringed marker is the building shown in the panel. Map data © OpenStreetMap contributors." +
                    (f" {missing:,} matching building{'s' if missing != 1 else ''} without a location "
                     "aren't on the map." if missing else ""))
     else:

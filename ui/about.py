@@ -18,8 +18,10 @@ def render_about(years):
         with st.container(border=True):
             st.markdown("#### What each page does")
             st.markdown(
-                "- **Citywide Overview:** reporting and emissions status for every covered building, "
-                "with a map. Access code required.\n"
+                "- **Citywide Overview:** look up any building, then (with the access code) reporting "
+                "and emissions status for every covered building, with a map.\n"
+                "- **Outreach:** buildings without a 2025 City result, ranked by estimated risk, with a "
+                "detail panel and map. Access code required.\n"
                 "- **Trends:** how energy use and emissions have changed over time, and how much of "
                 "the change comes from a cleaner grid.\n"
                 "- **Address Lookup:** one building's evidence, limits, estimated ACP, compliance "

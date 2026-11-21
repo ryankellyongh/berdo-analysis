@@ -154,3 +154,26 @@ def test_outlook_list_hides_estimates_under_review():
     assert d.loc[review, "Tier"].eq("No estimate").all() and d.loc[review, "Chance"].isna().all()
     assert d.loc[d["tier"].eq("No limit mapped"), "Chance"].isna().all()
     assert d["Tier"].iloc[0] == "Likely over"                     # highest-risk buildings listed first
+
+
+# 7. Overview map groups and category labels -------------------------------------------
+
+def test_map_uses_five_plain_groups():
+    cw = _ui("ui.citywide")
+    if cw is None:
+        return
+    assert cw.map_group("Over its 2025–29 limit") == "Over its 2025–29 limit now"
+    assert cw.map_group("Compliant through 2039+") == "On track through 2030–34"
+    assert cw.map_group("Meets 2025–29 limit; later periods unknown") == "Other or unknown"
+    assert cw.map_group("Assessed with a portfolio or campus") == "Other or unknown"
+    assert len(cw.MAP_GROUPS) == 5
+
+
+def test_category_explains_missing_use():
+    cw = _ui("ui.citywide")
+    if cw is None:
+        return
+    blank = _city_compliant("Office").assign(property_type=None)
+    other = _city_compliant("Other")
+    assert cw.evaluate_year(blank).loc[0, "berdo_category"] == cw.NO_TYPE
+    assert cw.evaluate_year(other).loc[0, "berdo_category"] == cw.UNMAPPED_TYPE

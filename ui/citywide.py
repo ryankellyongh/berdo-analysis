@@ -32,6 +32,30 @@ STATUS_GROUPS = [
     ("Under City review or pending", "#D6409F", {"Under City review", "Pending reporting (City)"}),
 ]
 OTHER_GROUP, OTHER_COLOR = "Not assessed or data incomplete", "#8B8D98"
+
+#The map shows five plain-language groups; the detailed groups above stay in the data,
+#the headline counts, and the category table.
+MAP_GROUPS = [
+    ("Over its 2025–29 limit now", "#E5484D", {"Over its 2025–29 limit"}),
+    ("Over the 2030–34 limit", "#F76B15", {"Fails 2030–34"}),
+    ("On track through 2030–34", "#30A46C", {"Compliant through 2034", "Compliant through 2039+"}),
+    ("Not yet covered", "#8E4EC6", {"Not yet covered"}),
+    ("Other or unknown", "#8B8D98", None),        #everything else, including later-unknown
+]
+MAP_HIDDEN_BY_DEFAULT = {"Not yet covered", "Other or unknown"}
+NO_TYPE = "No property type (mostly not reported)"
+UNMAPPED_TYPE = "Type not in the BERDO list"
+
+
+def map_group(status_group: str) -> str:
+    for name, _, members in MAP_GROUPS:
+        if members and status_group in members:
+            return name
+    return MAP_GROUPS[-1][0]
+
+
+def _map_color(group):
+    return next((c for n, c, _ in MAP_GROUPS if n == group), OTHER_COLOR)
 OUTLINE = "rgba(28, 32, 36, 0.85)"     #soft charcoal edge around each dot
 #Basemaps (first is the default). Voyager needs plotly's newer map traces.
 BASEMAPS = {"Voyager": "carto-voyager", "Street map": "open-street-map",
@@ -82,7 +106,11 @@ def evaluate_year(df: pd.DataFrame) -> pd.DataFrame:
         df.at[i, "status_group"] = ("Fails 2030–34" if not g[1]["compliant"] else
                                     "Compliant through 2034" if not g[2]["compliant"] else
                                     "Compliant through 2039+")
-    df["berdo_category"] = df["property_type"].map(map_property_type).fillna("Unmapped or missing")
+    #Category: the BERDO use, or why there isn't one (no type reported vs. a type not in Appendix A)
+    has_type = df["property_type"].fillna("").astype(str).str.strip().ne("")
+    df["berdo_category"] = df["property_type"].map(map_property_type)
+    df.loc[df["berdo_category"].isna() & ~has_type, "berdo_category"] = NO_TYPE
+    df["berdo_category"] = df["berdo_category"].fillna(UNMAPPED_TYPE)
     return df
 
 
@@ -124,20 +152,19 @@ def _map(b: pd.DataFrame):
     key = "map" if newer else "mapbox"
     basemaps = BASEMAPS if newer else {k: v for k, v in BASEMAPS.items() if k != "Voyager"}
 
-    present = [n for n, _, _ in STATUS_GROUPS if n in set(b["status_group"])]
-    if OTHER_GROUP in set(b["status_group"]):
-        present.append(OTHER_GROUP)
+    b = b.assign(map_group=b["status_group"].map(map_group))
+    present = [n for n, _, _ in MAP_GROUPS if n in set(b["map_group"])]
     #Two dropdowns share one row; the status filter gets its own full-width row as pills,
     #so long status names are never cut off and every control lines up.
     c1, c2 = st.columns(2, vertical_alignment="bottom")
     with c1:
-        cats = ["All categories"] + sorted(c for c in b["berdo_category"].unique() if c != "Unmapped or missing")
+        cats = ["All categories"] + sorted(c for c in b["berdo_category"].unique() if c not in (NO_TYPE, UNMAPPED_TYPE))
         cat = st.selectbox("Building category", cats, key="cw_map_cat")
     with c2:
         base = st.selectbox("Basemap", list(basemaps), key="cw_map_base")
     show = st.pills("Status", present, selection_mode="multi", key="cw_map_status",
-                    default=[g for g in present if g not in HIDDEN_BY_DEFAULT]) or []
-    m = b[b["status_group"].isin(show) & b["lat"].notna()]
+                    default=[g for g in present if g not in MAP_HIDDEN_BY_DEFAULT]) or []
+    m = b[b["map_group"].isin(show) & b["lat"].notna()]
     if cat != "All categories":
         m = m[m["berdo_category"] == cat]
     if m.empty:
@@ -146,13 +173,13 @@ def _map(b: pd.DataFrame):
 
     #One dot per location, coloured by the most serious status there and sized by
     #the combined floor area of the buildings at that spot.
-    order = {n: i for i, (n, _, _) in enumerate(STATUS_GROUPS)}
-    m = m.assign(_r=m["status_group"].map(order).fillna(len(order)),
+    order = {n: i for i, (n, _, _) in enumerate(MAP_GROUPS)}
+    m = m.assign(_r=m["map_group"].map(order).fillna(len(order)),
                  _k=m["lat"].round(5).astype(str) + "," + m["lon"].round(5).astype(str),
                  _addr=m["Building Address"].fillna("Address not reported").astype(str),
                  _sqft=pd.to_numeric(m["gross_floor_area"], errors="coerce").fillna(0)).sort_values("_r")
     pts = m.groupby("_k", sort=False).agg(
-        lat=("lat", "first"), lon=("lon", "first"), group=("status_group", "first"),
+        lat=("lat", "first"), lon=("lon", "first"), group=("map_group", "first"),
         n=("_addr", "size"), sqft=("_sqft", "sum"), names=("_addr", lambda s: "<br>".join(list(s)[:6])))
     pts["size"] = 7 + (pts["sqft"].clip(upper=1_500_000) / 1_500_000) ** 0.5 * 17
 
@@ -169,9 +196,9 @@ def _map(b: pd.DataFrame):
                               showlegend=False, legendgroup=g,
                               marker=dict(size=p["size"] + 3, color=OUTLINE)))
         fig.add_trace(Scatter(lat=p["lat"], lon=p["lon"], mode="markers", name=f"{g} ({len(p):,})",
-                              legendgroup=g, marker=dict(size=p["size"], color=_color(g), opacity=0.92),
+                              legendgroup=g, marker=dict(size=p["size"], color=_map_color(g), opacity=0.92),
                               hovertext=hover, hoverinfo="text",
-                              hoverlabel=dict(bgcolor="white", bordercolor=_color(g),
+                              hoverlabel=dict(bgcolor="white", bordercolor=_map_color(g),
                                               font=dict(color="#1C2024", size=12))))
     fig.update_layout(**{key: dict(style=basemaps[base], center=dict(lat=42.32, lon=-71.08), zoom=11.2),
                          "height": 640, "margin": dict(t=0, b=80, l=0, r=0),
@@ -179,7 +206,7 @@ def _map(b: pd.DataFrame):
                                         traceorder="reversed", itemsizing="constant",
                                         font=dict(size=12))})
     st.plotly_chart(fig, use_container_width=True)
-    unmapped = int((b["status_group"].isin(show) & b["lat"].isna()).sum())
+    unmapped = int((b["map_group"].isin(show) & b["lat"].isna()).sum())
     n_bldg, n_dots = len(m), len(pts)
     caption = f"Showing {n_bldg:,} building{'s' if n_bldg != 1 else ''}"
     if n_dots < n_bldg:
@@ -195,8 +222,29 @@ def _map(b: pd.DataFrame):
     st.caption(caption)
 
 
+def building_search_box(key="cw_lookup"):
+    """
+    "Look up a building" at the top of the Overview, open to everyone: it fills in the
+    Address Lookup tab, so an owner's first step doesn't need the access code.
+    """
+    def send():
+        q = st.session_state.get(key, "").strip()
+        if q:
+            st.session_state["lookup_address"] = q
+
+    with st.container(border=True):
+        c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+        c1.text_input("Look up a building", key=key, placeholder="Enter a street address, e.g. 1 Beacon St",
+                      on_change=send)
+        c2.button("Look up", key=f"{key}_go", on_click=send, use_container_width=True, type="primary")
+        if st.session_state.get(key, "").strip() and \
+                st.session_state.get("lookup_address") == st.session_state[key].strip():
+            st.caption("Open the **Address Lookup** tab to see this building's evidence, limits, and options.")
+
+
 def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
     year = page.selected_year
+    building_search_box()
     st.write(f"A citywide picture of BERDO reporting and emissions compliance for every covered "
              f"building in the {year} dataset.")
     if not city_access():
@@ -263,8 +311,15 @@ def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
                          ["Not submitted", "Extension granted", "Incomplete data"]).sum()),
                      "Over 2025–29 limit": int((g["status_group"] == "Over its 2025–29 limit").sum()),
                      "Fails 2030–34": int((g["status_group"] == "Fails 2030–34").sum()),
-                     "Est. annual ACP": acp_g.sum() if acp_g.notna().any() else None})
-    table = pd.DataFrame(rows).sort_values("Buildings", ascending=False)
-    st.dataframe(table, use_container_width=True, hide_index=True,
-                 column_config={"Est. annual ACP": st.column_config.NumberColumn(format="$%d")})
-    st.caption("Empty ACP cells mean no estimate is available, not $0.")
+                     "_acp": acp_g.sum() if acp_g.notna().any() else None})
+    table = pd.DataFrame(rows)
+    #Named categories first (largest first), then the two rows without a BERDO use
+    table["_last"] = table["Category"].isin([NO_TYPE, UNMAPPED_TYPE])
+    table = table.sort_values(["_last", "Buildings"], ascending=[True, False])
+    table["Est. annual ACP"] = table["_acp"].map(lambda v: "—" if pd.isna(v) else f"${v:,.0f}")
+    st.dataframe(table.drop(columns=["_acp", "_last"]), use_container_width=True, hide_index=True,
+                 column_config={"Est. annual ACP": st.column_config.TextColumn(
+                     help="Annual ACP for buildings over their 2025–29 limit. — means no building in the "
+                          "category has an estimate; it does not mean $0.")})
+    st.caption("— means no ACP estimate is available, not $0. Buildings with no property type mostly did "
+               "not report; a type not in the BERDO list needs a person to classify it.")

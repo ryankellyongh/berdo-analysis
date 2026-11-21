@@ -76,7 +76,23 @@ multi_year_mode = len(years_sorted) >= 2
 #Shared settings. Several tabs show the same control (reporting year, grid scenario);
 #each copy has its own widget key and they are kept in sync through one shared value,
 #so changing a control on any tab changes it everywhere.
-TAB_IDS = ["citywide", "lookup", "portfolio", "retrofit", "planner"]
+TAB_IDS = ["citywide", "outreach", "lookup", "portfolio", "retrofit", "planner"]
+
+#One heading per tab, saying what the page is for
+HEROES = {
+    "citywide":  ("Where Boston's covered buildings stand.",
+                  "Reporting and emissions status for every covered building, by category and on a map."),
+    "outreach":  ("Prioritize outreach for buildings without a 2025 result.",
+                  "Find buildings that may need support, check the evidence, and open the next step."),
+    "lookup":    ("Look up a building.",
+                  "One building's evidence, limits, estimated ACP, and options, with a one-page summary."),
+    "portfolio": ("Review an owner's buildings together.",
+                  "Approved City Building Portfolios, or an owner's buildings with a blended standard."),
+    "retrofit":  ("Compare retrofit costs with ACP.",
+                  "Project cost, avoided ACP, payback, and incentive programs to investigate."),
+    "planner":   ("Plan emissions year by year.",
+                  "Emissions and ACP through 2050, with planned projects and a cleaner grid."),
+}
 SHARED = {"selected_year": years_sorted[-1], "grid_on": False, "grid_reported_mix": True, "grid_share": 50}
 for _k, _v in SHARED.items():
     st.session_state.setdefault(_k, _v)
@@ -103,7 +119,7 @@ def page_heading(tab_id):
     """Heading and reporting-year selector at the top of each tab."""
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     with c1:
-        site_theme.render_hero()
+        site_theme.render_hero(*HEROES[tab_id])
     with c2:
         st.selectbox("Reporting year", years_sorted, format_func=str,
                      key=_bind("selected_year", tab_id), on_change=_sync, args=("selected_year", tab_id),
@@ -162,23 +178,23 @@ with st.container(key="site_header"):
         st.markdown('<div class="site-brand-block"><div class="site-logo">BERDO</div>'
                     '<div class="site-tagline">Priority screening tool</div></div>',
                     unsafe_allow_html=True)
-#Order matters: Address Lookup (tabs[2]) writes optimizer_prefill and planner_prefill,
-#which Retrofit (tabs[4]) and Planner (tabs[5]) read later in the same run.
+#Order matters: Address Lookup (tabs[3]) writes optimizer_prefill and planner_prefill,
+#which Retrofit (tabs[5]) and Planner (tabs[6]) read later in the same run.
 with st.container(key="site_nav"):
-    tabs = st.tabs(["Citywide Overview", "Trends", "Address Lookup", "Owner Portfolio",
+    tabs = st.tabs(["Citywide Overview", "Outreach", "Trends", "Address Lookup", "Owner Portfolio",
                     "Retrofit & Incentives", "Emissions Planner", "About"])
 
 with tabs[0]:
     page_heading("citywide")
     render_citywide_tab(page, coords_path=str(DATA_DIR / "berdo_coordinates.csv"))
-    if st.session_state.get("city_access_granted"):
-        #2025 Outlook: a full section (list, detail panel, map), not an expander, so its own
-        #expanders and the map have room. Behind the same access code as the Citywide map.
-        st.markdown("---")
-        st.markdown("## 2025 Outlook")
-        render_outlook_tab(page)
 
 with tabs[1]:
+    #2025 Outlook for buildings without a City result: list, detail panel, and map.
+    #render_outlook_tab asks for the access code itself (the same code as the Citywide map).
+    page_heading("outreach")
+    render_outlook_tab(page)
+
+with tabs[2]:
     #Citywide totals only (no building identified), so no access code is needed.
     #Trends span every year, so this tab has no reporting-year selector.
     site_theme.render_hero(
@@ -190,12 +206,12 @@ with tabs[1]:
     else:
         st.info("Trends need at least three years of data in data/.")
 
-with tabs[2]:
+with tabs[3]:
     page_heading("lookup")
     projection_settings("lookup")
     render_address_lookup_tab(page)
 
-with tabs[3]:
+with tabs[4]:
     page_heading("portfolio")
     projection_settings("portfolio")
     owner = st.text_input("Enter property owner name or portfolio ID",
@@ -233,18 +249,18 @@ with tabs[3]:
                 else:
                     st.info("Only one building found; use Address Lookup for single-building analysis.")
 
-with tabs[4]:
+with tabs[5]:
     page_heading("retrofit")
     render_retrofit_optimizer_tab(page, st.session_state.get("optimizer_prefill", {}))
 
-with tabs[5]:
+with tabs[6]:
     page_heading("planner")
     projection_settings("planner")
     render_emissions_planner_tab(st.session_state.get("planner_prefill", {}),
                                  show_grid_decarb=show_grid_decarb, elec_share=page.elec_share,
                                  use_reported_share=use_reported_share)
 
-with tabs[6]:
+with tabs[7]:
     render_about(years_sorted)
 
 site_theme.render_footer(
