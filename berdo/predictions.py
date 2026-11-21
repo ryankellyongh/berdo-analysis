@@ -6,9 +6,29 @@ from pathlib import Path
 import pandas as pd
 
 PREDICTIONS_FILE = Path("analysis") / "predictions_2026" / "predictions_2026_pending.csv"
-PREDICTIONS_SAVED_ON = "October 12, 2026"
+HASH_FILE = PREDICTIONS_FILE.with_name("prediction_hash.txt")
+
+
+def _saved_on(path=HASH_FILE, fallback="October 9, 2026"):
+    """
+    The date predict.py wrote the predictions, read from prediction_hash.txt (written at the
+    same moment), so the date shown in the app can never drift from the fingerprinted record.
+    """
+    import datetime as _dt
+    try:
+        for line in Path(path).read_text().splitlines():
+            if line.startswith("Created:"):
+                d = _dt.date.fromisoformat(line.split(":", 1)[1].strip())
+                return f"{d.strftime('%B')} {d.day}, {d.year}"
+    except (OSError, ValueError):
+        pass
+    return fallback
+
+
+PREDICTIONS_SAVED_ON = _saved_on()
 PREDICTIONS_FOR_YEAR = 2026          #reporting year the predictions apply to (2025 energy use)
-TIER_ORDER = ["Likely over", "Watch", "Likely compliant", "No earlier data"]
+TIER_ORDER = ["Likely over", "Watch", "Likely compliant", "No earlier data", "No limit mapped"]
+NO_LIMIT = "No limit mapped"
 
 #How each tier turned out on the 809 buildings that already had a City result
 #(earlier-year data only; see analysis/predictions_2026/README.md)
@@ -38,6 +58,11 @@ def load_predictions(path=PREDICTIONS_FILE):
     df = pd.read_csv(path, dtype={"berdo_id": str, "zip": str})
     df["zip"] = (df["zip"].fillna("").str.replace(r"\.0$", "", regex=True)
                  .str.strip().map(lambda z: z.zfill(5) if z else None))
+    #The saved file labels buildings with earlier data but no mapped standard (no ratio to a
+    #limit) "Likely compliant". Show them as their own group. Display only: the saved file,
+    #and its fingerprint, are unchanged.
+    no_limit = df["ratio_to_limit"].isna() & df["tier"].ne("No earlier data")
+    df.loc[no_limit, "tier"] = NO_LIMIT
     return df
 
 
@@ -62,8 +87,8 @@ def prediction_summary(df) -> pd.DataFrame:
             "Buildings": len(g),
             "With earlier data": int(probs.size),
             **{t: int(counts.get(t, 0)) for t in TIER_ORDER},
-            "Expected Action Needed (model)": round(float(probs.sum())),
-            "Expected Action Needed (tier rates)": round(sum(
+            "Expected (model)": round(float(probs.sum())),
+            "Expected (tier rates)": round(sum(
                 counts.get(t, 0) * tier_rate(t) for t in TIER_TRACK_RECORD)),
         })
     return pd.DataFrame(rows)
