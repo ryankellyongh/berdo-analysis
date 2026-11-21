@@ -24,3 +24,37 @@ def apply_prefill_once(marker_key: str, building_key: str, values: dict):
         for key, value in values.items():
             st.session_state[key] = value
         st.session_state[marker_key] = building_key
+
+
+def open_in_address_lookup(address: str):
+    """
+    Button callback: fill in Address Lookup with this address and switch to that tab.
+    Streamlit can't select a tab from Python, so switch_tab_if_requested() (called at the
+    end of app.py) clicks the tab in the browser on the rerun that follows.
+    """
+    st.session_state["lookup_address"] = address
+    st.session_state["goto_tab"] = "Address Lookup"
+
+
+def switch_tab_if_requested():
+    """Click the requested tab in the page's menu, once, and scroll to the top."""
+    label = st.session_state.pop("goto_tab", None)
+    if not label:
+        return
+    import json
+    import streamlit.components.v1 as components
+    components.html(
+        f"""<script>
+        const doc = window.parent.document;
+        const go = () => {{
+          const tab = [...doc.querySelectorAll('[role="tab"]')]
+            .find(t => t.innerText.trim() === {json.dumps(label)});
+          if (!tab) return false;
+          tab.click();
+          window.parent.scrollTo({{top: 0, behavior: "smooth"}});
+          return true;
+        }};
+        if (!go()) setTimeout(go, 300);
+        </script>""",
+        height=0,
+    )
