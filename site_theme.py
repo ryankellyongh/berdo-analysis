@@ -135,7 +135,7 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 }}
 [data-testid="stWidgetLabel"] p {{ font-size: 0.88rem; opacity: 0.85; }}
 
-/* Buttons: outlined by default, solid red for primary and form submit */
+/* Buttons: outlined by default, solid blue for primary and form submit */
 .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] > button {{
   border-radius: 10px; border: 1px solid var(--site-border); padding: 0.5rem 1rem; font-weight: 500;
 }}
@@ -208,11 +208,36 @@ hr {{ border-color: var(--site-border) !important; margin: 1.6rem 0 !important; 
 /* Captions and alerts wrap long words instead of running off the edge */
 [data-testid="stCaptionContainer"], [data-testid="stAlert"] p {{ overflow-wrap: anywhere; }}
 
+/* Alignment: every metric card in a row is the same height, whatever its label, help
+   icon, or wrapping. (:has() is in all current browsers; older ones keep natural heights.) */
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {{ align-items: stretch; }}
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"] > div,
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stElementContainer"],
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stMetric"] {{ height: 100%; }}
+/* Digits share one width, so numbers in neighbouring cards and tables line up */
+[data-testid="stMetricValue"], [data-testid="stMarkdownContainer"] table {{ font-variant-numeric: tabular-nums; }}
+
+/* Line length: paragraphs, lists, and captions stop at a readable width on wide screens.
+   Alerts, the hero, and the footer keep the full column. */
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li,
+[data-testid="stCaptionContainer"] {{ max-width: 78ch; line-height: 1.6; }}
+[data-testid="stMarkdownContainer"] li + li {{ margin-top: 0.25rem; }}
+[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+.site-hero p, .site-footer {{ max-width: none; }}
+
+/* Pills (map status filter): selected pills use the site blue, not Streamlit's default red */
+[data-testid="stBaseButton-pillsActive"] {{
+  background: rgba(40, 139, 228, 0.14) !important; border-color: var(--site-accent) !important;
+  color: var(--site-accent) !important;
+}}
+[data-testid="stBaseButton-pills"]:hover {{ border-color: var(--site-accent) !important; }}
+
 /* Site footer */
 .site-footer {{
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   margin-top: 48px; padding-top: 14px; border-top: 1px solid var(--site-border);
-  font-size: 0.82rem; opacity: 0.75;
+  font-size: 0.85rem; opacity: 0.85;
 }}
 
 @media (max-width: 640px) {{
@@ -238,7 +263,7 @@ def render_brand(name: str = "BERDO", tagline: str = "Priority screening tool"):
     )
 
 
-def render_topbar(badge: str, brand: str = "Outreach workspace"):
+def render_topbar(badge: str, brand: str = "Priority screening tool"):
     #Built without indentation: Markdown treats indented lines as a code block.
     st.markdown(
         '<div class="site-topbar" role="banner">'
