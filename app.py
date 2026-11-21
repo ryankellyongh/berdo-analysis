@@ -1,5 +1,5 @@
 """
-BERDO Compliance Planner: the Streamlit entry point.
+BERDO Priority Screening Tool: the Streamlit entry point.
 
 This file only loads data, builds the shared `page` context, and lays out the tabs.
 Every calculation lives in berdo/ (tested by tests/), and every tab's interface
@@ -26,7 +26,7 @@ from ui.portfolio import render_official_portfolio, render_portfolio_section
 from ui.retrofit import render_retrofit_optimizer_tab
 from ui.trends import render_trends
 
-st.set_page_config(page_title="BERDO · Outreach workspace", layout="wide")
+st.set_page_config(page_title="BERDO Priority Screening Tool", layout="wide")
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -162,6 +162,8 @@ with st.container(key="site_header"):
         st.markdown('<div class="site-brand-block"><div class="site-logo">BERDO</div>'
                     '<div class="site-tagline">Priority screening tool</div></div>',
                     unsafe_allow_html=True)
+#Order matters: Address Lookup (tabs[2]) writes optimizer_prefill and planner_prefill,
+#which Retrofit (tabs[4]) and Planner (tabs[5]) read later in the same run.
 with st.container(key="site_nav"):
     tabs = st.tabs(["Citywide Overview", "Trends", "Address Lookup", "Owner Portfolio",
                     "Retrofit & Incentives", "Emissions Planner", "About"])
@@ -170,9 +172,11 @@ with tabs[0]:
     page_heading("citywide")
     render_citywide_tab(page, coords_path=str(DATA_DIR / "berdo_coordinates.csv"))
     if st.session_state.get("city_access_granted"):
+        #2025 Outlook: a full section (list, detail panel, map), not an expander, so its own
+        #expanders and the map have room. Behind the same access code as the Citywide map.
         st.markdown("---")
-        with st.expander("2025 Outlook: predicted results for buildings without a City result"):
-            render_outlook_tab(page)
+        st.markdown("## 2025 Outlook")
+        render_outlook_tab(page)
 
 with tabs[1]:
     #Citywide totals only (no building identified), so no access code is needed.
@@ -180,7 +184,8 @@ with tabs[1]:
     site_theme.render_hero(
         "How Boston's buildings are changing.",
         "Energy use and emissions over time, and how much of the change comes from a cleaner grid.")
-    if multi_year_mode:
+    #compute_trends needs three reporting years; match that here so the message is accurate
+    if len(years_sorted) >= 3:
         render_trends(all_years)
     else:
         st.info("Trends need at least three years of data in data/.")
