@@ -242,12 +242,19 @@ def building_search_box(key="cw_lookup"):
             st.caption("Open the **Address Lookup** tab to see this building's evidence, limits, and options.")
 
 
-def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
+def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv",
+                        show_lookup=False, require_access=False, show_map=False):
+    """
+    Citywide "Now": headline counts and the category table, for the selected reporting year.
+    Totals only, so no access code by default. The building map now lives on the Outreach
+    tab; show_map, show_lookup, and require_access restore the old standalone Overview.
+    """
     year = page.selected_year
-    building_search_box()
-    st.write(f"A citywide picture of BERDO reporting and emissions compliance for every covered "
-             f"building in the {year} dataset.")
-    if not city_access():
+    if show_lookup:
+        building_search_box()
+    st.write(f"Reporting and emissions status for every covered building in the {year} dataset. "
+             "Totals only: no building is identified here.")
+    if require_access and not city_access():
         return
     ev = evaluate_year(page.df_full)
     ev = attach_coordinates(ev, load_coordinates(coords_path))
@@ -299,8 +306,9 @@ def render_citywide_tab(page, coords_path="data/berdo_coordinates.csv"):
                 f"whole campus's totals. {note}")
     st.caption(note)
 
-    st.markdown("---")
-    _map(b)
+    if show_map:
+        st.markdown("---")
+        _map(b)
     st.markdown("---")
     st.markdown("#### By BERDO building category")
     rows = []

@@ -22,9 +22,13 @@ from berdo.predictions import (
     zip_risk_summary,
 )
 
-TIER_COLORS = {"Likely over": "#C0392B", "Watch": "#E67E22", "Likely compliant": "#27AE60",
-               "No estimate": "#8B8D98"}
-TIER_TEXT = {"Likely over": "#B42318", "Watch": "#B54708", "Likely compliant": "#067647"}
+CITY_AN = "Action Needed (City)"
+TIER_COLORS = {CITY_AN: "#7A1E1E", "Likely over": "#C0392B", "Watch": "#E67E22",
+               "Likely compliant": "#27AE60", "No estimate": "#8B8D98"}
+TIER_TEXT = {CITY_AN: "#7A1E1E", "Likely over": "#B42318", "Watch": "#B54708", "Likely compliant": "#067647"}
+#Why a building is on the Outreach list, most certain need first
+REASONS = ["Action Needed (City result)", "Estimated at risk", "Did not report",
+           "Under City review", "No result yet, lower risk or no estimate"]
 BOSTON_CENTER = {"lat": 42.325, "lon": -71.085}
 ESTIMATED = "Estimated"
 STATUS_LABELS = {"No earlier data": "No earlier data", "No limit mapped": "No limit mapped"}
@@ -50,6 +54,53 @@ def _display_table(df):
     return d.sort_values(["_o", "_p"], ascending=[True, False]).drop(columns=["_o", "_p"])
 
 
+def _zip5(z):
+    z = "" if z is None or (isinstance(z, float) and pd.isna(z)) else str(z).replace(".0", "").strip()
+    return z.zfill(5) if z else None
+
+
+def _outreach_rows(pred, ev):
+    """
+    Every building that may need contact, one row each: the City's Action Needed results,
+    the estimates for buildings without a result, and buildings that didn't report.
+    `ev` is the evaluated 2026 disclosure (buildings only, with coordinates).
+    """
+    d = _display_table(pred)
+    d["est_acp"] = float("nan")
+    ids = ev["berdo_id"].astype(str)
+    no_report = set(ids[ev["data_status"].eq("Not submitted")])
+    d["did_not_report"] = d["berdo_id"].astype(str).isin(no_report)
+    review = d["Estimate status"].eq("Under City review")
+    d["Reason"] = REASONS[4]
+    d.loc[d["did_not_report"] & ~review, "Reason"] = REASONS[2]
+    d.loc[review, "Reason"] = REASONS[3]
+    d.loc[d["Tier"].isin(["Likely over", "Watch"]), "Reason"] = REASONS[1]
+
+    def city_rows(mask, tier, status, reason, did_not_report):
+        c = ev[mask]
+        return pd.DataFrame({
+            "berdo_id": c["berdo_id"].astype(str).values,
+            "address": c["Building Address"].fillna("Address not reported").astype(str).values,
+            "zip": [_zip5(z) for z in c.get("Building Address Zip Code", pd.Series(None, index=c.index))],
+            "latitude": c["lat"].values, "longitude": c["lon"].values,
+            "property_type": c["property_type"].values, "sqft": c["gross_floor_area"].values,
+            "city_status": c["emissions_status"].values, "tier": None, "Tier": tier, "Chance": float("nan"),
+            "Estimate status": status, "Reason": reason,
+            "est_acp": pd.to_numeric(c["est_acp"], errors="coerce").values,
+            "did_not_report": did_not_report, "ratio_to_limit": float("nan"), "prior_energy_year": float("nan")})
+
+    action = city_rows(ev["emissions_status"].eq("Action Needed"), CITY_AN, "City result", REASONS[0], False)
+    extra_nr = city_rows(ev["data_status"].eq("Not submitted") & ~ids.isin(set(d["berdo_id"].astype(str))),
+                         "No estimate", "Did not report", REASONS[2], True)
+    out = pd.concat([action, d, extra_nr], ignore_index=True)
+    order = {r: i for i, r in enumerate(REASONS)}
+    tier_order = {CITY_AN: 0, "Likely over": 1, "Watch": 2, "Likely compliant": 3, "No estimate": 4}
+    out = out.assign(_r=out["Reason"].map(order), _a=out["est_acp"].fillna(-1),
+                     _t=out["Tier"].map(tier_order), _p=out["Chance"].fillna(-1))
+    return (out.sort_values(["_r", "_a", "_t", "_p"], ascending=[True, False, True, False])
+               .drop(columns=["_r", "_a", "_t", "_p"]).reset_index(drop=True))
+
+
 def _filters(d):
     """Filter row: address search, tier, property type, ZIP, and estimate status."""
     def reset():
@@ -59,13 +110,12 @@ def _filters(d):
 
     c = st.columns([2.2, 1.2, 1.6, 1.1, 1.5, 1], vertical_alignment="bottom")
     q = c[0].text_input("Search by address", key="ol_q", placeholder="Enter a street address")
-    tier = c[1].selectbox("Tier", ["All tiers", "Likely over", "Watch", "Likely compliant", "No estimate"],
-                          key="ol_tier")
+    tier = c[1].selectbox("Tier", ["All tiers", CITY_AN, "Likely over", "Watch", "Likely compliant",
+                                   "No estimate"], key="ol_tier")
     ptype = c[2].selectbox("Property type", ["All property types"] +
                            sorted(d["property_type"].dropna().unique()), key="ol_type")
     zips = c[3].selectbox("ZIP code", ["All ZIPs"] + sorted(d["zip"].dropna().unique()), key="ol_zip")
-    status = c[4].selectbox("Estimate status", ["All statuses", ESTIMATED, "Under City review",
-                                                "No earlier data", "No limit mapped"], key="ol_status")
+    status = c[4].selectbox("Reason", ["All reasons"] + REASONS, key="ol_status")
     c[5].button("Reset filters", on_click=reset, use_container_width=True)
 
     m = pd.Series(True, index=d.index)
@@ -77,33 +127,50 @@ def _filters(d):
         m &= d["property_type"].eq(ptype)
     if zips != "All ZIPs":
         m &= d["zip"].eq(zips)
-    if status != "All statuses":
-        m &= d["Estimate status"].eq(status)
+    if status != "All reasons":
+        m &= d["Reason"].eq(status)
     active = sum([bool(q.strip()), tier != "All tiers", ptype != "All property types",
-                  zips != "All ZIPs", status != "All statuses"])
+                  zips != "All ZIPs", status != "All reasons"])
     return d[m], active
 
 
 def _detail_panel(row):
-    """The selected building: City status, the model estimate, and the next step."""
+    """The selected building: why it's listed, the City status, any estimate, and the next step."""
+    reason = row["Reason"]
     with st.container(border=True):
         top = st.columns([4, 1], vertical_alignment="center")
         top[0].markdown(f"#### {row['address']}")
         top[1].button("Close", key="ol_close", on_click=lambda: st.session_state.pop("ol_table", None))
-        st.caption(" · ".join(str(x) for x in (row.get("zip"), row.get("property_type")) if pd.notna(x) and x))
+        st.caption(" · ".join(str(x) for x in (row.get("zip"), row.get("property_type"), reason)
+                              if pd.notna(x) and x))
 
-        city = ("Under City review. The City says buildings under review are not considered out "
-                "of compliance while under review." if row["city_status"] == UNDER_REVIEW else
-                "No City result yet for reporting year 2026. This is unknown, not zero.")
+        #City status
+        if reason == REASONS[0]:
+            acp = row.get("est_acp")
+            city = ("**Action Needed.** The City's 2025 result: this building is over its emissions "
+                    "standard." + (f" Estimated ACP about **${acp:,.0f} per year** at $234 per metric ton."
+                                   if pd.notna(acp) and acp > 0 else ""))
+        elif row["city_status"] == UNDER_REVIEW:
+            city = ("Under City review. The City says buildings under review are not considered out "
+                    "of compliance while under review.")
+        else:
+            city = "No City result yet for reporting year 2026. This is unknown, not zero."
+        if row.get("did_not_report"):
+            city += ("  \n**Did not report** 2025 energy data. Reporting comes first: the ordinance sets "
+                     "fines for failing to report, and no emissions result is possible without it.")
         with st.container(border=True):
             st.markdown(f"**City reported status**  \n{city}")
 
+        #Estimate
         with st.container(border=True):
-            if row["Tier"] == "No estimate":
+            if reason == REASONS[0]:
+                st.markdown("**Model estimate**  \nNot needed: the City has published this building's result.")
+            elif row["Tier"] == "No estimate":
                 why = {"Under City review": "Estimates are never shown for buildings under City review.",
                        "No earlier data": "There is no earlier year of emissions data to estimate from.",
+                       "Did not report": "There is no earlier year of emissions data to estimate from.",
                        "No limit mapped": "This building's use has no mapped BERDO standard, so it "
-                                          "can't be compared with a limit."}[row["Estimate status"]]
+                                          "can't be compared with a limit."}.get(row["Estimate status"], "")
                 st.markdown(f"**Model estimate (not a City result)**  \nNo estimate. {why}")
             else:
                 color = TIER_TEXT.get(row["Tier"], "inherit")
@@ -119,11 +186,18 @@ def _detail_panel(row):
                     "The chance comes from a separate model that also weighs electricity share, size, "
                     "mixed use, and City ownership, so the two can differ.")
 
-        year = row.get("prior_energy_year")
-        st.markdown(
-            f"**Source and year:** City disclosures; estimate from "
-            f"{int(year) if pd.notna(year) else 'no earlier'} energy use, saved {PREDICTIONS_SAVED_ON}.  \n"
-            "**Missing information:** the City's 2025 result, and confirmed 2025 energy use.")
+        if reason == REASONS[0]:
+            st.markdown("**Source and year:** the City's 2026 disclosure (2025 energy use).  \n"
+                        "**Next step:** compliance options (pathways, retrofits, RECs, flexibility measures) "
+                        "are on the Address Lookup tab.")
+        else:
+            year = row.get("prior_energy_year")
+            st.markdown(
+                f"**Source and year:** City disclosures"
+                + (f"; estimate from {int(year)} energy use, saved {PREDICTIONS_SAVED_ON}" if pd.notna(year) else "")
+                + ".  \n**Missing information:** the City's 2025 result"
+                + (", and 2025 energy data" if row.get("did_not_report") else ", and confirmed 2025 energy use")
+                + ".")
 
         def handoff(address=row["address"]):
             st.session_state["lookup_address"] = address
@@ -138,7 +212,7 @@ def _building_map(d, selected):
     trace = getattr(go, "Scattermap", None) or go.Scattermapbox
     newer = trace is getattr(go, "Scattermap", None)
     fig = go.Figure()
-    for tier in ["No estimate", "Likely compliant", "Watch", "Likely over"]:
+    for tier in ["No estimate", "Likely compliant", "Watch", "Likely over", CITY_AN]:
         sub = d[(d["Tier"] == tier) & d["latitude"].notna() & d["longitude"].notna()]
         if sub.empty:
             continue
@@ -213,32 +287,41 @@ def city_access(where: str = "citywide"):
     return False
 
 
-def render_outlook_tab(page):
-    """Find buildings without a City result that may need support."""
+def render_outlook_tab(page, coords_path="data/berdo_coordinates.csv"):
+    """Every building that may need contact: City results, estimates, and non-reporters."""
     if not city_access("outreach"):
         return
     df = page.predictions
-    if df is None:
-        st.warning("Predictions file not found (analysis/predictions_2026/predictions_2026_pending.csv).")
+    city_df = page.all_years.get(PREDICTIONS_FOR_YEAR)
+    if df is None or city_df is None:
+        st.warning("Outreach needs the 2026 disclosure (data/berdo_2026.csv) and the saved predictions "
+                   "(analysis/predictions_2026/predictions_2026_pending.csv).")
         return
-    st.write("Filter the list, select a building, and review its supporting information. "
-             "Estimates are screening results from earlier-year data, not City determinations.")
-    if page.selected_year != PREDICTIONS_FOR_YEAR:
-        st.info(f"These estimates are for reporting year {PREDICTIONS_FOR_YEAR} (2025 energy use). "
-                "Select that year at the top of the page to match the rest of the app.")
+    from berdo.data import buildings_only                                    #here to avoid a circular import
+    from ui.citywide import attach_coordinates, evaluate_year, load_coordinates
+    ev = buildings_only(attach_coordinates(evaluate_year(city_df), load_coordinates(coords_path)))
+    st.write("Every building that may need contact, most certain need first: the City's Action Needed "
+             "results, buildings estimated to be at risk, and buildings that didn't report. Estimates are "
+             f"screening results from earlier-year data, not City determinations. Uses reporting year "
+             f"{PREDICTIONS_FOR_YEAR} (2025 energy use), whichever year is selected.")
 
     #Headline counts
     summary = prediction_summary(df)
     exp_low = int(summary[["Expected (model)", "Expected (tier rates)"]].min(axis=1).sum())
     exp_high = int(summary[["Expected (model)", "Expected (tier rates)"]].max(axis=1).sum())
+    at_risk = int(df["tier"].isin(["Likely over", "Watch"]).sum())
+    in_review = int((df["tier"].isin(["Likely over", "Watch"]) & df["city_status"].eq(UNDER_REVIEW)).sum())
     c = st.columns(4)
-    c[0].metric("Buildings without a City result", f"{len(df):,}")
-    c[1].metric("Likely over", f"{int((df['tier'] == 'Likely over').sum()):,}")
-    c[2].metric("Watch", f"{int((df['tier'] == 'Watch').sum()):,}")
+    c[0].metric("Action Needed (City result)", f"{int(ev['emissions_status'].eq('Action Needed').sum()):,}")
+    c[1].metric("Estimated at risk", f"{at_risk:,}",
+                help=f"Likely over or Watch, among buildings without a City result. Includes {in_review} "
+                     "under City review, which are counted here but never listed individually.")
+    c[2].metric("Did not report", f"{int(ev['data_status'].eq('Not submitted').sum()):,}")
     c[3].metric("Expected Action Needed (about)", f"{exp_low}–{exp_high}",
-                help="Low end: each tier's count times its track record. High end: the sum of the "
-                     "model's probabilities. Buildings with no earlier data aren't included.")
-    with st.expander("Counts by group"):
+                help="Among buildings without a City result. Low end: each tier's count times its track "
+                     "record. High end: the sum of the model's probabilities. Buildings with no earlier "
+                     "data aren't included.")
+    with st.expander("Counts by group (buildings without a City result)"):
         st.dataframe(summary, use_container_width=True, hide_index=True)
         st.caption("Pending Reporting: buildings covered in 2025 that haven't reported. Under City review: "
                    "the City is checking their data. Buildings with no earlier data can't be estimated.")
@@ -246,7 +329,7 @@ def render_outlook_tab(page):
     #Find a building
     st.markdown("---")
     st.markdown("#### Find a building")
-    d = _display_table(df)
+    d = _outreach_rows(df, ev)
     view, n_filters = _filters(d)
     #A selection points at a row of the filtered list, so clear it whenever the filters change
     sig = (len(view), tuple(view["berdo_id"].head(50)))
@@ -259,7 +342,7 @@ def render_outlook_tab(page):
         on_map = int(view[["latitude", "longitude"]].notna().all(axis=1).sum())
         st.markdown(f"**{len(view):,} of {len(d):,} buildings match**, {on_map:,} with a map location. {note} "
                     "The list and the map use the same filters.")
-        table = view[["address", "Tier", "Chance", "Estimate status"]].rename(columns={"address": "Address"})
+        table = view[["address", "Reason", "Tier", "Chance"]].rename(columns={"address": "Address"})
         table["Chance"] = table["Chance"].map(lambda p: "No estimate" if pd.isna(p) else format_probability(p))
         styled = table.style.map(lambda t: f"color: {TIER_TEXT[t]}; font-weight: 600" if t in TIER_TEXT else "",
                                  subset=["Tier"])
@@ -271,18 +354,21 @@ def render_outlook_tab(page):
                     "Chance",
                     help="Model estimate of the chance the City marks the building Action Needed. "
                          "The tier comes from last year's emissions vs. the limit, so the two can differ."),
-                "Tier": st.column_config.TextColumn(help="Likely over: above the 2025–29 limit last year. "
+                "Tier": st.column_config.TextColumn(help="Action Needed (City): the City's published result. "
+                                                         "Likely over: above the 2025–29 limit last year. "
                                                          "Watch: within 10%. Likely compliant: more than 10% under."),
+                "Reason": st.column_config.TextColumn(help="Why the building is listed, most certain need first."),
             })
         st.caption("Select a row to see the building's details and its place on the map.")
         rows = event.selection.rows if event and event.selection else []
         picked = bool(rows) and rows[0] < len(view)
         #Until a row is picked, show the highest-ranked building so the panel is never empty
         selected = view.iloc[rows[0]] if picked else (view.iloc[0] if len(view) else None)
-        export = view.drop(columns=["Tier", "Chance", "Estimate status"]).assign(
-            tier=view["Tier"], probability_action_needed=view["Chance"], estimate_status=view["Estimate status"])
+        export = view.drop(columns=["Tier", "Chance", "Estimate status", "Reason"]).assign(
+            reason=view["Reason"], tier=view["Tier"], probability_action_needed=view["Chance"],
+            estimate_status=view["Estimate status"])
         st.download_button("Download filtered results (CSV)", export.to_csv(index=False).encode(),
-                           file_name="berdo_2025_outlook_filtered.csv", mime="text/csv",
+                           file_name="berdo_outreach_filtered.csv", mime="text/csv",
                            key="outlook_download", type="primary")
     with right:
         if selected is not None:

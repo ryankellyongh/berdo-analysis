@@ -76,14 +76,14 @@ multi_year_mode = len(years_sorted) >= 2
 #Shared settings. Several tabs show the same control (reporting year, grid scenario);
 #each copy has its own widget key and they are kept in sync through one shared value,
 #so changing a control on any tab changes it everywhere.
-TAB_IDS = ["citywide", "outreach", "lookup", "portfolio", "retrofit", "planner"]
+TAB_IDS = ["lookup", "outreach", "citywide", "portfolio", "retrofit", "planner"]
 
 #One heading per tab, saying what the page is for
 HEROES = {
-    "citywide":  ("Where Boston's covered buildings stand.",
-                  "Reporting and emissions status for every covered building, by category and on a map."),
-    "outreach":  ("Prioritize outreach for buildings without a 2025 result.",
-                  "Find buildings that may need support, check the evidence, and open the next step."),
+    "citywide":  ("Where Boston's buildings stand, and how they're changing.",
+                  "Citywide totals for the selected year, then energy use and emissions over time."),
+    "outreach":  ("Find buildings that need contact.",
+                  "City results, estimated risk, and missed reporting in one list, with the next step."),
     "lookup":    ("Look up a building.",
                   "One building's evidence, limits, estimated ACP, and options, with a one-page summary."),
     "portfolio": ("Review an owner's buildings together.",
@@ -178,29 +178,30 @@ with st.container(key="site_header"):
         st.markdown('<div class="site-brand-block"><div class="site-logo">BERDO</div>'
                     '<div class="site-tagline">Priority screening tool</div></div>',
                     unsafe_allow_html=True)
-#Order matters: Address Lookup (tabs[3]) writes optimizer_prefill and planner_prefill,
-#which Retrofit (tabs[5]) and Planner (tabs[6]) read later in the same run.
+#Order matters: Address Lookup (tabs[0]) writes optimizer_prefill and planner_prefill,
+#which Retrofits (tabs[4]) and Planner (tabs[5]) read later in the same run.
 with st.container(key="site_nav"):
-    #Short labels, so all eight fit on one row beside the brand, like a website menu
-    tabs = st.tabs(["Overview", "Outreach", "Trends", "Address Lookup", "Portfolios",
+    #Short labels, so every tab fits on one row beside the brand, like a website menu.
+    #Address Lookup comes first: it's where owners start.
+    tabs = st.tabs(["Address Lookup", "Outreach", "Citywide", "Portfolios",
                     "Retrofits", "Planner", "About"])
 
 with tabs[0]:
-    page_heading("citywide")
-    render_citywide_tab(page, coords_path=str(DATA_DIR / "berdo_coordinates.csv"))
+    page_heading("lookup")
+    projection_settings("lookup")
+    render_address_lookup_tab(page)
 
 with tabs[1]:
-    #2025 Outlook for buildings without a City result: list, detail panel, and map.
-    #render_outlook_tab asks for the access code itself (the same code as the Citywide map).
+    #Every building that may need contact. Asks for the access code itself.
     page_heading("outreach")
-    render_outlook_tab(page)
+    render_outlook_tab(page, coords_path=str(DATA_DIR / "berdo_coordinates.csv"))
 
 with tabs[2]:
     #Citywide totals only (no building identified), so no access code is needed.
-    #Trends span every year, so this tab has no reporting-year selector.
-    site_theme.render_hero(
-        "How Boston's buildings are changing.",
-        "Energy use and emissions over time, and how much of the change comes from a cleaner grid.")
+    page_heading("citywide")
+    render_citywide_tab(page, coords_path=str(DATA_DIR / "berdo_coordinates.csv"))
+    st.markdown("### Over time")
+    st.caption("Trends span every reporting year, whichever year is selected above.")
     #compute_trends needs three reporting years; match that here so the message is accurate
     if len(years_sorted) >= 3:
         render_trends(all_years)
@@ -208,11 +209,6 @@ with tabs[2]:
         st.info("Trends need at least three years of data in data/.")
 
 with tabs[3]:
-    page_heading("lookup")
-    projection_settings("lookup")
-    render_address_lookup_tab(page)
-
-with tabs[4]:
     page_heading("portfolio")
     projection_settings("portfolio")
     owner = st.text_input("Enter property owner name or portfolio ID",
@@ -250,18 +246,18 @@ with tabs[4]:
                 else:
                     st.info("Only one building found; use Address Lookup for single-building analysis.")
 
-with tabs[5]:
+with tabs[4]:
     page_heading("retrofit")
     render_retrofit_optimizer_tab(page, st.session_state.get("optimizer_prefill", {}))
 
-with tabs[6]:
+with tabs[5]:
     page_heading("planner")
     projection_settings("planner")
     render_emissions_planner_tab(st.session_state.get("planner_prefill", {}),
                                  show_grid_decarb=show_grid_decarb, elec_share=page.elec_share,
                                  use_reported_share=use_reported_share)
 
-with tabs[7]:
+with tabs[6]:
     render_about(years_sorted)
 
 site_theme.render_footer(

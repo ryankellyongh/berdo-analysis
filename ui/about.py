@@ -18,14 +18,13 @@ def render_about(years):
         with st.container(border=True):
             st.markdown("#### What each page does")
             st.markdown(
-                "- **Overview:** look up any building, then (with the access code) reporting "
-                "and emissions status for every covered building, with a map.\n"
-                "- **Outreach:** buildings without a 2025 City result, ranked by estimated risk, with a "
-                "detail panel and map. Access code required.\n"
-                "- **Trends:** how energy use and emissions have changed over time, and how much of "
-                "the change comes from a cleaner grid.\n"
                 "- **Address Lookup:** one building's evidence, limits, estimated ACP, compliance "
-                "pathways, and a one-page PDF summary.\n"
+                "pathways, and a one-page PDF summary. Start here for any single building.\n"
+                "- **Outreach:** every building that may need contact (City Action Needed results, "
+                "buildings estimated to be at risk, and buildings that didn't report) in one list, "
+                "with a detail panel and map. Access code required.\n"
+                "- **Citywide:** totals for the selected year and the category table, then trends over "
+                "time, including how much of the change comes from a cleaner grid.\n"
                 "- **Portfolios:** the City's approved Building Portfolios, found by portfolio ID, name, "
                 "or member owner; owner-name matches are shown as candidates when no approved portfolio fits.\n"
                 "- **Retrofits:** project cost, avoided ACP, payback, and programs to investigate.\n"
