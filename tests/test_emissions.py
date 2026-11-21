@@ -109,12 +109,12 @@ def test_over_limit_acp_by_hand():
 
 def test_not_yet_covered_gets_no_acp():
     _, status, acp, notes = evaluate_building(_row(compliance_year=2030))
-    assert status == "Not yet covered" and acp == 0
+    assert status == "Not yet covered" and acp is None          # no ACP to estimate, not $0
 
 
 def test_state_record_not_assessed():
     _, status, acp, _ = evaluate_building(_row(compliance_status="state"))
-    assert status == "Not assessed (state)" and acp == 0
+    assert status == "Not assessed (state)" and acp is None
 
 
 def test_city_building_keeps_acp_and_notes_fines():

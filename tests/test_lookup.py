@@ -29,7 +29,7 @@ def test_acp_exposure_only_after_2050():
 def test_current_period_acp():
     cov = coverage_for(2025, "in compliance", "X")
     assert current_period_acp(6.0, 100_000, 5.3, cov) == 16_380
-    assert current_period_acp(5.0, 100_000, 5.3, cov) is None                                 # under the limit
+    assert current_period_acp(5.0, 100_000, 5.3, cov) == 0.0                                  # covered, under the limit
     assert current_period_acp(6.0, 100_000, 5.3, coverage_for(2030, "in compliance", "X")) is None
     assert current_period_acp(6.0, 100_000, 5.3, cov, "Emissions Compliance at Portfolio Level") is None
     assert is_portfolio_level("Emissions Compliance at Portfolio Level") and not is_portfolio_level(None)

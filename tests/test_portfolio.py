@@ -10,6 +10,8 @@ Building Portfolio calculations, on a two-building example worked out by hand:
     2030: (3.2 + 2.4) / 2 = 2.8   -> 1.7 over x 200,000 sf = 340 t -> USD 79,560/yr
     2035: 2.1 -> 480 t; 2040: 1.35 -> 630 t; 2045: 0.7 -> 760 t; 2050+: 0 -> 900 t
 """
+import math
+
 import pandas as pd
 
 from berdo.regulations import ACP_RATE
@@ -50,7 +52,7 @@ def test_portfolio_summary_by_hand():
     assert s["blended_limits"][:2] == [4.7, 2.8]
     p2025, p2030 = s["periods"][0], s["periods"][1]
     assert p2025["compliant"] and p2025["annual_fine"] == 0
-    assert p2030["excess_tons"] == 340.0 and p2030["annual_fine"] == round(340.0 * ACP_RATE)   # 79,560
+    assert math.isclose(p2030["excess_tons"], 340.0) and p2030["annual_fine"] == round(340.0 * ACP_RATE)   # 79,560
     assert [i for i, _ in s["non_compliant_periods"]] == [1, 2, 3, 4, 5]
     # five-year periods 2030-2049: (340 + 480 + 630 + 760) t x 234 x 5
     assert round(s["total_5yr"]) == round((340 + 480 + 630 + 760) * ACP_RATE * 5)              # 2,585,700

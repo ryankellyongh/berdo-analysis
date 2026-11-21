@@ -201,6 +201,11 @@ PROPERTY_TYPE_ALIASES = {
     "personal services (health/beauty, dry cleaning, etc)": "Services",
     "personal services (health/beauty dry cleaning etc.)":  "Services",   #Appendix A spelling
     "repair services (vehicle, shoe, locksmith, etc)":      "Services",
+    #Newer Portfolio Manager names for types listed in Appendix A under their older names.
+    #These appear in the 2024-2026 disclosures; without them the buildings had no standard.
+    "other/specialty hospital":     "Healthcare",   #Appendix A: Other - Specialty Hospital
+    "vehicle dealership":           "Retail",       #Appendix A: Automobile Dealership
+    "vehicle repair services":      "Services",     #Appendix A: Repair Services (Vehicle, Shoe, Locksmith, etc.)
 }
 PROPERTY_TYPE_MAP.update(PROPERTY_TYPE_ALIASES)
 

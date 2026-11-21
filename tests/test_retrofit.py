@@ -62,8 +62,9 @@ def test_incentive_estimates_use_cash_value_and_copies():
 
 
 def test_net_cost_is_capped_at_zero():
-    assert net_retrofit_cost(100_000, 200_000, 30_000, 50_000) == (50_000, 170_000)
-    assert net_retrofit_cost(10_000, 20_000, 30_000, 50_000) == (0, 0)
+    # Only confirmed funding is subtracted, and net cost never goes below zero
+    assert net_retrofit_cost(100_000, 200_000, confirmed_funding=150_000) == (0, 50_000)
+    assert net_retrofit_cost(10_000, 20_000, confirmed_funding=50_000) == (0, 0)
 
 
 def test_headline_payback():
